@@ -1,0 +1,588 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Main application window - coordinator only
+"""
+
+from datetime import datetime
+from pathlib import Path
+from typing import List
+import json
+
+from PySide6.QtCore import Qt, QSettings, QDateTime
+from PySide6.QtGui import QAction
+from PySide6.QtWidgets import (
+    QMainWindow, QTabWidget, QVBoxLayout, QWidget,
+    QProgressBar, QStatusBar, QFileDialog, QMessageBox,
+    QSplitter, QHBoxLayout, QDialog, QDialogButtonBox,
+    QGroupBox, QComboBox, QCheckBox, QPushButton
+)
+import zipfile
+
+from controllers import FileController, ReportController, FolderController
+from core.models import FormData
+from core.workers import FolderStructureThread
+from ui.components import FormPanel, FilesPanel, LogConsole
+from ui.styles import CarolinaBlueTheme
+from ui.custom_template_widget import CustomTemplateWidget
+
+
+class MainWindow(QMainWindow):
+    """Main application window - coordinator only"""
+    
+    def __init__(self):
+        super().__init__()
+        
+        # Initialize data
+        self.form_data = FormData()
+        self.settings = QSettings('FolderStructureUtility', 'Settings')
+        self.file_operation_results = {}  # Store results for PDF generation
+        self.output_directory = None
+        
+        # Initialize controllers
+        self.file_controller = FileController()
+        self.report_controller = ReportController(self.settings)
+        self.folder_controller = FolderController()
+        
+        # Set up UI
+        self.setWindowTitle("Folder Structure Utility")
+        self.resize(1200, 800)
+        
+        self._setup_ui()
+        self._apply_theme()
+        self._load_settings()
+        
+        # Show ready
+        self.status_bar.showMessage("Ready")
+        
+    def _setup_ui(self):
+        """Create the UI - all in one place, no complex bindings"""
+        # Central widget
+        central = QWidget()
+        self.setCentralWidget(central)
+        layout = QVBoxLayout(central)
+        
+        # Create menu bar
+        self._create_menu_bar()
+        
+        # Create tab widget
+        self.tabs = QTabWidget()
+        
+        # Forensic Mode tab
+        self.forensic_tab = self._create_forensic_tab()
+        self.tabs.addTab(self.forensic_tab, "Forensic Mode")
+        
+        # Custom Mode tab - using the existing widget
+        self.custom_template_widget = CustomTemplateWidget(
+            self.settings, 
+            self.form_data,
+            self
+        )
+        
+        # Connect signals
+        self.custom_template_widget.create_tab_requested.connect(self.create_custom_tab)
+        self.custom_template_widget.process_requested.connect(self.process_custom_structure)
+        
+        self.tabs.addTab(self.custom_template_widget, "Custom Mode")
+        
+        # Add tabs to layout
+        layout.addWidget(self.tabs)
+        
+        # Progress bar
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setVisible(False)
+        layout.addWidget(self.progress_bar)
+        
+        # Status bar
+        self.status_bar = QStatusBar()
+        self.setStatusBar(self.status_bar)
+        
+    def _create_forensic_tab(self):
+        """Create the forensic mode tab"""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        
+        # Main splitter
+        splitter = QSplitter(Qt.Vertical)
+        
+        # Upper section: Form and Files
+        upper_widget = QWidget()
+        upper_layout = QHBoxLayout(upper_widget)
+        
+        # Form panel (left)
+        self.form_panel = FormPanel(self.form_data)
+        self.form_panel.calculate_offset_requested.connect(
+            lambda: self.log_console.log(f"Calculated offset: {self.form_data.time_offset} minutes")
+        )
+        upper_layout.addWidget(self.form_panel)
+        
+        # Files panel (right)
+        self.files_panel = FilesPanel()
+        self.files_panel.log_message.connect(self.log)
+        upper_layout.addWidget(self.files_panel)
+        
+        # Log console (bottom)
+        self.log_console = LogConsole()
+        
+        # Add to splitter
+        splitter.addWidget(upper_widget)
+        splitter.addWidget(self.log_console)
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 1)
+        
+        layout.addWidget(splitter)
+        
+        # Action buttons
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        
+        self.process_btn = QPushButton("Process Files")
+        self.process_btn.clicked.connect(self.process_forensic_files)
+        button_layout.addWidget(self.process_btn)
+        
+        layout.addLayout(button_layout)
+        
+        return widget
+        
+    def _create_menu_bar(self):
+        """Create the menu bar"""
+        menubar = self.menuBar()
+        
+        # File menu
+        file_menu = menubar.addMenu("File")
+        
+        load_action = QAction("Load JSON", self)
+        load_action.triggered.connect(self.load_json)
+        file_menu.addAction(load_action)
+        
+        save_action = QAction("Save JSON", self)
+        save_action.triggered.connect(self.save_json)
+        file_menu.addAction(save_action)
+        
+        file_menu.addSeparator()
+        
+        exit_action = QAction("Exit", self)
+        exit_action.triggered.connect(self.close)
+        file_menu.addAction(exit_action)
+        
+        # Settings menu
+        settings_menu = menubar.addMenu("Settings")
+        
+        user_settings_action = QAction("User Settings", self)
+        user_settings_action.triggered.connect(self.show_user_settings)
+        settings_menu.addAction(user_settings_action)
+        
+        zip_settings_action = QAction("ZIP Settings", self)
+        zip_settings_action.triggered.connect(self.show_zip_settings)
+        settings_menu.addAction(zip_settings_action)
+        
+        # Help menu
+        help_menu = menubar.addMenu("Help")
+        
+        about_action = QAction("About", self)
+        about_action.triggered.connect(self.show_about)
+        help_menu.addAction(about_action)
+        
+    def _apply_theme(self):
+        """Apply Carolina Blue theme"""
+        self.setStyleSheet(CarolinaBlueTheme.get_stylesheet())
+        
+    def _load_settings(self):
+        """Load saved settings"""
+        # Load technician info
+        tech_name = self.settings.value('technician_name', '')
+        badge_number = self.settings.value('badge_number', '')
+        
+        if hasattr(self, 'form_panel'):
+            self.form_panel.tech_name.setText(tech_name)
+            self.form_panel.badge_number.setText(badge_number)
+            
+    def process_forensic_files(self):
+        """Process files using forensic folder structure"""
+        # Validate form
+        errors = self.form_data.validate()
+        if errors:
+            QMessageBox.warning(self, "Validation Error", "\n".join(errors))
+            return
+            
+        # Get files
+        files, folders = self.files_panel.get_all_items()
+        
+        if not files and not folders:
+            QMessageBox.warning(self, "No Files", "Please select files or folders to process")
+            return
+            
+        # Ask user where to save the output
+        output_dir = QFileDialog.getExistingDirectory(
+            self, 
+            "Select Output Location", 
+            "",
+            QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
+        )
+        
+        if not output_dir:
+            return  # User cancelled
+            
+        # Store the output directory for later use
+        self.output_directory = Path(output_dir)
+        
+        # Start file operation
+        self.file_thread = self.file_controller.process_forensic_files(
+            self.form_data,
+            files,
+            folders,
+            self.output_directory
+        )
+        
+        # Connect signals
+        self.file_thread.progress.connect(self.update_progress)
+        self.file_thread.status.connect(self.log)
+        self.file_thread.finished.connect(self.on_operation_finished)
+        
+        # Disable UI and show progress
+        self.process_btn.setEnabled(False)
+        self.progress_bar.setVisible(True)
+        
+        self.file_thread.start()
+        
+    def process_custom_structure(self, template_levels: List[str]):
+        """Process files with a custom template structure"""
+        # Validate form
+        errors = self.form_data.validate()
+        if errors:
+            QMessageBox.warning(self, "Validation Error", "\n".join(errors))
+            return
+            
+        # Get files
+        files, folders = self.files_panel.get_all_items()
+        
+        if not files and not folders:
+            QMessageBox.warning(self, "No Files", "Please select files or folders to process")
+            return
+            
+        # Ask for output location
+        output_dir = QFileDialog.getExistingDirectory(
+            self, 
+            "Select Output Location", 
+            "",
+            QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
+        )
+        
+        if not output_dir:
+            return
+            
+        self.output_directory = Path(output_dir)
+        
+        # Process files
+        self.file_thread = self.file_controller.process_custom_files(
+            self.form_data,
+            template_levels,
+            files,
+            folders,
+            self.output_directory
+        )
+        
+        # Connect signals
+        self.file_thread.progress.connect(self.update_progress)
+        self.file_thread.status.connect(self.log)
+        self.file_thread.finished.connect(self.on_operation_finished)
+        
+        self.process_btn.setEnabled(False)
+        self.progress_bar.setVisible(True)
+        
+        self.file_thread.start()
+        
+    def create_custom_tab(self, name: str, template_levels: List[str]):
+        """Create a new tab with a custom template"""
+        # Create a widget for the new tab
+        tab_widget = QWidget()
+        layout = QVBoxLayout(tab_widget)
+        
+        # Show the template structure
+        info_group = QGroupBox(f"Template: {name}")
+        info_layout = QVBoxLayout()
+        
+        from PySide6.QtWidgets import QTextEdit
+        structure_text = QTextEdit()
+        structure_text.setReadOnly(True)
+        structure_text.setMaximumHeight(100)
+        
+        # Display the structure
+        preview_lines = []
+        for i, level in enumerate(template_levels):
+            indent = "  " * i
+            preview_lines.append(f"{indent}📁 {level}")
+        structure_text.setPlainText("\n".join(preview_lines))
+        
+        info_layout.addWidget(structure_text)
+        info_group.setLayout(info_layout)
+        layout.addWidget(info_group)
+        
+        # Add file selection
+        files_panel = FilesPanel()
+        files_panel.log_message.connect(self.log)
+        layout.addWidget(files_panel)
+        
+        # Process button
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        from PySide6.QtWidgets import QPushButton
+        process_btn = QPushButton(f"Process with {name} Structure")
+        process_btn.clicked.connect(lambda: self._process_custom_tab(template_levels, files_panel))
+        btn_layout.addWidget(process_btn)
+        layout.addLayout(btn_layout)
+        
+        # Add the new tab
+        self.tabs.addTab(tab_widget, name)
+        
+        # Switch to the new tab
+        self.tabs.setCurrentWidget(tab_widget)
+        
+        QMessageBox.information(self, "Tab Created", 
+                              f"New tab '{name}' has been created!\n\n"
+                              "You can now use this template directly from its own tab.")
+                              
+    def _process_custom_tab(self, template_levels: List[str], files_panel: FilesPanel):
+        """Process files from a custom tab"""
+        # Get files from the specific files panel
+        files, folders = files_panel.get_all_items()
+        
+        # Validate
+        errors = self.form_data.validate()
+        if errors:
+            QMessageBox.warning(self, "Validation Error", "\n".join(errors))
+            return
+            
+        if not files and not folders:
+            QMessageBox.warning(self, "No Files", "Please select files or folders to process")
+            return
+            
+        # Ask for output location
+        output_dir = QFileDialog.getExistingDirectory(
+            self, 
+            "Select Output Location", 
+            "",
+            QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
+        )
+        
+        if not output_dir:
+            return
+            
+        self.output_directory = Path(output_dir)
+        
+        # Process files
+        self.file_thread = self.file_controller.process_custom_files(
+            self.form_data,
+            template_levels,
+            files,
+            folders,
+            self.output_directory
+        )
+        
+        # Connect signals
+        self.file_thread.progress.connect(self.update_progress)
+        self.file_thread.status.connect(self.log)
+        self.file_thread.finished.connect(self.on_operation_finished)
+        
+        self.process_btn.setEnabled(False)
+        self.progress_bar.setVisible(True)
+        
+        self.file_thread.start()
+        
+    def update_progress(self, value):
+        """Update progress bar"""
+        self.progress_bar.setValue(value)
+        
+    def on_operation_finished(self, success, message, results):
+        """Handle operation completion"""
+        self.progress_bar.setVisible(False)
+        self.process_btn.setEnabled(True)
+        
+        if success:
+            # Store results for potential PDF generation
+            self.file_operation_results = results
+            
+            # Ask user if they want to generate reports
+            reply = QMessageBox.question(self, "Generate Reports?",
+                                       "Files copied successfully!\n\n"
+                                       "Would you like to generate PDF reports?",
+                                       QMessageBox.Yes | QMessageBox.No)
+            
+            if reply == QMessageBox.Yes:
+                self.generate_reports()
+            else:
+                QMessageBox.information(self, "Success", message)
+        else:
+            QMessageBox.critical(self, "Error", message)
+            
+        self.log(message)
+        
+    def generate_reports(self):
+        """Generate PDF reports and hash verification CSV"""
+        try:
+            # Get the output directory (same as where files were copied)
+            output_dir = Path(list(self.file_operation_results.values())[0]['dest_path']).parent
+            
+            # Generate reports
+            generated = self.report_controller.generate_reports(
+                self.form_data,
+                self.file_operation_results,
+                output_dir
+            )
+            
+            # Log generated reports
+            for report_type, path in generated.items():
+                self.log(f"Generated: {path.name}")
+                
+            # Ask about ZIP creation
+            if self.report_controller.should_create_zip():
+                reply = QMessageBox.question(self, "Create ZIP Archive?",
+                                           "Would you like to create ZIP archive(s)?",
+                                           QMessageBox.Yes | QMessageBox.No)
+                if reply == QMessageBox.Yes:
+                    self.create_zip_archives(output_dir)
+                    
+            QMessageBox.information(self, "Reports Generated", 
+                                  f"Reports have been saved to:\n{output_dir}")
+                                  
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to generate reports: {str(e)}")
+            
+    def create_zip_archives(self, base_path: Path):
+        """Create ZIP archives based on settings"""
+        try:
+            self.progress_bar.setVisible(True)
+            
+            # Create archives
+            created = self.report_controller.create_zip_archives(
+                base_path,
+                self.output_directory,
+                progress_callback=lambda pct, msg: (
+                    self.progress_bar.setValue(pct),
+                    self.log(msg)
+                )
+            )
+            
+            self.progress_bar.setVisible(False)
+            
+            if created:
+                self.log(f"Created {len(created)} ZIP archive(s)")
+                # Show where the ZIPs were saved
+                zip_names = [z.name for z in created]
+                QMessageBox.information(self, "ZIP Archives Created", 
+                                      f"Created {len(created)} ZIP archive(s) in:\n{self.output_directory}\n\n"
+                                      f"Files:\n" + "\n".join(zip_names))
+            else:
+                self.log("No ZIP archives created")
+                
+        except Exception as e:
+            self.progress_bar.setVisible(False)
+            QMessageBox.critical(self, "ZIP Error", f"Failed to create ZIP: {str(e)}")
+            
+    def log(self, message):
+        """Add message to log console"""
+        if hasattr(self, 'log_console'):
+            self.log_console.log(message)
+        self.status_bar.showMessage(message, 3000)
+        
+    def load_json(self):
+        """Load form data from JSON"""
+        file, _ = QFileDialog.getOpenFileName(self, "Load JSON", "", "JSON Files (*.json)")
+        if file:
+            try:
+                with open(file, 'r') as f:
+                    data = json.load(f)
+                self.form_data = FormData.from_dict(data)
+                # Update UI fields
+                if hasattr(self, 'form_panel'):
+                    self.form_panel.load_from_data(self.form_data)
+                self.log(f"Loaded data from {Path(file).name}")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to load JSON: {str(e)}")
+                
+    def save_json(self):
+        """Save form data to JSON"""
+        file, _ = QFileDialog.getSaveFileName(self, "Save JSON", "", "JSON Files (*.json)")
+        if file:
+            try:
+                with open(file, 'w') as f:
+                    json.dump(self.form_data.to_dict(), f, indent=2)
+                self.log(f"Saved data to {Path(file).name}")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to save JSON: {str(e)}")
+                
+    def show_user_settings(self):
+        """Show user settings dialog"""
+        QMessageBox.information(self, "User Settings", "User settings dialog coming soon!")
+        
+    def show_zip_settings(self):
+        """Show ZIP settings dialog"""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("ZIP Settings")
+        dialog.setModal(True)
+        
+        layout = QVBoxLayout()
+        
+        # Compression level
+        comp_group = QGroupBox("Compression Level")
+        comp_layout = QVBoxLayout()
+        
+        comp_combo = QComboBox()
+        comp_combo.addItems(["No Compression (Fastest)", "Compressed (Smaller)"])
+        comp_value = self.settings.value('zip_compression', 0)
+        comp_combo.setCurrentIndex(comp_value)
+        comp_layout.addWidget(comp_combo)
+        
+        comp_group.setLayout(comp_layout)
+        layout.addWidget(comp_group)
+        
+        # Create levels
+        level_group = QGroupBox("Create ZIP at Levels")
+        level_layout = QVBoxLayout()
+        
+        zip_root_check = QCheckBox("Root Level (entire structure)")
+        zip_root_check.setChecked(self.settings.value('zip_at_root', True, type=bool))
+        level_layout.addWidget(zip_root_check)
+        
+        zip_location_check = QCheckBox("Location Level (per location)")
+        zip_location_check.setChecked(self.settings.value('zip_at_location', False, type=bool))
+        level_layout.addWidget(zip_location_check)
+        
+        zip_datetime_check = QCheckBox("DateTime Level (per time range)")
+        zip_datetime_check.setChecked(self.settings.value('zip_at_datetime', False, type=bool))
+        level_layout.addWidget(zip_datetime_check)
+        
+        level_group.setLayout(level_layout)
+        layout.addWidget(level_group)
+        
+        # Buttons
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        
+        dialog.setLayout(layout)
+        
+        if dialog.exec() == QDialog.Accepted:
+            # Save settings
+            comp_level = 0 if comp_combo.currentIndex() == 0 else zipfile.ZIP_DEFLATED
+            self.settings.setValue('zip_compression', comp_combo.currentIndex())
+            self.settings.setValue('zip_compression_level', comp_level)
+            self.settings.setValue('zip_at_root', zip_root_check.isChecked())
+            self.settings.setValue('zip_at_location', zip_location_check.isChecked())
+            self.settings.setValue('zip_at_datetime', zip_datetime_check.isChecked())
+            self.log("ZIP settings saved")
+        
+    def show_about(self):
+        """Show about dialog"""
+        QMessageBox.about(self, "About", 
+                         "Folder Structure Utility v2.0\n\n"
+                         "A clean, simple approach to organized file management.\n\n"
+                         "No over-engineering, just functionality.")
+        
+    def closeEvent(self, event):
+        """Save settings on close"""
+        if hasattr(self, 'form_panel'):
+            self.settings.setValue('technician_name', self.form_panel.tech_name.text())
+            self.settings.setValue('badge_number', self.form_panel.badge_number.text())
+        event.accept()

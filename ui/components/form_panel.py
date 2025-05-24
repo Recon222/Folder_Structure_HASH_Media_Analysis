@@ -1,0 +1,145 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Form panel component for case information input
+"""
+
+from PySide6.QtCore import Qt, QDateTime, Signal
+from PySide6.QtWidgets import (
+    QGroupBox, QGridLayout, QLabel, QLineEdit,
+    QDateTimeEdit, QHBoxLayout, QPushButton, QSpinBox
+)
+
+from core.models import FormData
+
+
+class FormPanel(QGroupBox):
+    """Panel for entering case/forensic information"""
+    
+    # Signal emitted when time offset calculation is requested
+    calculate_offset_requested = Signal()
+    
+    def __init__(self, form_data: FormData, parent=None):
+        super().__init__("Case Information", parent)
+        self.form_data = form_data
+        self._setup_ui()
+        
+    def _setup_ui(self):
+        """Create the form UI"""
+        layout = QGridLayout()
+        
+        # Row 0: Occurrence Number
+        layout.addWidget(QLabel("Occurrence #:"), 0, 0)
+        self.occ_number = QLineEdit()
+        self.occ_number.textChanged.connect(lambda t: setattr(self.form_data, 'occurrence_number', t))
+        layout.addWidget(self.occ_number, 0, 1)
+        
+        # Row 1: Business Name
+        layout.addWidget(QLabel("Business Name:"), 1, 0)
+        self.business_name = QLineEdit()
+        self.business_name.textChanged.connect(lambda t: setattr(self.form_data, 'business_name', t))
+        layout.addWidget(self.business_name, 1, 1)
+        
+        # Row 2: Location Address
+        layout.addWidget(QLabel("Address:"), 2, 0)
+        self.location_address = QLineEdit()
+        self.location_address.textChanged.connect(lambda t: setattr(self.form_data, 'location_address', t))
+        layout.addWidget(self.location_address, 2, 1)
+        
+        # Row 3: Extraction Times
+        layout.addWidget(QLabel("Extraction Start:"), 3, 0)
+        self.extraction_start = QDateTimeEdit(QDateTime.currentDateTime())
+        self.extraction_start.setCalendarPopup(True)
+        self.extraction_start.dateTimeChanged.connect(lambda dt: setattr(self.form_data, 'extraction_start', dt))
+        layout.addWidget(self.extraction_start, 3, 1)
+        # Initialize form data with current value
+        self.form_data.extraction_start = self.extraction_start.dateTime()
+        
+        layout.addWidget(QLabel("Extraction End:"), 4, 0)
+        self.extraction_end = QDateTimeEdit(QDateTime.currentDateTime())
+        self.extraction_end.setCalendarPopup(True)
+        self.extraction_end.dateTimeChanged.connect(lambda dt: setattr(self.form_data, 'extraction_end', dt))
+        layout.addWidget(self.extraction_end, 4, 1)
+        # Initialize form data with current value
+        self.form_data.extraction_end = self.extraction_end.dateTime()
+        
+        # Row 5: Time Offset
+        layout.addWidget(QLabel("Time Offset:"), 5, 0)
+        offset_layout = QHBoxLayout()
+        self.time_offset = QSpinBox()
+        self.time_offset.setRange(-9999, 9999)
+        self.time_offset.setSuffix(" minutes")
+        self.time_offset.valueChanged.connect(lambda v: setattr(self.form_data, 'time_offset', v))
+        offset_layout.addWidget(self.time_offset)
+        
+        self.calc_offset_btn = QPushButton("Calculate")
+        self.calc_offset_btn.clicked.connect(self.calculate_time_offset)
+        offset_layout.addWidget(self.calc_offset_btn)
+        layout.addLayout(offset_layout, 5, 1)
+        
+        # Row 6: DVR Time
+        layout.addWidget(QLabel("DVR Time:"), 6, 0)
+        self.dvr_time = QDateTimeEdit(QDateTime.currentDateTime())
+        self.dvr_time.setCalendarPopup(True)
+        self.dvr_time.dateTimeChanged.connect(lambda dt: setattr(self.form_data, 'dvr_time', dt))
+        layout.addWidget(self.dvr_time, 6, 1)
+        # Initialize form data
+        self.form_data.dvr_time = self.dvr_time.dateTime()
+        
+        # Row 7: Real Time
+        layout.addWidget(QLabel("Real Time:"), 7, 0)
+        self.real_time = QDateTimeEdit(QDateTime.currentDateTime())
+        self.real_time.setCalendarPopup(True)
+        self.real_time.dateTimeChanged.connect(lambda dt: setattr(self.form_data, 'real_time', dt))
+        layout.addWidget(self.real_time, 7, 1)
+        # Initialize form data
+        self.form_data.real_time = self.real_time.dateTime()
+        
+        # Row 8: Technician Info
+        layout.addWidget(QLabel("Technician:"), 8, 0)
+        self.tech_name = QLineEdit()
+        self.tech_name.textChanged.connect(lambda t: setattr(self.form_data, 'technician_name', t))
+        layout.addWidget(self.tech_name, 8, 1)
+        
+        layout.addWidget(QLabel("Badge #:"), 9, 0)
+        self.badge_number = QLineEdit()
+        self.badge_number.textChanged.connect(lambda t: setattr(self.form_data, 'badge_number', t))
+        layout.addWidget(self.badge_number, 9, 1)
+        
+        # Row 10: Upload Timestamp
+        layout.addWidget(QLabel("Upload Time:"), 10, 0)
+        self.upload_timestamp = QDateTimeEdit(QDateTime.currentDateTime())
+        self.upload_timestamp.setCalendarPopup(True)
+        self.upload_timestamp.dateTimeChanged.connect(lambda dt: setattr(self.form_data, 'upload_timestamp', dt))
+        layout.addWidget(self.upload_timestamp, 10, 1)
+        # Initialize form data
+        self.form_data.upload_timestamp = self.upload_timestamp.dateTime()
+        
+        self.setLayout(layout)
+        
+    def calculate_time_offset(self):
+        """Calculate time offset between DVR and real time"""
+        if self.form_data.dvr_time and self.form_data.real_time:
+            offset_seconds = self.form_data.dvr_time.secsTo(self.form_data.real_time)
+            offset_minutes = offset_seconds // 60
+            self.time_offset.setValue(offset_minutes)
+            self.calculate_offset_requested.emit()
+            
+    def load_from_data(self, form_data: FormData):
+        """Load form fields from FormData object"""
+        self.occ_number.setText(form_data.occurrence_number)
+        self.business_name.setText(form_data.business_name)
+        self.location_address.setText(form_data.location_address)
+        self.tech_name.setText(form_data.technician_name)
+        self.badge_number.setText(form_data.badge_number)
+        if form_data.extraction_start:
+            self.extraction_start.setDateTime(form_data.extraction_start)
+        if form_data.extraction_end:
+            self.extraction_end.setDateTime(form_data.extraction_end)
+        if form_data.dvr_time:
+            self.dvr_time.setDateTime(form_data.dvr_time)
+        if form_data.real_time:
+            self.real_time.setDateTime(form_data.real_time)
+        if form_data.upload_timestamp:
+            self.upload_timestamp.setDateTime(form_data.upload_timestamp)
+        self.time_offset.setValue(form_data.time_offset)
