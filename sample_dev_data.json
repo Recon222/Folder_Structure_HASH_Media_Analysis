@@ -1,0 +1,13 @@
+{
+  "occurrence_number": "2024-12345",
+  "business_name": "ABC Electronics Store",
+  "location_address": "123 Main Street, Suite 100",
+  "extraction_start": "2024-01-15T10:00:00",
+  "extraction_end": "2024-01-15T14:30:00",
+  "time_offset": -45,
+  "dvr_time": "2024-01-15T09:15:00",
+  "real_time": "2024-01-15T10:00:00",
+  "technician_name": "John Smith",
+  "badge_number": "B1234",
+  "upload_timestamp": "2024-01-15T16:00:00"
+}

@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Custom Mode - Template Builder Instructions</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+            line-height: 1.6;
+            color: #ffffff;
+            background-color: #2b2b2b;
+            margin: 0;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: #1e1e1e;
+            padding: 30px;
+            border-radius: 10px;
+            border: 2px solid #4B9CD3;
+        }
+        
+        h1 {
+            color: #7BAFD4;
+            border-bottom: 3px solid #4B9CD3;
+            padding-bottom: 10px;
+            margin-bottom: 30px;
+        }
+        
+        h2 {
+            color: #7BAFD4;
+            margin-top: 40px;
+            margin-bottom: 20px;
+        }
+        
+        h3 {
+            color: #4B9CD3;
+            margin-top: 25px;
+            margin-bottom: 15px;
+        }
+        
+        .screenshot {
+            max-width: 100%;
+            border: 2px solid #4B9CD3;
+            border-radius: 8px;
+            margin: 20px 0;
+            box-shadow: 0 4px 20px rgba(75, 156, 211, 0.3);
+        }
+        
+        .info-box {
+            background-color: #13294B;
+            border: 1px solid #4B9CD3;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        
+        .tip {
+            background-color: #2d4a2b;
+            border-left: 4px solid #4B9CD3;
+            padding: 15px;
+            margin: 15px 0;
+        }
+        
+        .warning {
+            background-color: #4a2b2b;
+            border-left: 4px solid #ff6b6b;
+            padding: 15px;
+            margin: 15px 0;
+        }
+        
+        code {
+            background-color: #13294B;
+            color: #7BAFD4;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Consolas', 'Monaco', monospace;
+        }
+        
+        .field-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+        
+        .field-item {
+            background-color: #13294B;
+            border: 1px solid #4B9CD3;
+            border-radius: 5px;
+            padding: 10px;
+        }
+        
+        .field-name {
+            color: #7BAFD4;
+            font-weight: bold;
+        }
+        
+        .field-desc {
+            color: #cccccc;
+            font-size: 0.9em;
+        }
+        
+        .button-example {
+            display: inline-block;
+            background-color: #4B9CD3;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 4px;
+            font-weight: bold;
+            margin: 5px;
+            text-decoration: none;
+        }
+        
+        ol, ul {
+            margin-left: 20px;
+        }
+        
+        li {
+            margin-bottom: 10px;
+        }
+        
+        .step-number {
+            display: inline-block;
+            background-color: #4B9CD3;
+            color: white;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 30px;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🛠️ Custom Mode - Template Builder Instructions</h1>
+        
+        <img src="Images/Custom Mode For Instructions.png" alt="Custom Mode Interface" class="screenshot">
+        
+        <div class="info-box">
+            <h2>📋 Overview</h2>
+            <p>The Custom Mode Template Builder allows you to create your own folder structures tailored to your specific needs. Whether you're organizing medical records, legal documents, or any other type of files, you can design a folder hierarchy that works perfectly for your workflow.</p>
+        </div>
+
+        <h2>🚀 Getting Started</h2>
+        
+        <h3><span class="step-number">1</span> Understanding the Interface</h3>
+        <p>The Custom Mode tab is divided into two main sections:</p>
+        <ul>
+            <li><strong>Left Panel:</strong> Template management and available fields</li>
+            <li><strong>Right Panel:</strong> Folder structure builder and live preview</li>
+        </ul>
+
+        <h3><span class="step-number">2</span> Building Your First Template</h3>
+        
+        <h4>Adding Folder Levels</h4>
+        <ol>
+            <li>Click the <span class="button-example">➕ Add Level</span> button to add a new folder level</li>
+            <li>A new item "New Folder Level" will appear in the builder</li>
+            <li>Double-click the item to edit its name</li>
+            <li>Type your desired folder name or use field placeholders (see below)</li>
+        </ol>
+
+        <div class="tip">
+            <strong>💡 Pro Tip:</strong> You can drag and drop levels to reorder them!
+        </div>
+
+        <h4>Creating Subfolders (Nested Structure)</h4>
+        <p>To create subfolders and build a hierarchical structure:</p>
+        <ol>
+            <li>Select the folder level you want to make a subfolder</li>
+            <li>Click the <span class="button-example">➡️ Indent</span> button</li>
+            <li>Each click adds 2 spaces of indentation</li>
+            <li>Use <span class="button-example">⬅️ Outdent</span> to move folders back up a level</li>
+        </ol>
+
+        <div class="info-box">
+            <h4>Example Structure:</h4>
+            <pre style="color: #7BAFD4;">
+{occurrence_number}                    (Root folder)
+  {business_name}                      (Subfolder)
+    {date}_Evidence                    (Sub-subfolder)
+      Photos                           (Sub-sub-subfolder)
+      Videos                           (Sub-sub-subfolder)
+            </pre>
+        </div>
+
+        <h2>📝 Using Dynamic Fields</h2>
+        
+        <p>Dynamic fields allow your folder names to automatically include information from your form. Simply click any field button to insert it at the current cursor position.</p>
+
+        <h3>Available Fields:</h3>
+        
+        <div class="field-list">
+            <div class="field-item">
+                <div class="field-name">{occurrence_number}</div>
+                <div class="field-desc">Case or occurrence number from the form</div>
+            </div>
+            <div class="field-item">
+                <div class="field-name">{business_name}</div>
+                <div class="field-desc">Business name (if provided)</div>
+            </div>
+            <div class="field-item">
+                <div class="field-name">{location_address}</div>
+                <div class="field-desc">Physical address or location</div>
+            </div>
+            <div class="field-item">
+                <div class="field-name">{technician_name}</div>
+                <div class="field-desc">Name of the technician processing files</div>
+            </div>
+            <div class="field-item">
+                <div class="field-name">{badge_number}</div>
+                <div class="field-desc">Technician's badge number</div>
+            </div>
+            <div class="field-item">
+                <div class="field-name">{date}</div>
+                <div class="field-desc">Current date (YYYY-MM-DD)</div>
+            </div>
+            <div class="field-item">
+                <div class="field-name">{time}</div>
+                <div class="field-desc">Current time (HH-MM-SS)</div>
+            </div>
+            <div class="field-item">
+                <div class="field-name">{year}</div>
+                <div class="field-desc">Current year (YYYY)</div>
+            </div>
+            <div class="field-item">
+                <div class="field-name">{month}</div>
+                <div class="field-desc">Current month (MM)</div>
+            </div>
+            <div class="field-item">
+                <div class="field-name">{day}</div>
+                <div class="field-desc">Current day (DD)</div>
+            </div>
+            <div class="field-item">
+                <div class="field-name">{extraction_start}</div>
+                <div class="field-desc">Video extraction start time</div>
+            </div>
+            <div class="field-item">
+                <div class="field-name">{extraction_end}</div>
+                <div class="field-desc">Video extraction end time</div>
+            </div>
+        </div>
+
+        <h3>Combining Fields and Text</h3>
+        <p>You can mix dynamic fields with static text to create descriptive folder names:</p>
+        <ul>
+            <li><code>Case_{occurrence_number}</code> → Case_2024-12345</li>
+            <li><code>{business_name}_Backup_{date}</code> → ACME_Corp_Backup_2024-01-15</li>
+            <li><code>{year}/{month}_{business_name}</code> → 2024/01_ACME_Corp</li>
+        </ul>
+
+        <h2>💾 Saving and Managing Templates</h2>
+
+        <h3>Saving a Template</h3>
+        <ol>
+            <li>Enter a descriptive name in the "Template Name" field</li>
+            <li>Click <span class="button-example">💾 Save Template</span></li>
+            <li>Your template is now saved and can be loaded anytime</li>
+        </ol>
+
+        <h3>Creating a Custom Tab</h3>
+        <p>For frequently used templates, you can create a dedicated tab:</p>
+        <ol>
+            <li>Build and name your template</li>
+            <li>Click <span class="button-example">📌 Save as New Tab</span></li>
+            <li>A new tab will appear with your template name</li>
+            <li>This tab will have its own file selection area and process button</li>
+        </ol>
+
+        <div class="tip">
+            <strong>💡 Power User Tip:</strong> Create tabs for different clients, departments, or project types to quickly switch between different folder structures!
+        </div>
+
+        <h3>Loading a Template</h3>
+        <ol>
+            <li>Select a template from the dropdown menu</li>
+            <li>Click <span class="button-example">Load</span></li>
+            <li>The template structure will appear in the builder</li>
+            <li>You can modify it before processing</li>
+        </ol>
+
+        <h2>👁️ Live Preview</h2>
+        <p>The Live Preview section shows exactly how your folder structure will look with the current form data. As you edit the template or change form values, the preview updates automatically.</p>
+
+        <div class="info-box">
+            <h4>Preview Icons:</h4>
+            <ul>
+                <li>📁 = Folder</li>
+                <li>📄 = Where your files will be placed</li>
+            </ul>
+        </div>
+
+        <h2>🎯 Best Practices</h2>
+
+        <h3>Naming Conventions</h3>
+        <ul>
+            <li>Avoid special characters that aren't allowed in folder names: <code>< > : " | ? *</code></li>
+            <li>Use underscores or hyphens instead of spaces for better compatibility</li>
+            <li>Keep folder names reasonably short but descriptive</li>
+        </ul>
+
+        <h3>Structure Tips</h3>
+        <ul>
+            <li>Don't create too many nested levels (3-4 is usually sufficient)</li>
+            <li>Put the most important identifying information at the top level</li>
+            <li>Use date fields for chronological organization</li>
+            <li>Consider how the structure will look with many cases/files</li>
+        </ul>
+
+        <h2>📚 Example Templates</h2>
+
+        <h3>Legal Document Archive</h3>
+        <pre style="background-color: #13294B; padding: 15px; border-radius: 5px; color: #7BAFD4;">
+{year}_Cases
+  {occurrence_number}_{business_name}
+    {date}_Documents
+      Correspondence
+      Evidence
+      Court_Filings
+</pre>
+
+        <h3>Medical Records</h3>
+        <pre style="background-color: #13294B; padding: 15px; border-radius: 5px; color: #7BAFD4;">
+Patients
+  {occurrence_number}_{technician_name}
+    {date}_Visit
+      Imaging
+      Reports
+      Notes
+</pre>
+
+        <h3>Project Files</h3>
+        <pre style="background-color: #13294B; padding: 15px; border-radius: 5px; color: #7BAFD4;">
+{year}_Projects
+  {business_name}
+    {month}_{occurrence_number}
+      Raw_Files
+      Processed
+      Final_Delivery
+</pre>
+
+        <div class="warning">
+            <strong>⚠️ Important:</strong> Always test your template with sample data before processing important files. Use the Live Preview to verify the structure looks correct!
+        </div>
+
+        <h2>🆘 Troubleshooting</h2>
+
+        <h3>Common Issues</h3>
+        <ul>
+            <li><strong>Fields not appearing in folders:</strong> Make sure the form fields are filled out before processing</li>
+            <li><strong>Can't indent/outdent:</strong> Select the item first by clicking on it</li>
+            <li><strong>Template not saving:</strong> Enter a template name before clicking save</li>
+            <li><strong>Preview shows errors:</strong> Check for invalid characters or missing closing braces in field names</li>
+        </ul>
+
+        <div class="info-box" style="margin-top: 40px; text-align: center;">
+            <h3>🎉 You're Ready!</h3>
+            <p>Start building custom folder structures that perfectly match your workflow. The possibilities are endless!</p>
+        </div>
+    </div>
+</body>
+</html>

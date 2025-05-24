@@ -1,0 +1,13 @@
+{
+  "occurrence_number": "2024-11111",
+  "business_name": "",
+  "location_address": "789 Residential Drive",
+  "extraction_start": "2024-03-10T06:00:00",
+  "extraction_end": "2024-03-10T08:00:00",
+  "time_offset": 0,
+  "dvr_time": "2024-03-10T06:00:00",
+  "real_time": "2024-03-10T06:00:00",
+  "technician_name": "Mike Johnson",
+  "badge_number": "B9999",
+  "upload_timestamp": "2024-03-10T10:30:00"
+}

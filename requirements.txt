@@ -1,0 +1,12 @@
+ # Video Upload Utility Requirements
+#
+# This file specifies the dependencies required for the Video Upload Utility application.
+# Install with: pip install -r requirements.txt
+
+# UI Framework
+PySide6>=6.4.0
+
+# PDF Generation
+reportlab>=3.6.12
+
+# Python version requirement: Python 3.7 or higher is recommended
