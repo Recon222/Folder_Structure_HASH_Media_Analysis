@@ -405,14 +405,29 @@ class MainWindow(QMainWindow):
     def generate_reports(self):
         """Generate PDF reports and hash verification CSV"""
         try:
-            # Get the output directory (same as where files were copied)
-            output_dir = Path(list(self.file_operation_results.values())[0]['dest_path']).parent
+            # Get the output directory structure
+            file_dest_path = Path(list(self.file_operation_results.values())[0]['dest_path'])
+            
+            # Navigate to occurrence number level and create Documents folder
+            # Structure: OccurrenceNumber/Business @ Address/DateTime/
+            # We want: OccurrenceNumber/Documents/Address/
+            occurrence_dir = file_dest_path.parent.parent  # Go up to occurrence number level
+            documents_dir = occurrence_dir / "Documents"
+            
+            # Create location folder inside Documents
+            location_name = self.form_data.location_address or "Unknown_Location"
+            # Sanitize location name for folder
+            location_name = "".join(c for c in location_name if c.isalnum() or c in (' ', '-', '_')).strip()
+            location_name = location_name.replace(' ', '_')
+            
+            reports_output_dir = documents_dir / location_name
+            reports_output_dir.mkdir(parents=True, exist_ok=True)
             
             # Generate reports
             generated = self.report_controller.generate_reports(
                 self.form_data,
                 self.file_operation_results,
-                output_dir
+                reports_output_dir
             )
             
             # Log generated reports
@@ -425,10 +440,13 @@ class MainWindow(QMainWindow):
                                            "Would you like to create ZIP archive(s)?",
                                            QMessageBox.Yes | QMessageBox.No)
                 if reply == QMessageBox.Yes:
-                    self.create_zip_archives(output_dir)
+                    # Pass the original file location for ZIP creation
+                    original_output_dir = file_dest_path.parent
+                    self.create_zip_archives(original_output_dir)
                     
             QMessageBox.information(self, "Reports Generated", 
-                                  f"Reports have been saved to:\n{output_dir}")
+                                  f"Reports have been saved to:\n{reports_output_dir}")                                  
+                                  
                                   
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to generate reports: {str(e)}")

@@ -80,8 +80,15 @@ class ForensicTab(QWidget):
             lambda: self.log_console.log(f"Calculated offset: {self.form_data.time_offset} minutes")
         )
         
+        # Optional: Connect to form_data_changed for validation or live updates
+        # self.form_panel.form_data_changed.connect(self._on_form_data_changed)
+        
         # Files panel signals
         self.files_panel.log_message.connect(self.log)
+        
+        # Log console signals (optional: for external monitoring)
+        # self.log_console.message_logged.connect(self._on_message_logged)
+        # self.log_console.log_cleared.connect(self._on_log_cleared)
         
         # Process button
         self.process_btn.clicked.connect(self.process_requested)
@@ -110,3 +117,40 @@ class ForensicTab(QWidget):
             enabled: Whether to enable the button
         """
         self.process_btn.setEnabled(enabled)
+        
+    # Example signal handlers (uncomment to use)
+    """
+    def _on_form_data_changed(self, field_name: str, value):
+        '''Handle form data changes for validation or live updates
+        
+        Args:
+            field_name: Name of the changed field
+            value: New value
+        '''
+        # Example: Validate occurrence number format
+        if field_name == 'occurrence_number':
+            if value and not value.replace('-', '').isalnum():
+                self.log(f"Warning: Occurrence number contains special characters")
+        
+        # Example: Auto-enable process button when required fields are filled
+        if field_name in ['occurrence_number', 'technician_name']:
+            can_process = bool(self.form_data.occurrence_number and 
+                             self.form_data.technician_name and
+                             self.files_panel.has_files())
+            self.process_btn.setEnabled(can_process)
+    
+    def _on_message_logged(self, timestamp: str, message: str):
+        '''Handle logged messages for external monitoring
+        
+        Args:
+            timestamp: Time when message was logged
+            message: The log message
+        '''
+        # Example: Could save to external log file or send to monitoring service
+        pass
+        
+    def _on_log_cleared(self):
+        '''Handle log clear events'''
+        # Example: Could reset any message counters or states
+        pass
+    """
