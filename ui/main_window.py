@@ -408,20 +408,22 @@ class MainWindow(QMainWindow):
             # Get the output directory structure
             file_dest_path = Path(list(self.file_operation_results.values())[0]['dest_path'])
             
-            # Navigate to occurrence number level and create Documents folder
-            # Structure: OccurrenceNumber/Business @ Address/DateTime/
-            # We want: OccurrenceNumber/Documents/Address/
-            occurrence_dir = file_dest_path.parent.parent  # Go up to occurrence number level
+            # Navigate to root folder (occurrence number level)
+            # Current structure might be: output_base/OccurrenceNumber/Business @ Address/DateTime/
+            # We want: output_base/OccurrenceNumber/Documents/Address/
+            
+            # Find the occurrence number folder by going up until we find the output directory
+            current_path = file_dest_path.parent
+            while current_path != self.output_directory and current_path.parent != self.output_directory:
+                current_path = current_path.parent
+            
+            # current_path should now be the occurrence number folder
+            occurrence_dir = current_path
             documents_dir = occurrence_dir / "Documents"
+            documents_dir.mkdir(parents=True, exist_ok=True)
             
-            # Create location folder inside Documents
-            location_name = self.form_data.location_address or "Unknown_Location"
-            # Sanitize location name for folder
-            location_name = "".join(c for c in location_name if c.isalnum() or c in (' ', '-', '_')).strip()
-            location_name = location_name.replace(' ', '_')
-            
-            reports_output_dir = documents_dir / location_name
-            reports_output_dir.mkdir(parents=True, exist_ok=True)
+            # Reports go directly into Documents folder
+            reports_output_dir = documents_dir
             
             # Generate reports
             generated = self.report_controller.generate_reports(
