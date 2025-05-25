@@ -26,6 +26,7 @@ from core.workers.zip_operations import ZipOperationThread
 from ui.components import FormPanel, FilesPanel, LogConsole
 from ui.styles import CarolinaBlueTheme
 from ui.custom_template_widget import CustomTemplateWidget
+from ui.dialogs import ZipSettingsDialog, AboutDialog, UserSettingsDialog
 from utils.zip_utils import ZipSettings
 
 
@@ -228,12 +229,16 @@ class MainWindow(QMainWindow):
         # Store the output directory for later use
         self.output_directory = Path(output_dir)
         
+        # Get hash calculation preference
+        calculate_hash = self.settings.value('calculate_hashes', True, type=bool)
+        
         # Start file operation
         self.file_thread = self.file_controller.process_forensic_files(
             self.form_data,
             files,
             folders,
-            self.output_directory
+            self.output_directory,
+            calculate_hash
         )
         
         # Connect signals
@@ -275,13 +280,17 @@ class MainWindow(QMainWindow):
             
         self.output_directory = Path(output_dir)
         
+        # Get hash calculation preference
+        calculate_hash = self.settings.value('calculate_hashes', True, type=bool)
+        
         # Process files
         self.file_thread = self.file_controller.process_custom_files(
             self.form_data,
             template_levels,
             files,
             folders,
-            self.output_directory
+            self.output_directory,
+            calculate_hash
         )
         
         # Connect signals
@@ -372,13 +381,17 @@ class MainWindow(QMainWindow):
             
         self.output_directory = Path(output_dir)
         
+        # Get hash calculation preference
+        calculate_hash = self.settings.value('calculate_hashes', True, type=bool)
+        
         # Process files
         self.file_thread = self.file_controller.process_custom_files(
             self.form_data,
             template_levels,
             files,
             folders,
-            self.output_directory
+            self.output_directory,
+            calculate_hash
         )
         
         # Connect signals
@@ -534,72 +547,22 @@ class MainWindow(QMainWindow):
                 
     def show_user_settings(self):
         """Show user settings dialog"""
-        QMessageBox.information(self, "User Settings", "User settings dialog coming soon!")
+        dialog = UserSettingsDialog(self.settings, self)
+        if dialog.exec() == QDialog.Accepted:
+            dialog.save_settings()
+            self.log("User settings saved")
         
     def show_zip_settings(self):
         """Show ZIP settings dialog"""
-        dialog = QDialog(self)
-        dialog.setWindowTitle("ZIP Settings")
-        dialog.setModal(True)
-        
-        layout = QVBoxLayout()
-        
-        # Compression level
-        comp_group = QGroupBox("Compression Level")
-        comp_layout = QVBoxLayout()
-        
-        comp_combo = QComboBox()
-        comp_combo.addItems(["No Compression (Fastest)", "Compressed (Smaller)"])
-        comp_value = self.settings.value('zip_compression', 0)
-        comp_combo.setCurrentIndex(comp_value)
-        comp_layout.addWidget(comp_combo)
-        
-        comp_group.setLayout(comp_layout)
-        layout.addWidget(comp_group)
-        
-        # Create levels
-        level_group = QGroupBox("Create ZIP at Levels")
-        level_layout = QVBoxLayout()
-        
-        zip_root_check = QCheckBox("Root Level (entire structure)")
-        zip_root_check.setChecked(self.settings.value('zip_at_root', True, type=bool))
-        level_layout.addWidget(zip_root_check)
-        
-        zip_location_check = QCheckBox("Location Level (per location)")
-        zip_location_check.setChecked(self.settings.value('zip_at_location', False, type=bool))
-        level_layout.addWidget(zip_location_check)
-        
-        zip_datetime_check = QCheckBox("DateTime Level (per time range)")
-        zip_datetime_check.setChecked(self.settings.value('zip_at_datetime', False, type=bool))
-        level_layout.addWidget(zip_datetime_check)
-        
-        level_group.setLayout(level_layout)
-        layout.addWidget(level_group)
-        
-        # Buttons
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(dialog.accept)
-        buttons.rejected.connect(dialog.reject)
-        layout.addWidget(buttons)
-        
-        dialog.setLayout(layout)
-        
+        dialog = ZipSettingsDialog(self.settings, self)
         if dialog.exec() == QDialog.Accepted:
-            # Save settings
-            comp_level = 0 if comp_combo.currentIndex() == 0 else zipfile.ZIP_DEFLATED
-            self.settings.setValue('zip_compression', comp_combo.currentIndex())
-            self.settings.setValue('zip_compression_level', comp_level)
-            self.settings.setValue('zip_at_root', zip_root_check.isChecked())
-            self.settings.setValue('zip_at_location', zip_location_check.isChecked())
-            self.settings.setValue('zip_at_datetime', zip_datetime_check.isChecked())
+            dialog.save_settings()
             self.log("ZIP settings saved")
         
     def show_about(self):
         """Show about dialog"""
-        QMessageBox.about(self, "About", 
-                         "Folder Structure Utility v2.0\n\n"
-                         "A clean, simple approach to organized file management.\n\n"
-                         "No over-engineering, just functionality.")
+        dialog = AboutDialog(self)
+        dialog.exec()
         
     def closeEvent(self, event):
         """Save settings on close and ensure threads are stopped"""
