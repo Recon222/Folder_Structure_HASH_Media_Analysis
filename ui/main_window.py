@@ -27,6 +27,7 @@ from ui.components import FormPanel, FilesPanel, LogConsole
 from ui.styles import CarolinaBlueTheme
 from ui.custom_template_widget import CustomTemplateWidget
 from ui.dialogs import ZipSettingsDialog, AboutDialog, UserSettingsDialog
+from ui.tabs import ForensicTab
 from utils.zip_utils import ZipSettings
 
 
@@ -102,50 +103,19 @@ class MainWindow(QMainWindow):
         
     def _create_forensic_tab(self):
         """Create the forensic mode tab"""
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
+        forensic_tab = ForensicTab(self.form_data)
         
-        # Main splitter
-        splitter = QSplitter(Qt.Vertical)
+        # Connect signals
+        forensic_tab.process_requested.connect(self.process_forensic_files)
+        forensic_tab.log_message.connect(self.log)
         
-        # Upper section: Form and Files
-        upper_widget = QWidget()
-        upper_layout = QHBoxLayout(upper_widget)
+        # Store references we need
+        self.form_panel = forensic_tab.form_panel
+        self.files_panel = forensic_tab.files_panel
+        self.log_console = forensic_tab.log_console
+        self.process_btn = forensic_tab.process_btn
         
-        # Form panel (left)
-        self.form_panel = FormPanel(self.form_data)
-        self.form_panel.calculate_offset_requested.connect(
-            lambda: self.log_console.log(f"Calculated offset: {self.form_data.time_offset} minutes")
-        )
-        upper_layout.addWidget(self.form_panel)
-        
-        # Files panel (right)
-        self.files_panel = FilesPanel()
-        self.files_panel.log_message.connect(self.log)
-        upper_layout.addWidget(self.files_panel)
-        
-        # Log console (bottom)
-        self.log_console = LogConsole()
-        
-        # Add to splitter
-        splitter.addWidget(upper_widget)
-        splitter.addWidget(self.log_console)
-        splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 1)
-        
-        layout.addWidget(splitter)
-        
-        # Action buttons
-        button_layout = QHBoxLayout()
-        button_layout.addStretch()
-        
-        self.process_btn = QPushButton("Process Files")
-        self.process_btn.clicked.connect(self.process_forensic_files)
-        button_layout.addWidget(self.process_btn)
-        
-        layout.addLayout(button_layout)
-        
-        return widget
+        return forensic_tab
         
     def _create_menu_bar(self):
         """Create the menu bar"""
