@@ -53,14 +53,8 @@ class ReportController:
             
         return generated_reports
         
-    def create_zip_archives(
-        self,
-        base_path: Path,
-        output_directory: Path,
-        progress_callback=None
-    ) -> List[Path]:
-        """Create ZIP archives based on settings"""
-        # Get settings
+    def get_zip_settings(self) -> ZipSettings:
+        """Get ZIP settings for thread creation"""
         settings = ZipSettings()
         settings.compression_level = self.settings.value(
             'zip_compression_level', 
@@ -81,14 +75,23 @@ class ReportController:
             False, 
             type=bool
         )
+        return settings
         
-        # Set output path to be alongside the folder structure
-        # The base_path is the datetime folder, so we go up to get the occurrence folder
-        root_folder = base_path.parents[1]  # This is the occurrence number folder
-        settings.output_path = output_directory  # Save ZIPs in the main output directory
+    def create_zip_archives(
+        self,
+        base_path: Path,
+        output_directory: Path,
+        progress_callback=None
+    ) -> List[Path]:
+        """Legacy method for backward compatibility - consider using get_zip_settings() with ZipOperationThread instead"""
+        settings = self.get_zip_settings()
+        settings.output_path = output_directory
         
         # Create ZIP utility
         zip_util = ZipUtility(progress_callback=progress_callback)
+        
+        # The base_path is the datetime folder, so we go up to get the occurrence folder
+        root_folder = base_path.parents[1]
         
         # Create archives
         created = zip_util.create_multi_level_archives(root_folder, settings)

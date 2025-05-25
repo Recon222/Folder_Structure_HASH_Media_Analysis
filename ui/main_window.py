@@ -22,9 +22,11 @@ import zipfile
 from controllers import FileController, ReportController, FolderController
 from core.models import FormData
 from core.workers import FolderStructureThread
+from core.workers.zip_operations import ZipOperationThread
 from ui.components import FormPanel, FilesPanel, LogConsole
 from ui.styles import CarolinaBlueTheme
 from ui.custom_template_widget import CustomTemplateWidget
+from utils.zip_utils import ZipSettings
 
 
 class MainWindow(QMainWindow):
@@ -449,35 +451,54 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"Failed to generate reports: {str(e)}")
             
     def create_zip_archives(self, base_path: Path):
-        """Create ZIP archives based on settings"""
+        """Create ZIP archives using thread"""
         try:
-            self.progress_bar.setVisible(True)
+            # Create settings
+            settings = ZipSettings()
+            settings.compression_level = self.settings.value('zip_compression_level', zipfile.ZIP_STORED)
+            settings.create_at_root = self.settings.value('zip_at_root', True, type=bool)
+            settings.create_at_location = self.settings.value('zip_at_location', False, type=bool)
+            settings.create_at_datetime = self.settings.value('zip_at_datetime', False, type=bool)
+            settings.output_path = self.output_directory
             
-            # Create archives
-            created = self.report_controller.create_zip_archives(
-                base_path,
+            # Create and start thread
+            self.zip_thread = ZipOperationThread(
+                base_path.parents[1],  # Root folder
                 self.output_directory,
-                progress_callback=lambda pct, msg: (
-                    self.progress_bar.setValue(pct),
-                    self.log(msg)
-                )
+                settings
             )
             
-            self.progress_bar.setVisible(False)
+            # Connect signals
+            self.zip_thread.progress.connect(self.progress_bar.setValue)
+            self.zip_thread.status.connect(self.log)
+            self.zip_thread.finished.connect(self.on_zip_finished)
             
-            if created:
-                self.log(f"Created {len(created)} ZIP archive(s)")
-                # Show where the ZIPs were saved
-                zip_names = [z.name for z in created]
-                QMessageBox.information(self, "ZIP Archives Created", 
-                                      f"Created {len(created)} ZIP archive(s) in:\n{self.output_directory}\n\n"
-                                      f"Files:\n" + "\n".join(zip_names))
-            else:
-                self.log("No ZIP archives created")
-                
+            # Show progress and start
+            self.progress_bar.setVisible(True)
+            self.zip_thread.start()
+            
         except Exception as e:
             self.progress_bar.setVisible(False)
-            QMessageBox.critical(self, "ZIP Error", f"Failed to create ZIP: {str(e)}")
+            QMessageBox.critical(self, "ZIP Error", f"Failed to start ZIP: {str(e)}")
+    
+    def on_zip_finished(self, success: bool, message: str, created_archives: List[Path]):
+        """Handle ZIP operation completion"""
+        self.progress_bar.setVisible(False)
+        
+        if success and created_archives:
+            self.log(f"Created {len(created_archives)} ZIP archive(s)")
+            zip_names = [z.name for z in created_archives]
+            QMessageBox.information(
+                self, 
+                "ZIP Archives Created",
+                f"Created {len(created_archives)} ZIP archive(s) in:\n{self.output_directory}\n\n"
+                f"Files:\n" + "\n".join(zip_names)
+            )
+        else:
+            if not success:
+                QMessageBox.critical(self, "ZIP Error", message)
+            else:
+                self.log("No ZIP archives created")
             
     def log(self, message):
         """Add message to log console"""
@@ -581,7 +602,21 @@ class MainWindow(QMainWindow):
                          "No over-engineering, just functionality.")
         
     def closeEvent(self, event):
-        """Save settings on close"""
+        """Save settings on close and ensure threads are stopped"""
+        # Stop any running threads
+        if hasattr(self, 'zip_thread') and self.zip_thread.isRunning():
+            self.zip_thread.cancel()
+            self.zip_thread.wait()  # Wait for thread to finish
+            
+        if hasattr(self, 'file_thread') and self.file_thread.isRunning():
+            self.file_thread.cancel()
+            self.file_thread.wait()
+            
+        if hasattr(self, 'folder_thread') and self.folder_thread.isRunning():
+            self.folder_thread.cancel()
+            self.folder_thread.wait()
+        
+        # Save settings
         if hasattr(self, 'form_panel'):
             self.settings.setValue('technician_name', self.form_panel.tech_name.text())
             self.settings.setValue('badge_number', self.form_panel.badge_number.text())

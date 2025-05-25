@@ -17,6 +17,18 @@ pip install -r requirements.txt
 python main.py
 ```
 
+### Development Tools
+```bash
+# Install development tools (recommended)
+pip install flake8 black
+
+# Format code
+black .
+
+# Lint code
+flake8 .
+```
+
 ### Dependencies
 - PySide6 >= 6.4.0 (Qt UI framework)
 - reportlab >= 3.6.12 (PDF generation)
@@ -48,6 +60,12 @@ self.occ_number.textChanged.connect(lambda t: setattr(self.form_data, 'occurrenc
 - Templates support nested folder structures via indentation
 - Custom templates saved in QSettings for persistence
 
+#### Error Handling
+- Worker threads emit error signals for graceful error propagation
+- Main window displays QMessageBox for user-facing errors
+- File operation errors are logged to the console widget
+- Hash verification failures are reported but don't stop the operation
+
 ### Module Responsibilities
 
 **core/**
@@ -55,9 +73,18 @@ self.occ_number.textChanged.connect(lambda t: setattr(self.form_data, 'occurrenc
 - `templates.py`: FolderTemplate and FolderBuilder for path generation
 - `file_ops.py`: FileOperations class with hash verification
 - `pdf_gen.py`: PDFGenerator for reports (Time Offset, Technician Log, Hash CSV)
+- `workers/`: QThread subclasses for file and folder operations
+
+**controllers/**
+- `file_controller.py`: Handles file selection and operations
+- `folder_controller.py`: Manages folder structure creation
+- `report_controller.py`: Controls PDF report generation
 
 **ui/**
+- `main_window.py`: Main application window with tab management
+- `components/`: Reusable UI components (files panel, form panel, log console)
 - `custom_template_widget.py`: Custom template builder with drag-drop support, live preview
+- `styles/`: Theme definitions (Carolina Blue color scheme)
 
 **utils/**
 - `zip_utils.py`: Multi-level ZIP archive creation with compression settings
@@ -82,6 +109,13 @@ self.occ_number.textChanged.connect(lambda t: setattr(self.form_data, 'occurrenc
 - Form data can be saved/loaded as JSON for batch processing
 - Progress bars show/hide based on operation state
 
+### Persistent Settings (QSettings)
+- Technician information (name, badge number)
+- ZIP compression preferences and levels
+- Custom templates and saved tabs
+- Window geometry and state
+- Last used directories
+
 ### Custom Mode Template Format
 Templates use Python format strings with available fields:
 - Form fields: {occurrence_number}, {business_name}, {location_address}, etc.
@@ -89,3 +123,14 @@ Templates use Python format strings with available fields:
 - Extraction times: {extraction_start}, {extraction_end}
 
 Indentation in template editor determines folder hierarchy.
+
+### Sample Data
+For testing and development, use the provided sample JSON files:
+- `sample_dev_data.json` - Full form data example with all fields
+- `sample_dev_data2.json` - Alternative test data set
+- `sample_no_business.json` - Minimal data example without business info
+
+Load these via File → Load Form Data in the application.
+
+### Testing
+Note: No automated test suite is currently implemented. Manual testing is required for all changes.

@@ -33,6 +33,10 @@ class ZipUtility:
         self.progress_callback = progress_callback
         self.cancelled = False
         
+    def cancel(self):
+        """Cancel the current ZIP operation"""
+        self.cancelled = True
+        
     def create_archive(self, source_path: Path, output_path: Path, 
                       settings: Optional[ZipSettings] = None) -> bool:
         """
