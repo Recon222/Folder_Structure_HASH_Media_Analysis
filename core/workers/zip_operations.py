@@ -14,18 +14,21 @@ class ZipOperationThread(QThread):
     status = Signal(str)
     finished = Signal(bool, str, list)  # success, message, created_archives
     
-    def __init__(self, base_path: Path, output_directory: Path, settings: ZipSettings):
+    def __init__(self, base_path: Path, output_directory: Path, settings: ZipSettings, 
+                 form_data=None):
         """Initialize ZIP operation thread
         
         Args:
             base_path: Root path for archive creation
             output_directory: Where to save archives
             settings: ZIP settings including compression and locations
+            form_data: Optional FormData for creating descriptive ZIP names
         """
         super().__init__()
         self.base_path = base_path
         self.output_directory = output_directory
         self.settings = settings
+        self.form_data = form_data
         self.zip_util: Optional[ZipUtility] = None
         self._is_cancelled = False
         
@@ -44,7 +47,8 @@ class ZipOperationThread(QThread):
             self.status.emit("Creating ZIP archives...")
             created = self.zip_util.create_multi_level_archives(
                 self.base_path,
-                self.settings
+                self.settings,
+                self.form_data
             )
             
             if self._is_cancelled:

@@ -46,10 +46,17 @@ class ReportController:
         if pdf_gen.generate_technician_log(form_data, tech_log_path):
             generated_reports['technician_log'] = tech_log_path
             
-        # Generate hash verification CSV
-        hash_csv_path = output_dir / "Hash_Verification.csv"
-        if pdf_gen.generate_hash_verification_csv(file_results, hash_csv_path):
-            generated_reports['hash_csv'] = hash_csv_path
+        # Generate hash verification CSV only if hashing was enabled
+        # Check if any file has hash values
+        has_hashes = any(
+            result.get('source_hash') or result.get('dest_hash') 
+            for result in file_results.values()
+        )
+        
+        if has_hashes:
+            hash_csv_path = output_dir / "Hash_Verification.csv"
+            if pdf_gen.generate_hash_verification_csv(file_results, hash_csv_path):
+                generated_reports['hash_csv'] = hash_csv_path
             
         return generated_reports
         

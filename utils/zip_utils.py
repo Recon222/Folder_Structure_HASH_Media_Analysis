@@ -98,13 +98,15 @@ class ZipUtility:
             self._report_progress(0, f"Error: {str(e)}")
             return False
             
-    def create_multi_level_archives(self, root_path: Path, settings: ZipSettings) -> List[Path]:
+    def create_multi_level_archives(self, root_path: Path, settings: ZipSettings, 
+                                   form_data=None) -> List[Path]:
         """
         Create archives at multiple folder levels based on settings
         
         Args:
             root_path: Root directory containing the folder structure
             settings: ZIP settings specifying which levels to compress
+            form_data: Optional FormData for creating descriptive names
             
         Returns:
             List of created archive paths
@@ -120,7 +122,26 @@ class ZipUtility:
             # Create at root level
             if settings.create_at_root and root_path.exists():
                 output = settings.output_path or root_path.parent
-                archive_path = output / make_archive_name(root_path, "_Complete")
+                
+                # Create descriptive name if form_data is provided
+                if form_data:
+                    occurrence = form_data.occurrence_number or "Unknown"
+                    business = form_data.business_name or ""
+                    location = form_data.location_address or ""
+                    
+                    # Build the name: "PR123456 Shoppers Drug Mart @ 405 Belsize Dr. Video Recovery"
+                    name_parts = [occurrence]
+                    if business:
+                        name_parts.append(business)
+                    if location:
+                        name_parts.append(f"@ {location}")
+                    name_parts.append("Video Recovery")
+                    
+                    archive_name = " ".join(name_parts) + ".zip"
+                else:
+                    archive_name = make_archive_name(root_path, "_Complete")
+                    
+                archive_path = output / archive_name
                 if self.create_archive(root_path, archive_path, settings):
                     created_archives.append(archive_path)
                     

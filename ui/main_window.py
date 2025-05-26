@@ -464,11 +464,20 @@ class MainWindow(QMainWindow):
             settings.create_at_datetime = self.settings.value('zip_at_datetime', False, type=bool)
             settings.output_path = self.output_directory
             
+            # Find the occurrence folder for zipping
+            current_path = base_path
+            while current_path != self.output_directory and current_path.parent != self.output_directory:
+                current_path = current_path.parent
+            
+            # current_path should now be the occurrence number folder
+            occurrence_folder = current_path
+            
             # Create and start thread
             self.zip_thread = ZipOperationThread(
-                base_path.parents[1],  # Root folder
+                occurrence_folder,  # Zip the occurrence folder
                 self.output_directory,
-                settings
+                settings,
+                self.form_data
             )
             
             # Connect signals

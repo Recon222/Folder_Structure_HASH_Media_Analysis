@@ -77,7 +77,7 @@ class ForensicTab(QWidget):
         """Connect internal signals"""
         # Form panel signals
         self.form_panel.calculate_offset_requested.connect(
-            lambda: self.log_console.log(f"Calculated offset: {self.form_data.time_offset} minutes")
+            lambda: self.log_console.log(f"Calculated offset: {self.form_data.time_offset}")
         )
         
         # Optional: Connect to form_data_changed for validation or live updates

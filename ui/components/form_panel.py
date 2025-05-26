@@ -7,7 +7,7 @@ Form panel component for case information input
 from PySide6.QtCore import Qt, QDateTime, Signal
 from PySide6.QtWidgets import (
     QGroupBox, QGridLayout, QLabel, QLineEdit,
-    QDateTimeEdit, QHBoxLayout, QPushButton, QSpinBox
+    QDateTimeEdit, QHBoxLayout, QPushButton
 )
 
 from core.models import FormData
@@ -77,10 +77,9 @@ class FormPanel(QGroupBox):
         # Row 5: Time Offset
         layout.addWidget(QLabel("Time Offset:"), 5, 0)
         offset_layout = QHBoxLayout()
-        self.time_offset = QSpinBox()
-        self.time_offset.setRange(-9999, 9999)
-        self.time_offset.setSuffix(" minutes")
-        self.time_offset.valueChanged.connect(lambda v: self._update_field('time_offset', v))
+        self.time_offset = QLineEdit()
+        self.time_offset.setPlaceholderText("e.g., DVR is 1hr 30min AHEAD of realtime")
+        self.time_offset.textChanged.connect(lambda t: self._update_field('time_offset', t))
         offset_layout.addWidget(self.time_offset)
         
         self.calc_offset_btn = QPushButton("Calculate")
@@ -90,21 +89,21 @@ class FormPanel(QGroupBox):
         
         # Row 6: DVR Time
         layout.addWidget(QLabel("DVR Time:"), 6, 0)
-        self.dvr_time = QDateTimeEdit(QDateTime.currentDateTime())
+        self.dvr_time = QDateTimeEdit()
         self.dvr_time.setCalendarPopup(True)
-        self.dvr_time.dateTimeChanged.connect(lambda dt: self._update_field('dvr_time', dt))
+        self.dvr_time.setDateTime(QDateTime())  # Empty/invalid datetime
+        self.dvr_time.setSpecialValueText(" ")  # Show blank when empty
+        self.dvr_time.dateTimeChanged.connect(lambda dt: self._update_field('dvr_time', dt if dt.isValid() else None))
         layout.addWidget(self.dvr_time, 6, 1)
-        # Initialize form data
-        self.form_data.dvr_time = self.dvr_time.dateTime()
         
         # Row 7: Real Time
         layout.addWidget(QLabel("Real Time:"), 7, 0)
-        self.real_time = QDateTimeEdit(QDateTime.currentDateTime())
+        self.real_time = QDateTimeEdit()
         self.real_time.setCalendarPopup(True)
-        self.real_time.dateTimeChanged.connect(lambda dt: self._update_field('real_time', dt))
+        self.real_time.setDateTime(QDateTime())  # Empty/invalid datetime
+        self.real_time.setSpecialValueText(" ")  # Show blank when empty
+        self.real_time.dateTimeChanged.connect(lambda dt: self._update_field('real_time', dt if dt.isValid() else None))
         layout.addWidget(self.real_time, 7, 1)
-        # Initialize form data
-        self.form_data.real_time = self.real_time.dateTime()
         
         # Row 8: Technician Info
         layout.addWidget(QLabel("Technician:"), 8, 0)
@@ -132,8 +131,30 @@ class FormPanel(QGroupBox):
         """Calculate time offset between DVR and real time"""
         if self.form_data.dvr_time and self.form_data.real_time:
             offset_seconds = self.form_data.dvr_time.secsTo(self.form_data.real_time)
-            offset_minutes = offset_seconds // 60
-            self.time_offset.setValue(offset_minutes)
+            
+            # Determine if DVR is ahead or behind
+            if offset_seconds < 0:
+                direction = "AHEAD"
+                offset_seconds = abs(offset_seconds)
+            else:
+                direction = "BEHIND"
+            
+            # Convert to hours, minutes, seconds
+            hours = offset_seconds // 3600
+            minutes = (offset_seconds % 3600) // 60
+            seconds = offset_seconds % 60
+            
+            # Format the string
+            parts = []
+            if hours > 0:
+                parts.append(f"{hours}hr")
+            if minutes > 0:
+                parts.append(f"{minutes}min")
+            if seconds > 0 or (hours == 0 and minutes == 0):
+                parts.append(f"{seconds}sec")
+            
+            offset_text = f"DVR is {' '.join(parts)} {direction} of realtime"
+            self.time_offset.setText(offset_text)
             self.calculate_offset_requested.emit()
             
     def load_from_data(self, form_data: FormData):
@@ -153,4 +174,14 @@ class FormPanel(QGroupBox):
             self.real_time.setDateTime(form_data.real_time)
         if form_data.upload_timestamp:
             self.upload_timestamp.setDateTime(form_data.upload_timestamp)
-        self.time_offset.setValue(form_data.time_offset)
+        # Handle both string and legacy integer formats
+        if isinstance(form_data.time_offset, int):
+            # Convert legacy integer minutes to text format
+            if form_data.time_offset != 0:
+                minutes = abs(form_data.time_offset)
+                direction = "BEHIND" if form_data.time_offset > 0 else "AHEAD"
+                self.time_offset.setText(f"DVR is {minutes}min {direction} of realtime")
+            else:
+                self.time_offset.setText("")
+        else:
+            self.time_offset.setText(form_data.time_offset)

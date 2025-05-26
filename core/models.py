@@ -18,7 +18,7 @@ class FormData:
     location_address: str = ""
     extraction_start: Optional[QDateTime] = None
     extraction_end: Optional[QDateTime] = None
-    time_offset: int = 0
+    time_offset: str = ""  # Text format: "DVR is X hr Y min Z sec AHEAD/BEHIND of realtime"
     dvr_time: Optional[QDateTime] = None
     real_time: Optional[QDateTime] = None
     technician_name: str = ""

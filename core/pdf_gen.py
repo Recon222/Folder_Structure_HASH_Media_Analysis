@@ -96,19 +96,24 @@ class PDFGenerator:
             # Time offset information
             story.append(Paragraph("Time Offset Calculation", self.styles['CustomHeader']))
             
-            if form_data.dvr_time and form_data.real_time:
-                offset_minutes = form_data.time_offset
-                offset_hours = offset_minutes // 60
-                offset_mins = abs(offset_minutes) % 60
-                offset_sign = "+" if offset_minutes >= 0 else "-"
-                
-                time_data = [
-                    ['DVR Time:', form_data.dvr_time.toString('yyyy-MM-dd HH:mm:ss')],
-                    ['Real Time:', form_data.real_time.toString('yyyy-MM-dd HH:mm:ss')],
-                    ['Calculated Offset:', f"{offset_sign}{abs(offset_hours)}h {offset_mins}m ({offset_minutes} minutes)"],
-                    ['', ''],
-                    ['Formula:', 'Real Time = DVR Time + Offset']
-                ]
+            # Check if we have time offset data
+            if form_data.time_offset:
+                # If DVR and real times are provided, show them
+                if form_data.dvr_time and form_data.real_time:
+                    time_data = [
+                        ['DVR Time:', form_data.dvr_time.toString('yyyy-MM-dd HH:mm:ss')],
+                        ['Real Time:', form_data.real_time.toString('yyyy-MM-dd HH:mm:ss')],
+                        ['Time Offset:', form_data.time_offset],
+                        ['', ''],
+                        ['Note:', 'Time offset calculated from DVR and Real Time']
+                    ]
+                else:
+                    # Just show the manually entered offset
+                    time_data = [
+                        ['Time Offset:', form_data.time_offset],
+                        ['', ''],
+                        ['Note:', 'Time offset manually entered']
+                    ]
             else:
                 time_data = [['No time offset data available', '']]
                 
