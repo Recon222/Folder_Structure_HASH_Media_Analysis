@@ -32,7 +32,9 @@ flake8 .
 ### Dependencies
 - PySide6 >= 6.4.0 (Qt UI framework)
 - reportlab >= 3.6.12 (PDF generation)
+- psutil >= 5.9.0 (System monitoring)
 - Python 3.7+
+- Optional: hashwise (for accelerated parallel hashing)
 
 ## Architecture Overview
 
@@ -74,6 +76,14 @@ self.occ_number.textChanged.connect(lambda t: setattr(self.form_data, 'occurrenc
 - `file_ops.py`: FileOperations class with hash verification
 - `pdf_gen.py`: PDFGenerator for reports (Time Offset, Technician Log, Hash CSV)
 - `workers/`: QThread subclasses for file and folder operations
+- **Performance Optimization Modules (New):**
+  - `adaptive_performance.py`: Master controller for performance optimization
+  - `adaptive_file_operations.py`: Adaptive file copying with priority modes
+  - `disk_analyzer.py`: Disk type detection (SSD/HDD/NVMe) and benchmarking
+  - `workload_analyzer.py`: Dynamic threshold calculation and file grouping
+  - `numa_optimizer.py`: NUMA topology detection and CPU affinity
+  - `thermal_manager.py`: CPU temperature monitoring and throttling
+  - `storage_optimizer.py`: Storage queue depth and I/O monitoring
 
 **controllers/**
 - `file_controller.py`: Handles file selection and operations
@@ -134,3 +144,128 @@ Load these via File → Load Form Data in the application.
 
 ### Testing
 Note: No automated test suite is currently implemented. Manual testing is required for all changes.
+
+## Key Architectural Patterns Not Obvious from File Structure
+
+### Dual-Signal Progress Reporting
+All worker threads emit paired `progress(int)` and `status(str)` signals using lambda pattern:
+```python
+lambda pct, msg: (self.progress.emit(pct), self.status.emit(msg))
+```
+
+### Thread Lifecycle Management
+- MainWindow stores thread references as instance variables for proper cleanup
+- `closeEvent` waits for all threads before closing
+- Cancellation via `cancelled` flag, not thread termination
+- Workers check cancellation flag in inner loops
+
+### Component Signal Forwarding
+Components forward signals to maintain loose coupling:
+- ForensicTab → MainWindow signal chain
+- Avoids direct component access
+- Example: `self.log_message.connect(self.parent().log_message.emit)`
+
+### Dynamic Tab Creation from Templates
+Custom templates can spawn persistent tabs:
+1. CustomTemplateWidget emits `create_tab_requested`
+2. MainWindow creates simplified tab with FilesPanel + process button
+3. Each tab maintains independent file selection state
+
+### Report Output Reorganization
+Reports follow specific directory structure:
+- Files: `output/OccurrenceNumber/Business @ Address/DateTime/`
+- Reports: `output/OccurrenceNumber/Documents/`
+- ZIP created at occurrence level to include both
+
+### Time Offset Format Flexibility
+Handles both legacy (integer minutes) and new text formats:
+- Legacy: `120` (minutes)
+- New: `"DVR is 2 hr 0 min 0 sec AHEAD of realtime"`
+- Auto-conversion on JSON load
+
+### Worker Result Pattern
+All workers follow consistent result propagation:
+```python
+finished = pyqtSignal(bool, str, object)  # success, message, results
+```
+Results stored in MainWindow enable operation chaining.
+
+### Form Data as Central State
+- Single FormData instance created in MainWindow
+- Components bind via lambdas: `lambda t: setattr(self.form_data, 'field', t)`
+- No complex state management needed
+- JSON serialization preserves QDateTime objects
+
+### Hash Verification Philosophy
+Optional at multiple levels:
+- Global user preference
+- Thread parameter
+- Failures logged but don't block operation
+- CSV report only if hashes calculated
+
+### Settings Storage Strategy
+All settings in QSettings (no config files):
+- Windows: Registry
+- macOS: plist
+- Linux: .config file
+- Simplifies deployment but less portable
+
+## Advanced Performance Optimization Architecture
+
+### Adaptive Performance Controller
+The `AdaptivePerformanceController` orchestrates all optimizations:
+- Analyzes hardware (disk type, NUMA topology, CPU temperature)
+- Profiles workload characteristics (file sizes, types, patterns)
+- Selects optimal configuration (workers, buffer sizes, priorities)
+- Learns from performance history to improve future operations
+
+### Three Optimization Modes
+1. **LATENCY**: Minimize response time
+   - Limited workers (max 4)
+   - Small buffers (256KB max)
+   - Immediate file processing
+   
+2. **THROUGHPUT**: Maximize total processing speed
+   - Maximum workers (based on hardware)
+   - Large buffers (up to 10MB)
+   - Batch processing by file size
+   
+3. **BALANCED**: Adaptive approach
+   - Dynamic worker allocation
+   - Mixed strategies based on file sizes
+
+### Hardware-Aware Optimizations
+- **Disk Detection**: Identifies SSD/HDD/NVMe and adjusts parallelism
+  - NVMe: Up to 32 workers
+  - SSD: Up to 16 workers  
+  - HDD: Max 2 workers (avoids seek thrashing)
+  
+- **NUMA Support**: Distributes work across CPU nodes for memory locality
+- **Thermal Management**: Reduces workers when CPU temperature is high
+- **I/O Monitoring**: Adjusts queue depth based on storage load
+
+### Dynamic File Grouping
+Files are categorized by adaptive thresholds:
+- **Tiny** (<1MB): Maximum parallelism, batched processing
+- **Small**: High parallelism
+- **Medium**: Moderate parallelism
+- **Large**: Limited parallelism
+- **Huge** (>1GB): Sequential processing, memory-mapped I/O
+
+### Performance Learning
+The system tracks operation metrics and learns optimal configurations:
+```python
+# Metrics tracked per operation
+{
+    'file_size': size,
+    'duration': time,
+    'efficiency': score,
+    'config': {...}
+}
+```
+
+### Integration with Existing Architecture
+- Adaptive operations can replace standard FileOperations
+- Progress callbacks remain compatible
+- Thread cancellation supported
+- Hash calculation optimized with Hashwise when available
