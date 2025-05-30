@@ -73,7 +73,7 @@ class NUMAOptimizer:
                                 numa_nodes[node_id] = cpu_list
                         except (ValueError, OSError):
                             continue
-        except:
+        except Exception as e:
             pass
             
         return numa_nodes
@@ -103,7 +103,7 @@ class NUMAOptimizer:
             else:
                 numa_nodes[0] = list(range(self.cpu_count))
                 
-        except:
+        except Exception as e:
             # Fallback for Windows
             numa_nodes[0] = list(range(self.cpu_count))
             
@@ -156,7 +156,7 @@ class NUMAOptimizer:
                         if mask & (1 << i):
                             cpus.append(i)
                     return cpus if cpus else None
-        except:
+        except Exception as e:
             pass
             
         return None
@@ -236,7 +236,7 @@ class NUMAOptimizer:
                 thread_handle = kernel32.GetCurrentThread()
                 if kernel32.SetThreadAffinityMask(thread_handle, mask):
                     return True
-        except:
+        except Exception as e:
             pass
             
         return False
@@ -254,7 +254,7 @@ class NUMAOptimizer:
                     if 'Xeon' in cpuinfo or 'EPYC' in cpuinfo:
                         # Server CPUs typically have higher bandwidth
                         return 100.0  # GB/s per node
-            except:
+            except Exception as e:
                 pass
                 
         # Default estimates based on node count
@@ -281,7 +281,7 @@ class NUMAOptimizer:
             # Only use NUMA optimization on systems with significant memory
             if total_memory < 32 * 1024 * 1024 * 1024:  # 32GB
                 return False
-        except:
+        except Exception as e:
             pass
             
         return True

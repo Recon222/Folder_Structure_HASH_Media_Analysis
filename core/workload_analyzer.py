@@ -28,7 +28,7 @@ class WorkloadAnalyzer:
             try:
                 if f.exists():
                     sizes.append(f.stat().st_size)
-            except:
+            except Exception as e:
                 continue
                 
         if not sizes:
@@ -135,7 +135,7 @@ class WorkloadAnalyzer:
                     groups['large'].append(file)
                 else:
                     groups['huge'].append(file)
-            except:
+            except Exception as e:
                 continue
         
         # Optimize batches within each group
@@ -227,7 +227,7 @@ class WorkloadAnalyzer:
                     })
                     extensions[ext] += 1
                     total_size += size
-            except:
+            except Exception as e:
                 continue
         
         if not file_info:

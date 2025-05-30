@@ -2,6 +2,7 @@
 import os
 import time
 import platform
+import logging
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from collections import deque
@@ -22,6 +23,7 @@ class StorageQueueMonitor:
         # I/O statistics tracking
         self.io_history = deque(maxlen=60)  # Last 60 samples
         self.last_io_stats = {}
+        self.logger = logging.getLogger(__name__)
         
     def _determine_optimal_queue_depth(self) -> Dict[str, int]:
         """Determine optimal queue depth for each storage device"""
@@ -62,7 +64,7 @@ class StorageQueueMonitor:
                             else:
                                 # SATA SSD
                                 optimal[device.name] = min(16, dev_info['nr_requests'] // 16)
-                    except:
+                    except Exception as e:
                         # Default if can't read device info
                         if 'nvme' in device.name:
                             optimal[device.name] = 32
@@ -99,8 +101,8 @@ class StorageQueueMonitor:
                                 optimal[device_id] = 16
                             else:
                                 optimal[device_id] = 4
-        except:
-            pass
+        except Exception as e:
+            self.logger.debug(f"Storage optimization failed: {e}")
             
         # Default if detection fails
         if not optimal:
@@ -161,7 +163,7 @@ class StorageQueueMonitor:
                         inflight = inflight_file.read_text().strip().split()
                         if len(inflight) >= 2:
                             return int(inflight[0]) + int(inflight[1])
-            except:
+            except Exception as e:
                 pass
                 
         return None
@@ -190,8 +192,8 @@ class StorageQueueMonitor:
                             # Get base device name (remove partition number)
                             device_name = re.sub(r'\d+$', '', parts[i + 1])
                             return device_name
-        except:
-            pass
+        except Exception as e:
+            self.logger.debug(f"Storage optimization failed: {e}")
             
         return None
     
@@ -224,7 +226,7 @@ class StorageQueueMonitor:
                         
                     self.last_io_stats = current_stats
                     
-            except:
+            except Exception as e:
                 pass
                 
             time.sleep(1)  # Sample every second
@@ -251,7 +253,7 @@ class StorageQueueMonitor:
                                     'io_time_ms': int(parts[12]),
                                     'weighted_io_time_ms': int(parts[13])
                                 }
-            except:
+            except Exception as e:
                 pass
                 
         return stats

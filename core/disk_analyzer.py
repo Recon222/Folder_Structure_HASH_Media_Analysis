@@ -4,6 +4,7 @@ import platform
 import os
 import time
 import tempfile
+import logging
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -13,6 +14,7 @@ class DiskAnalyzer:
     def __init__(self):
         self._disk_cache = {}  # Cache disk info to avoid repeated analysis
         self._cache_duration = 300  # 5 minutes
+        self.logger = logging.getLogger(__name__)
         
     def get_disk_info(self, path: Path) -> Dict[str, Any]:
         """Detect disk type and characteristics"""
@@ -45,8 +47,10 @@ class DiskAnalyzer:
                     usage = psutil.disk_usage(partition.mountpoint)
                     disk_info['total_space'] = usage.total
                     disk_info['free_space'] = usage.free
-                except:
-                    pass
+                except (OSError, PermissionError) as e:
+                    self.logger.warning(f"Cannot access disk usage for {partition.mountpoint}: {e}")
+                    disk_info['total_space'] = 0
+                    disk_info['free_space'] = 0
                 
                 # Detect disk type
                 if not disk_info['is_network']:
@@ -106,8 +110,8 @@ class DiskAnalyzer:
                     return 'nvme'
                 else:
                     return 'hdd'
-        except:
-            pass
+        except (subprocess.SubprocessError, FileNotFoundError, Exception) as e:
+            self.logger.debug(f"Windows disk detection failed: {e}")
         
         # Fallback: check for common SSD indicators in the path
         if any(ssd_indicator in str(partition.device).upper() for ssd_indicator in ['SSD', 'NVME']):
@@ -133,8 +137,8 @@ class DiskAnalyzer:
                 with open(rotational_path, 'r') as f:
                     is_rotational = f.read().strip() == '1'
                     return 'hdd' if is_rotational else 'ssd'
-        except:
-            pass
+        except Exception as e:
+            self.logger.debug(f"Linux disk detection failed: {e}")
         
         return 'unknown'
     
@@ -157,8 +161,8 @@ class DiskAnalyzer:
                     return 'nvme'
                 elif 'mechanical' in output or 'hard disk' in output:
                     return 'hdd'
-        except:
-            pass
+        except Exception as e:
+            self.logger.debug(f"macOS disk detection failed: {e}")
         
         return 'unknown'
     

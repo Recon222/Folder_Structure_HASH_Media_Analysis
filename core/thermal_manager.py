@@ -47,11 +47,11 @@ class ThermalManager:
             try:
                 temps = self._get_cpu_temperatures()
                 if temps:
-                    # Calculate average temperature
-                    avg_temp = sum(temps.values()) / len(temps)
-                    max_temp = max(temps.values())
-                    
                     with self._lock:
+                        # Calculate average temperature inside lock
+                        avg_temp = sum(temps.values()) / len(temps)
+                        max_temp = max(temps.values())
+                        
                         # Use max temperature for throttling decisions
                         self.current_temp = max_temp
                         self.temp_history.append((time.time(), max_temp))

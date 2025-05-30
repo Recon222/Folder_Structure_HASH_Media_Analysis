@@ -99,6 +99,10 @@ class AdaptivePerformanceController:
         self.learning_enabled = True
         self.performance_models = {}  # Workload pattern -> optimal config
         
+        # Monitoring control
+        self._monitoring = True
+        self.learning_thread = None
+        
         # Logging
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(log_level)
@@ -450,12 +454,36 @@ class AdaptivePerformanceController:
         
     def _learning_loop(self):
         """Background thread for performance learning"""
-        while True:
+        while self._monitoring:
             time.sleep(60)  # Learn every minute
             try:
                 self.learn_from_performance()
             except Exception as e:
                 self.logger.error(f"Learning error: {e}")
+                
+    def shutdown(self):
+        """Properly cleanup all resources"""
+        self.logger.info("Shutting down performance controller")
+        self._monitoring = False
+        
+        # Stop thermal monitoring
+        if hasattr(self, 'thermal') and self.thermal:
+            self.thermal.stop_monitoring()
+            
+        # Stop storage monitoring
+        if hasattr(self, 'storage') and self.storage:
+            self.storage.stop_monitoring()
+            
+        # Wait for learning thread to finish
+        if self.learning_thread and self.learning_thread.is_alive():
+            self.learning_thread.join(timeout=2.0)
+            
+    def __del__(self):
+        """Ensure cleanup on deletion"""
+        try:
+            self.shutdown()
+        except:
+            pass  # Best effort cleanup
     
     def get_status_report(self) -> Dict[str, Any]:
         """Get comprehensive status report"""

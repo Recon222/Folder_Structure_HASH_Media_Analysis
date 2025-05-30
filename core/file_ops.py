@@ -6,6 +6,7 @@ File operations - copying, hashing, and verification
 
 import shutil
 import hashlib
+import time
 from pathlib import Path
 from typing import List, Dict, Callable, Optional
 import logging
@@ -23,7 +24,7 @@ class FileOperations:
     """Handles file operations with progress reporting"""
     
     def __init__(self, progress_callback: Optional[Callable[[int, str], None]] = None,
-                 use_adaptive: bool = True):
+                 use_adaptive: bool = None):
         """
         Initialize with optional progress callback
         
@@ -33,6 +34,16 @@ class FileOperations:
         """
         self.progress_callback = progress_callback
         self.cancelled = False
+        
+        # Check user settings if not explicitly specified
+        if use_adaptive is None:
+            try:
+                from PySide6.QtCore import QSettings
+                settings = QSettings()
+                use_adaptive = settings.value("performance/adaptive_enabled", False, type=bool)
+            except:
+                use_adaptive = False  # Default to safe mode
+        
         self.use_adaptive = use_adaptive and ADAPTIVE_AVAILABLE
         
         # Initialize adaptive system if available and requested
@@ -70,7 +81,12 @@ class FileOperations:
                 
                 # Convert results to expected format
                 results = {}
+                performance_stats = adaptive_results.get('_performance_stats', {})
+                
                 for file_str, result in adaptive_results.items():
+                    if file_str == '_performance_stats':
+                        continue  # Skip the stats entry
+                        
                     file_path = Path(file_str)
                     if result.get('success', False):
                         results[file_path.name] = {
@@ -83,6 +99,10 @@ class FileOperations:
                     else:
                         # Handle failed files
                         logging.error(f"Failed to copy {file_path.name}: {result.get('error', 'Unknown error')}")
+                
+                # Add performance stats to results for UI display
+                if performance_stats:
+                    results['_performance_stats'] = performance_stats
                         
                 return results
                 
@@ -98,9 +118,13 @@ class FileOperations:
         """Original sequential file copy implementation"""
         results = {}
         
-        # Calculate total size for progress
+        # Performance tracking for sequential mode
+        start_time = time.time()
         total_size = sum(f.stat().st_size for f in files if f.exists())
         copied_size = 0
+        files_completed = 0
+        last_update_time = start_time
+        last_copied_size = 0
         
         # Ensure destination exists
         destination.mkdir(parents=True, exist_ok=True)
@@ -112,10 +136,25 @@ class FileOperations:
             if not file.exists():
                 continue
                 
-            # Report status
+            file_size = file.stat().st_size
+            current_time = time.time()
+            
+            # Calculate current speed for progress message
+            current_speed_mbps = 0.0
+            if current_time - last_update_time >= 1.0:  # Update every second
+                bytes_delta = copied_size - last_copied_size
+                time_delta = current_time - last_update_time
+                if time_delta > 0:
+                    current_speed_mbps = (bytes_delta / time_delta) / (1024 * 1024)
+                last_update_time = current_time
+                last_copied_size = copied_size
+            
+            # Enhanced progress message with speed
+            speed_info = f" @ {current_speed_mbps:.1f} MB/s" if current_speed_mbps > 0 else ""
+            progress_pct = int((copied_size / total_size * 100) if total_size > 0 else 0)
             self._report_progress(
-                int((copied_size / total_size * 100) if total_size > 0 else 0),
-                f"Copying: {file.name}"
+                progress_pct,
+                f"Copying: {file.name} ({files_completed+1}/{len(files)}){speed_info}"
             )
             
             # Calculate source hash if requested
@@ -142,10 +181,28 @@ class FileOperations:
             }
             
             # Update progress
-            copied_size += file.stat().st_size
+            copied_size += file_size
+            files_completed += 1
             
-        # Final progress report
-        self._report_progress(100, f"Completed: {len(results)} files copied")
+        # Calculate completion statistics
+        total_time = time.time() - start_time
+        average_speed_mbps = (copied_size / (1024 * 1024)) / total_time if total_time > 0 else 0
+        
+        # Add performance stats
+        results['_performance_stats'] = {
+            'files_processed': files_completed,
+            'total_bytes': copied_size,
+            'total_time_seconds': total_time,
+            'average_speed_mbps': average_speed_mbps,
+            'peak_speed_mbps': average_speed_mbps,  # Sequential mode doesn't track peaks
+            'total_size_mb': copied_size / (1024 * 1024),
+            'efficiency_score': min(average_speed_mbps / 50, 1.0) if average_speed_mbps > 0 else 0,
+            'mode': 'sequential'
+        }
+        
+        # Final progress report with summary
+        self._report_progress(100, f"Completed: {files_completed} files, "
+                            f"{copied_size/(1024*1024):.1f} MB @ {average_speed_mbps:.1f} MB/s")
         
         return results
     

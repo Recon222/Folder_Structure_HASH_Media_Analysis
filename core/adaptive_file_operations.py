@@ -4,6 +4,7 @@ from pathlib import Path
 import time
 import shutil
 import os
+import platform
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import hashlib
@@ -21,9 +22,121 @@ class AdaptiveFileOperations:
         self.progress_callback = progress_callback
         self.cancelled = False
         
+        # Performance tracking for real-time monitoring
+        self.start_time = None
+        self.total_bytes = 0
+        self.bytes_copied = 0
+        self.files_completed = 0
+        self.total_files = 0
+        self.current_speed_mbps = 0.0
+        self.average_speed_mbps = 0.0
+        self.speed_history = []
+        self.last_update_time = 0
+        self.last_bytes_copied = 0
+        
     def cancel(self):
         """Cancel ongoing operations"""
         self.cancelled = True
+        
+    def _reset_performance_tracking(self, files: List[Path]):
+        """Reset performance tracking for new operation"""
+        self.start_time = time.time()
+        self.total_bytes = sum(f.stat().st_size for f in files if f.exists())
+        self.bytes_copied = 0
+        self.files_completed = 0
+        self.total_files = len(files)
+        self.current_speed_mbps = 0.0
+        self.average_speed_mbps = 0.0
+        self.speed_history = []
+        self.last_update_time = self.start_time
+        self.last_bytes_copied = 0
+        
+    def _update_speed_metrics(self, bytes_copied_delta: int = 0):
+        """Update real-time speed metrics"""
+        current_time = time.time()
+        time_delta = current_time - self.last_update_time
+        
+        if bytes_copied_delta > 0:
+            self.bytes_copied += bytes_copied_delta
+        
+        # Calculate current speed (MB/s) - update every 0.5 seconds minimum
+        if time_delta >= 0.5:
+            bytes_delta = self.bytes_copied - self.last_bytes_copied
+            if time_delta > 0:
+                current_speed_bps = bytes_delta / time_delta
+                self.current_speed_mbps = current_speed_bps / (1024 * 1024)
+                
+                # Add to history (keep last 20 samples for smoothing)
+                self.speed_history.append(self.current_speed_mbps)
+                if len(self.speed_history) > 20:
+                    self.speed_history.pop(0)
+                
+                # Calculate average speed
+                if self.speed_history:
+                    # Use recent average for smoother display
+                    recent_samples = self.speed_history[-5:]
+                    self.current_speed_mbps = sum(recent_samples) / len(recent_samples)
+            
+            self.last_update_time = current_time
+            self.last_bytes_copied = self.bytes_copied
+            
+        # Calculate overall average speed
+        total_time = current_time - self.start_time
+        if total_time > 0:
+            self.average_speed_mbps = self.bytes_copied / (total_time * 1024 * 1024)
+            
+    def _get_progress_message(self, file_name: str = "") -> str:
+        """Generate detailed progress message with speed info"""
+        if self.total_files == 0:
+            return "Preparing..."
+            
+        progress_pct = int((self.files_completed / self.total_files) * 100)
+        
+        # Format file size info
+        if self.total_bytes > 0:
+            copied_mb = self.bytes_copied / (1024 * 1024)
+            total_mb = self.total_bytes / (1024 * 1024)
+            size_info = f" ({copied_mb:.1f}/{total_mb:.1f} MB)"
+        else:
+            size_info = ""
+            
+        # Format speed info
+        if self.current_speed_mbps > 0:
+            speed_info = f" @ {self.current_speed_mbps:.1f} MB/s"
+        else:
+            speed_info = ""
+            
+        # Estimate time remaining
+        if self.current_speed_mbps > 0 and self.total_bytes > 0:
+            remaining_bytes = self.total_bytes - self.bytes_copied
+            remaining_mb = remaining_bytes / (1024 * 1024)
+            eta_seconds = remaining_mb / self.current_speed_mbps
+            
+            if eta_seconds < 60:
+                eta_info = f" (ETA: {eta_seconds:.0f}s)"
+            elif eta_seconds < 3600:
+                eta_info = f" (ETA: {eta_seconds/60:.1f}m)"
+            else:
+                eta_info = f" (ETA: {eta_seconds/3600:.1f}h)"
+        else:
+            eta_info = ""
+            
+        base_msg = f"Processing {file_name} ({self.files_completed}/{self.total_files})"
+        return f"{base_msg}{size_info}{speed_info}{eta_info}"
+        
+    def _get_completion_summary(self) -> Dict[str, Any]:
+        """Generate completion summary with statistics"""
+        total_time = time.time() - self.start_time if self.start_time else 0
+        
+        return {
+            'files_processed': self.files_completed,
+            'total_bytes': self.total_bytes,
+            'total_time_seconds': total_time,
+            'average_speed_mbps': self.average_speed_mbps,
+            'peak_speed_mbps': max(self.speed_history) if self.speed_history else 0,
+            'total_size_mb': self.total_bytes / (1024 * 1024),
+            'efficiency_score': min(self.average_speed_mbps / 100, 1.0) if self.average_speed_mbps > 0 else 0
+        }
         
     def copy_files_adaptive(self, files: List[Path], destination: Path, 
                           calculate_hash: bool = True) -> Dict:
@@ -31,6 +144,9 @@ class AdaptiveFileOperations:
         
         # Reset cancellation flag
         self.cancelled = False
+        
+        # Initialize performance tracking
+        self._reset_performance_tracking(files)
         
         # Ensure destination exists
         destination.mkdir(parents=True, exist_ok=True)
@@ -66,6 +182,17 @@ class AdaptiveFileOperations:
             self.controller.update_performance_metrics(
                 'copy', duration, total_size, success
             )
+            
+        # Add completion statistics to results
+        completion_stats = self._get_completion_summary()
+        results['_performance_stats'] = completion_stats
+        
+        # Log completion summary
+        stats = completion_stats
+        self.logger.info(f"Copy completed: {stats['files_processed']} files, "
+                        f"{stats['total_size_mb']:.1f} MB in {stats['total_time_seconds']:.1f}s "
+                        f"(avg: {stats['average_speed_mbps']:.1f} MB/s, "
+                        f"peak: {stats['peak_speed_mbps']:.1f} MB/s)")
             
         return results
     
@@ -104,10 +231,16 @@ class AdaptiveFileOperations:
                     result = future.result()
                     results[str(file)] = result
                     
+                    # Update performance tracking
+                    self.files_completed += 1
+                    if result.get('success') and result.get('size'):
+                        self._update_speed_metrics(result['size'])
+                    
                     completed += 1
                     if self.progress_callback:
                         progress = int((completed / total) * 100)
-                        self.progress_callback(progress, f"Copied {file.name}")
+                        message = self._get_progress_message(file.name)
+                        self.progress_callback(progress, message)
                         
                 except Exception as e:
                     results[str(file)] = {
@@ -260,10 +393,17 @@ class AdaptiveFileOperations:
             # Copy with optimal buffer
             start_time = time.time()
             
-            if use_direct_io and hasattr(os, 'O_DIRECT'):
+            if (use_direct_io and hasattr(os, 'O_DIRECT') and 
+                platform.system() == 'Linux' and src.stat().st_size > 100_000_000):
                 # Direct I/O for large files (Linux only)
-                self._copy_direct_io(src, dst, buffer_size, hasher)
-            else:
+                try:
+                    self._copy_direct_io(src, dst, buffer_size, hasher)
+                except (ValueError, OSError) as e:
+                    # Fall back to standard I/O if Direct I/O fails
+                    self.logger.warning(f"Direct I/O failed for {src.name}, using standard I/O: {e}")
+                    use_direct_io = False
+            
+            if not use_direct_io:
                 # Standard buffered I/O
                 with open(src, 'rb') as fsrc:
                     with open(dst, 'wb') as fdst:
@@ -303,8 +443,14 @@ class AdaptiveFileOperations:
         return result
     
     def _copy_direct_io(self, src: Path, dst: Path, buffer_size: int,
-                       hasher: Optional[hashlib._Hash]) -> None:
+                       hasher: Optional[object]) -> None:
         """Copy using direct I/O (Linux only)"""
+        import platform
+        
+        # Only support Direct I/O on Linux systems
+        if platform.system() != 'Linux' or not hasattr(os, 'O_DIRECT'):
+            raise ValueError("Direct I/O not supported on this platform")
+        
         # Direct I/O requires aligned buffers
         aligned_buffer_size = (buffer_size + 511) & ~511  # Align to 512 bytes
         

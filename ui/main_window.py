@@ -28,11 +28,12 @@ from ui.styles import CarolinaBlueTheme
 from ui.custom_template_widget import CustomTemplateWidget
 from ui.dialogs import ZipSettingsDialog, AboutDialog, UserSettingsDialog
 try:
-    from ui.dialogs.performance_settings import PerformanceSettingsDialog
+    from ui.dialogs.performance_settings_safe import PerformanceSettingsDialog
     PERFORMANCE_UI_AVAILABLE = True
 except ImportError:
     PERFORMANCE_UI_AVAILABLE = False
 from ui.tabs import ForensicTab
+from ui.tabs.batch_tab import BatchTab
 from utils.zip_utils import ZipSettings
 
 
@@ -47,6 +48,7 @@ class MainWindow(QMainWindow):
         self.settings = QSettings('FolderStructureUtility', 'Settings')
         self.file_operation_results = {}  # Store results for PDF generation
         self.output_directory = None
+        self.last_output_directory = None
         
         # Initialize controllers
         self.file_controller = FileController()
@@ -63,6 +65,10 @@ class MainWindow(QMainWindow):
         
         # Initialize performance monitoring
         self.setup_performance_monitoring()
+        
+        # Current operation tracking
+        self.current_copy_speed = 0.0
+        self.operation_active = False
         
         # Show ready
         self.status_bar.showMessage("Ready")
@@ -97,6 +103,11 @@ class MainWindow(QMainWindow):
         
         self.tabs.addTab(self.custom_template_widget, "Custom Mode")
         
+        # Batch Processing tab
+        self.batch_tab = BatchTab(self.form_data, self)
+        self.batch_tab.log_message.connect(self.log)
+        self.tabs.addTab(self.batch_tab, "Batch Processing")
+        
         # Add tabs to layout
         layout.addWidget(self.tabs)
         
@@ -108,6 +119,9 @@ class MainWindow(QMainWindow):
         # Status bar
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
+        
+        # Connect batch tab status messages
+        self.batch_tab.status_message.connect(self.status_bar.showMessage)
         
         # Add performance indicators to status bar
         self.setup_status_bar_monitoring()
@@ -214,6 +228,7 @@ class MainWindow(QMainWindow):
             
         # Store the output directory for later use
         self.output_directory = Path(output_dir)
+        self.last_output_directory = self.output_directory
         
         # Get hash calculation preference
         calculate_hash = self.settings.value('calculate_hashes', True, type=bool)
@@ -235,6 +250,7 @@ class MainWindow(QMainWindow):
         # Disable UI and show progress
         self.process_btn.setEnabled(False)
         self.progress_bar.setVisible(True)
+        self.operation_active = True
         
         self.file_thread.start()
         
@@ -265,6 +281,7 @@ class MainWindow(QMainWindow):
             return
             
         self.output_directory = Path(output_dir)
+        self.last_output_directory = self.output_directory
         
         # Get hash calculation preference
         calculate_hash = self.settings.value('calculate_hashes', True, type=bool)
@@ -286,6 +303,7 @@ class MainWindow(QMainWindow):
         
         self.process_btn.setEnabled(False)
         self.progress_bar.setVisible(True)
+        self.operation_active = True
         
         self.file_thread.start()
         
@@ -366,6 +384,7 @@ class MainWindow(QMainWindow):
             return
             
         self.output_directory = Path(output_dir)
+        self.last_output_directory = self.output_directory
         
         # Get hash calculation preference
         calculate_hash = self.settings.value('calculate_hashes', True, type=bool)
@@ -387,6 +406,7 @@ class MainWindow(QMainWindow):
         
         self.process_btn.setEnabled(False)
         self.progress_bar.setVisible(True)
+        self.operation_active = True
         
         self.file_thread.start()
         
@@ -398,15 +418,44 @@ class MainWindow(QMainWindow):
         """Handle operation completion"""
         self.progress_bar.setVisible(False)
         self.process_btn.setEnabled(True)
+        self.operation_active = False
+        self.current_copy_speed = 0.0
+        
+        # Reset status label
+        if hasattr(self, 'copy_speed_label'):
+            self.copy_speed_label.setText("Ready")
+            self.copy_speed_label.setStyleSheet("padding: 0 10px; font-weight: bold;")
         
         if success:
             # Store results for potential PDF generation
             self.file_operation_results = results
             
+            # Format completion message with performance stats
+            completion_message = "Files copied successfully!"
+            performance_stats = results.get('_performance_stats', {})
+            
+            if performance_stats:
+                files_count = performance_stats.get('files_processed', 0)
+                total_mb = performance_stats.get('total_size_mb', 0)
+                total_time = performance_stats.get('total_time_seconds', 0)
+                avg_speed = performance_stats.get('average_speed_mbps', 0)
+                peak_speed = performance_stats.get('peak_speed_mbps', 0)
+                mode = performance_stats.get('mode', 'unknown')
+                
+                stats_text = f"\n\n📊 Performance Summary:\n"
+                stats_text += f"Files: {files_count}\n"
+                stats_text += f"Size: {total_mb:.1f} MB\n"
+                stats_text += f"Time: {total_time:.1f} seconds\n"
+                stats_text += f"Average Speed: {avg_speed:.1f} MB/s\n"
+                if peak_speed > avg_speed:
+                    stats_text += f"Peak Speed: {peak_speed:.1f} MB/s\n"
+                stats_text += f"Mode: {mode.title()}"
+                
+                completion_message += stats_text
+            
             # Ask user if they want to generate reports
             reply = QMessageBox.question(self, "Generate Reports?",
-                                       "Files copied successfully!\n\n"
-                                       "Would you like to generate PDF reports?",
+                                       completion_message + "\n\nWould you like to generate PDF reports?",
                                        QMessageBox.Yes | QMessageBox.No)
             
             if reply == QMessageBox.Yes:
@@ -534,6 +583,31 @@ class MainWindow(QMainWindow):
             self.log_console.log(message)
         self.status_bar.showMessage(message, 3000)
         
+        # Debug: Print all messages during operation
+        if self.operation_active:
+            print(f"[DEBUG] Operation message: {message}")
+            
+        # Extract speed information from status messages
+        if self.operation_active and " @ " in message:
+            try:
+                speed_part = message.split(" @ ")[1]
+                if "MB/s" in speed_part:
+                    speed_str = speed_part.split("MB/s")[0].strip()
+                    self.current_copy_speed = float(speed_str)
+                    # Update the label immediately
+                    if hasattr(self, 'copy_speed_label'):
+                        self.copy_speed_label.setText(f"{self.current_copy_speed:.1f} MB/s")
+                        self.copy_speed_label.setStyleSheet("padding: 0 10px; font-weight: bold; color: green;")
+                        print(f"[DEBUG] Updated speed to: {self.current_copy_speed:.1f} MB/s")
+            except (ValueError, IndexError) as e:
+                print(f"[DEBUG] Error parsing speed: {e}")
+        
+        # Also update when we see "Copying:" messages
+        if self.operation_active and "Copying:" in message:
+            if hasattr(self, 'copy_speed_label'):
+                self.copy_speed_label.setText("Processing...")
+                self.copy_speed_label.setStyleSheet("padding: 0 10px; font-weight: bold; color: blue;")
+        
     def load_json(self):
         """Load form data from JSON"""
         file, _ = QFileDialog.getOpenFileName(self, "Load JSON", "", "JSON Files (*.json)")
@@ -630,34 +704,39 @@ class MainWindow(QMainWindow):
         
     def setup_status_bar_monitoring(self):
         """Set up performance monitoring in status bar"""
-        try:
-            import psutil
-            
-            # Create status bar widgets
-            self.cpu_label = QLabel("CPU: 0%")
-            self.memory_label = QLabel("RAM: 0%")
-            self.performance_label = QLabel("Standard Mode")
-            
-            # Add to status bar (right side)
-            self.status_bar.addPermanentWidget(self.performance_label)
-            self.status_bar.addPermanentWidget(self.memory_label)
-            self.status_bar.addPermanentWidget(self.cpu_label)
-            
-        except ImportError:
-            # psutil not available
-            pass
+        # Create mode indicator
+        self.performance_label = QLabel("Standard Mode")
+        self.performance_label.setStyleSheet("padding: 0 10px;")
+        
+        # Add separator
+        sep = QLabel("|")
+        sep.setStyleSheet("color: gray; padding: 0 5px;")
+        
+        # Copy speed indicator
+        self.copy_speed_label = QLabel("Ready")
+        self.copy_speed_label.setStyleSheet("padding: 0 10px; font-weight: bold;")
+        
+        # Add to status bar
+        self.status_bar.addPermanentWidget(self.performance_label)
+        self.status_bar.addPermanentWidget(sep)
+        self.status_bar.addPermanentWidget(self.copy_speed_label)
             
     def setup_performance_monitoring(self):
         """Initialize performance monitoring timer"""
         try:
             import psutil
+            from collections import deque
+            
+            # Initialize CPU sampling buffer for smooth averaging
+            self.cpu_samples = deque(maxlen=5)
             
             # Check if adaptive mode is enabled
             adaptive_enabled = self.settings.value("performance/adaptive_enabled", True, type=bool)
-            if adaptive_enabled:
-                self.performance_label.setText("Adaptive Mode")
-            else:
-                self.performance_label.setText("Standard Mode")
+            if hasattr(self, 'performance_label'):
+                if adaptive_enabled:
+                    self.performance_label.setText("Adaptive Mode")
+                else:
+                    self.performance_label.setText("Standard Mode")
             
             # Start monitoring timer
             self.performance_timer = QTimer()
@@ -673,28 +752,39 @@ class MainWindow(QMainWindow):
         try:
             import psutil
             
-            # Update CPU usage
-            cpu_percent = psutil.cpu_percent(interval=0.1)
-            self.cpu_label.setText(f"CPU: {cpu_percent:.0f}%")
+            # Non-blocking CPU check
+            cpu_percent = psutil.cpu_percent(interval=0)
+            if not hasattr(self, 'cpu_samples'):
+                from collections import deque
+                self.cpu_samples = deque(maxlen=5)
+            
+            self.cpu_samples.append(cpu_percent)
+            avg_cpu = sum(self.cpu_samples) / len(self.cpu_samples) if self.cpu_samples else 0
+            
+            if hasattr(self, 'cpu_label'):
+                self.cpu_label.setText(f"CPU: {avg_cpu:.0f}%")
+                
+                # Color code based on usage
+                if avg_cpu > 80:
+                    self.cpu_label.setStyleSheet("color: red;")
+                elif avg_cpu > 60:
+                    self.cpu_label.setStyleSheet("color: orange;")
+                else:
+                    self.cpu_label.setStyleSheet("")
             
             # Update memory usage
             memory = psutil.virtual_memory()
-            self.memory_label.setText(f"RAM: {memory.percent:.0f}%")
-            
-            # Color code based on usage
-            if cpu_percent > 80:
-                self.cpu_label.setStyleSheet("color: red;")
-            elif cpu_percent > 60:
-                self.cpu_label.setStyleSheet("color: orange;")
-            else:
-                self.cpu_label.setStyleSheet("")
+            if hasattr(self, 'memory_label'):
+                self.memory_label.setText(f"RAM: {memory.percent:.0f}%")
                 
-            if memory.percent > 85:
-                self.memory_label.setStyleSheet("color: red;")
-            elif memory.percent > 70:
-                self.memory_label.setStyleSheet("color: orange;")
-            else:
-                self.memory_label.setStyleSheet("")
+                if memory.percent > 85:
+                    self.memory_label.setStyleSheet("color: red;")
+                elif memory.percent > 70:
+                    self.memory_label.setStyleSheet("color: orange;")
+                else:
+                    self.memory_label.setStyleSheet("")
+            
+            # Don't update copy speed here - it's updated in log() method
                 
         except (ImportError, AttributeError):
             pass
