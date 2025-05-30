@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Folder Structure Utility - A PySide6 (Qt) application for professional file organization and evidence management. The app has two main modes: Forensic Mode (law enforcement) and Custom Mode (flexible template building).
+Folder Structure Utility - A high-performance PySide6 (Qt) application for professional file organization and evidence management. Features an advanced adaptive performance optimization system that automatically adjusts to hardware capabilities. The app has two main modes: Forensic Mode (law enforcement) and Custom Mode (flexible template building).
 
 ## Commands
 
@@ -40,9 +40,11 @@ flake8 .
 
 ### Core Application Flow
 1. **main.py** initializes MainWindow with tabs for Forensic and Custom modes
-2. User fills FormData fields which are bound to UI widgets via lambda connections
-3. File operations run in separate QThreads (FileOperationThread, FolderStructureThread) to maintain UI responsiveness
-4. Results trigger PDF generation and optional ZIP creation
+2. **Adaptive Performance System** analyzes hardware (disk type, CPU, thermal state) on startup
+3. User fills FormData fields which are bound to UI widgets via lambda connections
+4. File operations use **AdaptiveFileOperations** with automatic hardware optimization
+5. Operations run in separate QThreads (FileOperationThread, FolderStructureThread) to maintain UI responsiveness
+6. Results trigger PDF generation and optional ZIP creation
 
 ### Key Architectural Patterns
 
@@ -91,9 +93,10 @@ self.occ_number.textChanged.connect(lambda t: setattr(self.form_data, 'occurrenc
 - `report_controller.py`: Controls PDF report generation
 
 **ui/**
-- `main_window.py`: Main application window with tab management
+- `main_window.py`: Main application window with tab management and performance monitoring
 - `components/`: Reusable UI components (files panel, form panel, log console)
 - `custom_template_widget.py`: Custom template builder with drag-drop support, live preview
+- `dialogs/performance_settings.py`: Performance configuration dialog with real-time monitoring
 - `styles/`: Theme definitions (Carolina Blue color scheme)
 
 **utils/**
@@ -265,7 +268,23 @@ The system tracks operation metrics and learns optimal configurations:
 ```
 
 ### Integration with Existing Architecture
-- Adaptive operations can replace standard FileOperations
-- Progress callbacks remain compatible
-- Thread cancellation supported
-- Hash calculation optimized with Hashwise when available
+- **Seamless Integration**: FileOperations automatically uses adaptive system when available
+- **Graceful Fallback**: Falls back to sequential processing if adaptive system fails
+- **Compatible API**: Results converted to match expected format for existing code
+- **Progress callbacks remain compatible** with both systems
+- **Thread cancellation supported** across all optimization modes
+- **Hash calculation optimized** with Hashwise when available
+- **Real-time monitoring** via status bar indicators (CPU/RAM usage, optimization mode)
+
+### Performance Optimization Integration Points
+- **core/file_ops.py**: Main integration point - automatically uses AdaptiveFileOperations
+- **ui/main_window.py**: Performance monitoring, settings menu, status bar indicators
+- **ui/dialogs/performance_settings.py**: User configuration interface
+- **QSettings integration**: All performance preferences stored in user settings
+
+### Key Performance Features for Development
+- **Hardware Detection**: Automatically optimizes based on SSD/HDD/NVMe detection
+- **Workload Analysis**: Files grouped by size for optimal processing strategies
+- **Thermal Management**: Reduces performance when CPU temperature exceeds thresholds
+- **Learning System**: Performance improves over time based on operation history
+- **Three Modes**: Latency (responsive), Throughput (maximum speed), Balanced (auto-adapt)

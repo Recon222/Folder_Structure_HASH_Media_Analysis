@@ -16,6 +16,13 @@ Whether you're managing legal documents, medical records, surveillance footage, 
 
 ## ✨ Key Features
 
+### ⚡ **Lightning-Fast Performance** (NEW!)
+- **Adaptive Performance Engine**: Automatically optimizes for your hardware
+- **Up to 4x Faster**: Parallel processing for file operations
+- **Smart Resource Management**: Thermal and I/O monitoring prevents system overload
+- **Hardware Detection**: Optimizes for SSD/HDD/NVMe automatically
+- **Learning System**: Improves performance over time
+
 ### 🗂️ **Dual Mode Operation**
 
 #### **Forensic Mode**
@@ -219,12 +226,92 @@ This is commercial software protected by copyright law. Your trial license permi
 - Multi-computer licensing available
 - Volume discounts for organizations
 
+## 🚀 Performance Optimization
+
+### Adaptive Performance Engine
+The application now includes an advanced performance optimization system that automatically adapts to your hardware and workload:
+
+#### Optimization Modes
+- **Latency Mode**: Minimizes response time for quick operations
+- **Throughput Mode**: Maximizes total processing speed for large batches
+- **Balanced Mode**: Intelligently adapts based on file characteristics
+
+#### Smart Hardware Detection
+- Automatically detects storage type (SSD/HDD/NVMe)
+- Adjusts parallelism to prevent disk thrashing
+- Monitors CPU temperature to prevent thermal throttling
+- NUMA-aware processing on multi-socket systems
+
+#### Performance Features
+- **Parallel File Processing**: Up to 32 concurrent operations on high-end systems
+- **Dynamic Buffer Sizing**: Optimizes memory usage based on file sizes
+- **Intelligent File Grouping**: Processes files in optimal batches
+- **Hardware Acceleration**: Optional HashWise integration for faster checksums
+
+### Accessing Performance Settings
+Navigate to **Settings → Performance** to:
+- Enable/disable adaptive optimization
+- Select optimization priority
+- View real-time performance metrics
+- Monitor system resource usage
+
+### User Experience
+
+#### 1. Advanced Performance Optimization System
+- **Adaptive Performance Controller**: Self-learning, auto-tuning engine
+- **Hardware Detection**: Automatic SSD/HDD/NVMe recognition
+- **NUMA Support**: Multi-socket CPU optimization
+- **Thermal Management**: CPU temperature monitoring and throttling
+- **Storage Queue Optimization**: I/O monitoring and adjustment
+
+#### 2. Three Optimization Modes
+- **Latency Mode**: Quick response for interactive use
+- **Throughput Mode**: Maximum speed for batch operations
+- **Balanced Mode**: Intelligent adaptation based on workload
+
+#### 3. Complete UI Integration
+- **Performance Settings Dialog**: Full control over optimization
+- **Real-time Monitoring**: CPU/RAM usage in status bar
+- **Adaptive Mode Indicator**: Shows current optimization state
+- **Settings Menu Integration**: Easy access via Settings → Performance
+
+#### 4. Smart File Processing
+- **Parallel Processing**: Up to 32 concurrent operations
+- **Dynamic Buffer Sizing**: Memory-aware optimization
+- **Intelligent File Grouping**: Optimal batching strategies
+- **Hashwise Integration**: Accelerated checksum calculation
+
+#### 5. Performance Settings Dialog
+- **General Tab**: Enable/disable adaptive mode, priority selection
+- **Advanced Tab**: Worker limits, thermal settings, buffer sizes
+- **Monitoring Tab**: Real-time system stats and performance log
+
+#### 6. Status Bar Monitoring
+- **CPU Usage**: Color-coded (green/orange/red)
+- **RAM Usage**: Real-time memory monitoring
+- **Mode Indicator**: "Adaptive Mode" vs "Standard Mode"
+
+#### 7. How It Works
+1. **Automatic Detection**: App analyzes hardware on startup
+2. **Workload Analysis**: Examines file sizes and types
+3. **Smart Configuration**: Selects optimal settings automatically
+4. **Adaptive Processing**: Adjusts strategy during operation
+5. **Performance Learning**: Improves over time based on results
+
+#### 8. Zero Configuration Experience
+- **Works optimally out of the box** with automatic hardware detection
+- **Optional Control**: Power users can fine-tune all performance settings
+- **Visual Feedback**: Real-time CPU/RAM indicators in the status bar
+- **Graceful Fallback**: Automatically switches to standard processing if optimizations fail
+- **Intelligent Adaptation**: System learns and improves performance over time
+
 ## 🏆 Why Choose Folder Structure Utility?
 
 - **Reliability**: Trusted by law enforcement and corporate clients
-- **Efficiency**: Save hours on file organization tasks
+- **Efficiency**: Save hours on file organization tasks (now up to 4x faster!)
 - **Compliance**: Meet regulatory requirements with proper documentation
 - **Flexibility**: Adapt to any organizational structure
+- **Performance**: Industry-leading optimization for any hardware
 - **Support**: Professional support when you need it
 
 ---

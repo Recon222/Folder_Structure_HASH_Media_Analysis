@@ -9,13 +9,13 @@ from pathlib import Path
 from typing import List
 import json
 
-from PySide6.QtCore import Qt, QSettings, QDateTime
+from PySide6.QtCore import Qt, QSettings, QDateTime, QTimer
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QMainWindow, QTabWidget, QVBoxLayout, QWidget,
     QProgressBar, QStatusBar, QFileDialog, QMessageBox,
     QSplitter, QHBoxLayout, QDialog, QDialogButtonBox,
-    QGroupBox, QComboBox, QCheckBox, QPushButton
+    QGroupBox, QComboBox, QCheckBox, QPushButton, QLabel
 )
 import zipfile
 
@@ -27,6 +27,11 @@ from ui.components import FormPanel, FilesPanel, LogConsole
 from ui.styles import CarolinaBlueTheme
 from ui.custom_template_widget import CustomTemplateWidget
 from ui.dialogs import ZipSettingsDialog, AboutDialog, UserSettingsDialog
+try:
+    from ui.dialogs.performance_settings import PerformanceSettingsDialog
+    PERFORMANCE_UI_AVAILABLE = True
+except ImportError:
+    PERFORMANCE_UI_AVAILABLE = False
 from ui.tabs import ForensicTab
 from utils.zip_utils import ZipSettings
 
@@ -55,6 +60,9 @@ class MainWindow(QMainWindow):
         self._setup_ui()
         self._apply_theme()
         self._load_settings()
+        
+        # Initialize performance monitoring
+        self.setup_performance_monitoring()
         
         # Show ready
         self.status_bar.showMessage("Ready")
@@ -100,6 +108,9 @@ class MainWindow(QMainWindow):
         # Status bar
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
+        
+        # Add performance indicators to status bar
+        self.setup_status_bar_monitoring()
         
     def _create_forensic_tab(self):
         """Create the forensic mode tab"""
@@ -148,6 +159,11 @@ class MainWindow(QMainWindow):
         zip_settings_action = QAction("ZIP Settings", self)
         zip_settings_action.triggered.connect(self.show_zip_settings)
         settings_menu.addAction(zip_settings_action)
+        
+        if PERFORMANCE_UI_AVAILABLE:
+            performance_action = QAction("Performance Settings", self)
+            performance_action.triggered.connect(self.show_performance_settings)
+            settings_menu.addAction(performance_action)
         
         # Help menu
         help_menu = menubar.addMenu("Help")
@@ -557,6 +573,34 @@ class MainWindow(QMainWindow):
         if dialog.exec() == QDialog.Accepted:
             dialog.save_settings()
             self.log("ZIP settings saved")
+            
+    def show_performance_settings(self):
+        """Show performance settings dialog"""
+        if PERFORMANCE_UI_AVAILABLE:
+            dialog = PerformanceSettingsDialog(self)
+            dialog.settings_changed.connect(self.on_performance_settings_changed)
+            dialog.exec()
+        else:
+            QMessageBox.information(
+                self, "Performance Settings", 
+                "Performance optimization modules are not available.\n"
+                "Install required dependencies to enable this feature."
+            )
+            
+    def on_performance_settings_changed(self):
+        """Handle performance settings changes"""
+        self.log("Performance settings updated")
+        
+        # Update performance mode indicator
+        try:
+            adaptive_enabled = self.settings.value("performance/adaptive_enabled", True, type=bool)
+            if hasattr(self, 'performance_label'):
+                if adaptive_enabled:
+                    self.performance_label.setText("Adaptive Mode")
+                else:
+                    self.performance_label.setText("Standard Mode")
+        except:
+            pass
         
     def show_about(self):
         """Show about dialog"""
@@ -583,3 +627,74 @@ class MainWindow(QMainWindow):
             self.settings.setValue('technician_name', self.form_panel.tech_name.text())
             self.settings.setValue('badge_number', self.form_panel.badge_number.text())
         event.accept()
+        
+    def setup_status_bar_monitoring(self):
+        """Set up performance monitoring in status bar"""
+        try:
+            import psutil
+            
+            # Create status bar widgets
+            self.cpu_label = QLabel("CPU: 0%")
+            self.memory_label = QLabel("RAM: 0%")
+            self.performance_label = QLabel("Standard Mode")
+            
+            # Add to status bar (right side)
+            self.status_bar.addPermanentWidget(self.performance_label)
+            self.status_bar.addPermanentWidget(self.memory_label)
+            self.status_bar.addPermanentWidget(self.cpu_label)
+            
+        except ImportError:
+            # psutil not available
+            pass
+            
+    def setup_performance_monitoring(self):
+        """Initialize performance monitoring timer"""
+        try:
+            import psutil
+            
+            # Check if adaptive mode is enabled
+            adaptive_enabled = self.settings.value("performance/adaptive_enabled", True, type=bool)
+            if adaptive_enabled:
+                self.performance_label.setText("Adaptive Mode")
+            else:
+                self.performance_label.setText("Standard Mode")
+            
+            # Start monitoring timer
+            self.performance_timer = QTimer()
+            self.performance_timer.timeout.connect(self.update_performance_status)
+            self.performance_timer.start(2000)  # Update every 2 seconds
+            
+        except (ImportError, AttributeError):
+            # Monitoring not available
+            pass
+            
+    def update_performance_status(self):
+        """Update performance indicators in status bar"""
+        try:
+            import psutil
+            
+            # Update CPU usage
+            cpu_percent = psutil.cpu_percent(interval=0.1)
+            self.cpu_label.setText(f"CPU: {cpu_percent:.0f}%")
+            
+            # Update memory usage
+            memory = psutil.virtual_memory()
+            self.memory_label.setText(f"RAM: {memory.percent:.0f}%")
+            
+            # Color code based on usage
+            if cpu_percent > 80:
+                self.cpu_label.setStyleSheet("color: red;")
+            elif cpu_percent > 60:
+                self.cpu_label.setStyleSheet("color: orange;")
+            else:
+                self.cpu_label.setStyleSheet("")
+                
+            if memory.percent > 85:
+                self.memory_label.setStyleSheet("color: red;")
+            elif memory.percent > 70:
+                self.memory_label.setStyleSheet("color: orange;")
+            else:
+                self.memory_label.setStyleSheet("")
+                
+        except (ImportError, AttributeError):
+            pass

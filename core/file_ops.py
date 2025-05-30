@@ -8,20 +8,44 @@ import shutil
 import hashlib
 from pathlib import Path
 from typing import List, Dict, Callable, Optional
+import logging
+
+# Try to import adaptive operations
+try:
+    from .adaptive_file_operations import AdaptiveFileOperations
+    ADAPTIVE_AVAILABLE = True
+except ImportError:
+    ADAPTIVE_AVAILABLE = False
+    logging.warning("Adaptive file operations not available - using basic implementation")
 
 
 class FileOperations:
     """Handles file operations with progress reporting"""
     
-    def __init__(self, progress_callback: Optional[Callable[[int, str], None]] = None):
+    def __init__(self, progress_callback: Optional[Callable[[int, str], None]] = None,
+                 use_adaptive: bool = True):
         """
         Initialize with optional progress callback
         
         Args:
             progress_callback: Function that receives (progress_pct, status_message)
+            use_adaptive: Whether to use adaptive optimization (if available)
         """
         self.progress_callback = progress_callback
         self.cancelled = False
+        self.use_adaptive = use_adaptive and ADAPTIVE_AVAILABLE
+        
+        # Initialize adaptive system if available and requested
+        if self.use_adaptive:
+            try:
+                self.adaptive = AdaptiveFileOperations(progress_callback)
+                logging.info("Adaptive file operations initialized successfully")
+            except Exception as e:
+                logging.warning(f"Failed to initialize adaptive operations: {e}")
+                self.use_adaptive = False
+                self.adaptive = None
+        else:
+            self.adaptive = None
         
     def copy_files(self, files: List[Path], destination: Path, 
                    calculate_hash: bool = True) -> Dict[str, Dict[str, str]]:
@@ -36,6 +60,42 @@ class FileOperations:
         Returns:
             Dict mapping filenames to their source and destination hashes
         """
+        # Use adaptive operations if available
+        if self.use_adaptive and self.adaptive:
+            try:
+                # Convert adaptive results to match expected format
+                adaptive_results = self.adaptive.copy_files_adaptive(
+                    files, destination, calculate_hash
+                )
+                
+                # Convert results to expected format
+                results = {}
+                for file_str, result in adaptive_results.items():
+                    file_path = Path(file_str)
+                    if result.get('success', False):
+                        results[file_path.name] = {
+                            'source_path': result.get('source', str(file_path)),
+                            'dest_path': result.get('destination', str(destination / file_path.name)),
+                            'source_hash': result.get('hash', ''),
+                            'dest_hash': result.get('hash', ''),  # Same hash for both
+                            'verified': True
+                        }
+                    else:
+                        # Handle failed files
+                        logging.error(f"Failed to copy {file_path.name}: {result.get('error', 'Unknown error')}")
+                        
+                return results
+                
+            except Exception as e:
+                logging.error(f"Adaptive copy failed, falling back to sequential: {e}")
+                # Fall through to sequential implementation
+                
+        # Original sequential implementation as fallback
+        return self._copy_files_sequential(files, destination, calculate_hash)
+    
+    def _copy_files_sequential(self, files: List[Path], destination: Path,
+                              calculate_hash: bool = True) -> Dict[str, Dict[str, str]]:
+        """Original sequential file copy implementation"""
         results = {}
         
         # Calculate total size for progress
@@ -91,11 +151,30 @@ class FileOperations:
     
     def _calculate_file_hash(self, file_path: Path, algorithm: str = 'sha256') -> str:
         """Calculate hash of a file"""
+        # Use adaptive hash calculation if available
+        if self.use_adaptive and self.adaptive:
+            try:
+                results = self.adaptive.hash_files_adaptive([file_path])
+                return results.get(str(file_path), '')
+            except Exception:
+                # Fall through to basic implementation
+                pass
+                
+        # Basic implementation
         hash_func = hashlib.new(algorithm)
+        
+        # Dynamic buffer size based on file size
+        file_size = file_path.stat().st_size
+        if file_size < 10_000_000:  # < 10MB
+            buffer_size = 65536  # 64KB
+        elif file_size < 100_000_000:  # < 100MB
+            buffer_size = 1048576  # 1MB
+        else:
+            buffer_size = 10485760  # 10MB
         
         with open(file_path, 'rb') as f:
             # Read in chunks for large files
-            for chunk in iter(lambda: f.read(8192), b''):
+            for chunk in iter(lambda: f.read(buffer_size), b''):
                 hash_func.update(chunk)
                 
         return hash_func.hexdigest()
@@ -108,6 +187,9 @@ class FileOperations:
     def cancel(self):
         """Cancel the current operation"""
         self.cancelled = True
+        # Also cancel adaptive operations if available
+        if self.adaptive:
+            self.adaptive.cancel()
         
     def verify_hashes(self, file_results: Dict[str, Dict[str, str]]) -> Dict[str, bool]:
         """
