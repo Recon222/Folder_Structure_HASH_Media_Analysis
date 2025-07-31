@@ -51,18 +51,6 @@ class FolderController:
             return FolderBuilder.build_forensic_structure(form_data)
             
     @staticmethod
-    def build_custom_structure(
-        form_data: FormData,
-        template_levels: List[str],
-        base_path: Path
-    ) -> Path:
-        """Build a custom folder structure from template"""
-        template = FolderTemplate("Custom", "Custom Structure", template_levels)
-        folder_path = base_path / template.build_path(form_data)
-        folder_path.mkdir(parents=True, exist_ok=True)
-        return folder_path
-        
-    @staticmethod
     def get_preset_templates() -> List[FolderTemplate]:
         """Get available preset templates"""
         return FolderBuilder.get_preset_templates()

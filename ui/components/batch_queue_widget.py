@@ -219,8 +219,7 @@ class BatchQueueWidget(QWidget):
         pass
         
     def add_job_from_current(self, form_data, files: List[Path], folders: List[Path], 
-                           output_directory: Path, template_type: str = "forensic",
-                           template_levels: List[str] = None):
+                           output_directory: Path, template_type: str = "forensic"):
         """Add a job from current form configuration"""
         import copy
         
@@ -230,8 +229,7 @@ class BatchQueueWidget(QWidget):
             files=files.copy(),
             folders=folders.copy(),
             output_directory=output_directory,
-            template_type=template_type,
-            template_levels=template_levels or []
+            template_type=template_type
         )
         
         try:

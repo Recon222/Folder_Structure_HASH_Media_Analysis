@@ -29,6 +29,15 @@ black .
 flake8 .
 ```
 
+### Testing
+```bash
+# Run integration test for batch processing
+python test_batch_integration.py
+
+# Note: No automated test suite currently implemented
+# Manual testing required for all changes
+```
+
 ### Dependencies
 - PySide6 >= 6.4.0 (Qt UI framework)
 - reportlab >= 3.6.12 (PDF generation)
@@ -117,6 +126,12 @@ self.occ_number.textChanged.connect(lambda t: setattr(self.form_data, 'occurrenc
 
 5. **ZIP Archive Levels**: Created alongside folder structures at root/location/datetime levels based on settings
 
+6. **Batch Processing System**: Full queue-based batch processing with:
+   - Save/load queue functionality
+   - Pause/resume capabilities  
+   - Crash recovery with auto-save
+   - Sequential job processing with progress tracking
+
 ### UI State Management
 - QSettings stores user preferences (technician info, ZIP settings, custom templates)
 - Form data can be saved/loaded as JSON for batch processing
@@ -148,7 +163,19 @@ Load these via File → Load Form Data in the application.
 ### Testing
 Note: No automated test suite is currently implemented. Manual testing is required for all changes.
 
+Integration test available for batch processing:
+```bash
+python test_batch_integration.py
+```
+
 ## Key Architectural Patterns Not Obvious from File Structure
+
+### Performance Optimization Integration
+The adaptive performance system integrates seamlessly:
+- **FileOperations**: Automatically uses AdaptiveFileOperations when available
+- **QSettings Check**: Respects user's performance preferences
+- **Graceful Fallback**: Falls back to sequential processing if adaptive fails
+- **Progress Compatibility**: Both systems use same callback signature
 
 ### Dual-Signal Progress Reporting
 All worker threads emit paired `progress(int)` and `status(str)` signals using lambda pattern:
@@ -236,6 +263,13 @@ The `AdaptivePerformanceController` orchestrates all optimizations:
 3. **BALANCED**: Adaptive approach
    - Dynamic worker allocation
    - Mixed strategies based on file sizes
+
+### Worker Thread Management
+Every worker thread follows these patterns:
+- Stores thread reference as instance variable in MainWindow
+- Emits `finished(bool success, str message, object results)` signal
+- Checks `self.cancelled` flag in inner loops
+- Never terminated directly - graceful cancellation only
 
 ### Hardware-Aware Optimizations
 - **Disk Detection**: Identifies SSD/HDD/NVMe and adjusts parallelism

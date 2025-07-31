@@ -76,8 +76,7 @@ class BatchJob:
     error_message: str = ""
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
-    template_type: str = "forensic"  # forensic or custom
-    template_levels: List[str] = field(default_factory=list)  # for custom templates
+    template_type: str = "forensic"  # Always forensic mode
     
     def validate(self) -> List[str]:
         """Validate job configuration"""
@@ -120,8 +119,7 @@ class BatchJob:
             'error_message': self.error_message,
             'start_time': self.start_time.isoformat() if self.start_time else None,
             'end_time': self.end_time.isoformat() if self.end_time else None,
-            'template_type': self.template_type,
-            'template_levels': self.template_levels
+            'template_type': self.template_type
         }
     
     @classmethod
@@ -137,7 +135,6 @@ class BatchJob:
         job.status = data.get('status', 'pending')
         job.error_message = data.get('error_message', '')
         job.template_type = data.get('template_type', 'forensic')
-        job.template_levels = data.get('template_levels', [])
         
         # Parse datetime fields
         if data.get('start_time'):

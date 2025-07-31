@@ -25,7 +25,6 @@ from core.workers import FolderStructureThread
 from core.workers.zip_operations import ZipOperationThread
 from ui.components import FormPanel, FilesPanel, LogConsole
 from ui.styles import CarolinaBlueTheme
-from ui.custom_template_widget import CustomTemplateWidget
 from ui.dialogs import ZipSettingsDialog, AboutDialog, UserSettingsDialog
 try:
     from ui.dialogs.performance_settings_safe import PerformanceSettingsDialog
@@ -89,19 +88,6 @@ class MainWindow(QMainWindow):
         # Forensic Mode tab
         self.forensic_tab = self._create_forensic_tab()
         self.tabs.addTab(self.forensic_tab, "Forensic Mode")
-        
-        # Custom Mode tab - using the existing widget
-        self.custom_template_widget = CustomTemplateWidget(
-            self.settings, 
-            self.form_data,
-            self
-        )
-        
-        # Connect signals
-        self.custom_template_widget.create_tab_requested.connect(self.create_custom_tab)
-        self.custom_template_widget.process_requested.connect(self.process_custom_structure)
-        
-        self.tabs.addTab(self.custom_template_widget, "Custom Mode")
         
         # Batch Processing tab
         self.batch_tab = BatchTab(self.form_data, self)
@@ -248,162 +234,6 @@ class MainWindow(QMainWindow):
         self.file_thread.finished.connect(self.on_operation_finished)
         
         # Disable UI and show progress
-        self.process_btn.setEnabled(False)
-        self.progress_bar.setVisible(True)
-        self.operation_active = True
-        
-        self.file_thread.start()
-        
-    def process_custom_structure(self, template_levels: List[str]):
-        """Process files with a custom template structure"""
-        # Validate form
-        errors = self.form_data.validate()
-        if errors:
-            QMessageBox.warning(self, "Validation Error", "\n".join(errors))
-            return
-            
-        # Get files
-        files, folders = self.files_panel.get_all_items()
-        
-        if not files and not folders:
-            QMessageBox.warning(self, "No Files", "Please select files or folders to process")
-            return
-            
-        # Ask for output location
-        output_dir = QFileDialog.getExistingDirectory(
-            self, 
-            "Select Output Location", 
-            "",
-            QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
-        )
-        
-        if not output_dir:
-            return
-            
-        self.output_directory = Path(output_dir)
-        self.last_output_directory = self.output_directory
-        
-        # Get hash calculation preference
-        calculate_hash = self.settings.value('calculate_hashes', True, type=bool)
-        
-        # Process files
-        self.file_thread = self.file_controller.process_custom_files(
-            self.form_data,
-            template_levels,
-            files,
-            folders,
-            self.output_directory,
-            calculate_hash
-        )
-        
-        # Connect signals
-        self.file_thread.progress.connect(self.update_progress)
-        self.file_thread.status.connect(self.log)
-        self.file_thread.finished.connect(self.on_operation_finished)
-        
-        self.process_btn.setEnabled(False)
-        self.progress_bar.setVisible(True)
-        self.operation_active = True
-        
-        self.file_thread.start()
-        
-    def create_custom_tab(self, name: str, template_levels: List[str]):
-        """Create a new tab with a custom template"""
-        # Create a widget for the new tab
-        tab_widget = QWidget()
-        layout = QVBoxLayout(tab_widget)
-        
-        # Show the template structure
-        info_group = QGroupBox(f"Template: {name}")
-        info_layout = QVBoxLayout()
-        
-        from PySide6.QtWidgets import QTextEdit
-        structure_text = QTextEdit()
-        structure_text.setReadOnly(True)
-        structure_text.setMaximumHeight(100)
-        
-        # Display the structure
-        preview_lines = []
-        for i, level in enumerate(template_levels):
-            indent = "  " * i
-            preview_lines.append(f"{indent}📁 {level}")
-        structure_text.setPlainText("\n".join(preview_lines))
-        
-        info_layout.addWidget(structure_text)
-        info_group.setLayout(info_layout)
-        layout.addWidget(info_group)
-        
-        # Add file selection
-        files_panel = FilesPanel()
-        files_panel.log_message.connect(self.log)
-        layout.addWidget(files_panel)
-        
-        # Process button
-        btn_layout = QHBoxLayout()
-        btn_layout.addStretch()
-        from PySide6.QtWidgets import QPushButton
-        process_btn = QPushButton(f"Process with {name} Structure")
-        process_btn.clicked.connect(lambda: self._process_custom_tab(template_levels, files_panel))
-        btn_layout.addWidget(process_btn)
-        layout.addLayout(btn_layout)
-        
-        # Add the new tab
-        self.tabs.addTab(tab_widget, name)
-        
-        # Switch to the new tab
-        self.tabs.setCurrentWidget(tab_widget)
-        
-        QMessageBox.information(self, "Tab Created", 
-                              f"New tab '{name}' has been created!\n\n"
-                              "You can now use this template directly from its own tab.")
-                              
-    def _process_custom_tab(self, template_levels: List[str], files_panel: FilesPanel):
-        """Process files from a custom tab"""
-        # Get files from the specific files panel
-        files, folders = files_panel.get_all_items()
-        
-        # Validate
-        errors = self.form_data.validate()
-        if errors:
-            QMessageBox.warning(self, "Validation Error", "\n".join(errors))
-            return
-            
-        if not files and not folders:
-            QMessageBox.warning(self, "No Files", "Please select files or folders to process")
-            return
-            
-        # Ask for output location
-        output_dir = QFileDialog.getExistingDirectory(
-            self, 
-            "Select Output Location", 
-            "",
-            QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
-        )
-        
-        if not output_dir:
-            return
-            
-        self.output_directory = Path(output_dir)
-        self.last_output_directory = self.output_directory
-        
-        # Get hash calculation preference
-        calculate_hash = self.settings.value('calculate_hashes', True, type=bool)
-        
-        # Process files
-        self.file_thread = self.file_controller.process_custom_files(
-            self.form_data,
-            template_levels,
-            files,
-            folders,
-            self.output_directory,
-            calculate_hash
-        )
-        
-        # Connect signals
-        self.file_thread.progress.connect(self.update_progress)
-        self.file_thread.status.connect(self.log)
-        self.file_thread.finished.connect(self.on_operation_finished)
-        
         self.process_btn.setEnabled(False)
         self.progress_bar.setVisible(True)
         self.operation_active = True

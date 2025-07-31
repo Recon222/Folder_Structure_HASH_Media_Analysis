@@ -38,29 +38,6 @@ class FileController:
         self.current_operation = thread
         return thread
         
-    def process_custom_files(
-        self,
-        form_data: FormData,
-        template_levels: List[str],
-        files: List[Path],
-        folders: List[Path],
-        output_directory: Path,
-        calculate_hash: bool = True
-    ) -> FolderStructureThread:
-        """Process files using custom template structure"""
-        # Create custom structure
-        template = FolderTemplate("Custom", "Custom Structure", template_levels)
-        folder_path = output_directory / template.build_path(form_data)
-        folder_path.mkdir(parents=True, exist_ok=True)
-        
-        # Prepare all items
-        all_items = self._prepare_items(files, folders)
-        
-        # Create and return thread
-        thread = FolderStructureThread(all_items, folder_path, calculate_hash)
-        self.current_operation = thread
-        return thread
-        
     def _build_forensic_structure(self, form_data: FormData, base_path: Path) -> Path:
         """Build the forensic folder structure"""
         # Create the structure in the specified base path

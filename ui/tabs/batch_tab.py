@@ -82,18 +82,6 @@ class BatchTab(QWidget):
         splitter.setStretchFactor(0, 6)
         splitter.setStretchFactor(1, 4)
         
-        # Template type selector
-        template_layout = QHBoxLayout()
-        template_label = QLabel("Template Type:")
-        template_layout.addWidget(template_label)
-        
-        self.template_combo = QComboBox()
-        self.template_combo.addItems(["Forensic Mode", "Custom Mode"])
-        self.template_combo.setToolTip("Select whether to use the standard forensic template or custom folder structure")
-        template_layout.addWidget(self.template_combo)
-        template_layout.addStretch()
-        
-        layout.addLayout(template_layout)
         
         # Job actions
         actions_layout = QHBoxLayout()
@@ -245,15 +233,8 @@ class BatchTab(QWidget):
             )
             return
             
-        # Determine template type based on combo box selection
-        if self.template_combo.currentText() == "Forensic Mode":
-            template_type = "forensic"
-            template_levels = []
-        else:
-            template_type = "custom"
-            # For custom mode, we'll use a simple occurrence number structure for now
-            # TODO: Add ability to define custom template levels in batch tab
-            template_levels = ["{occurrence_number}"]
+        # Always use forensic mode
+        template_type = "forensic"
                 
         # Add job to queue
         self.batch_queue_widget.add_job_from_current(
@@ -261,8 +242,7 @@ class BatchTab(QWidget):
             files=self.files_panel.selected_files,
             folders=self.files_panel.selected_folders,
             output_directory=self.output_directory,
-            template_type=template_type,
-            template_levels=template_levels
+            template_type=template_type
         )
         
         self.log_message.emit(f"Added current configuration to batch queue")

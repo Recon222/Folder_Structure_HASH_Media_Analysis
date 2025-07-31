@@ -73,11 +73,8 @@ class BatchProcessorThread(QThread):
                 # Update job in queue
                 self.batch_queue.update_job(job)
                 
-                # Run the actual processing based on template type
-                if job.template_type == "forensic":
-                    success, message, results = self._process_forensic_job(job)
-                else:
-                    success, message, results = self._process_custom_job(job)
+                # Run the actual processing (always forensic mode)
+                success, message, results = self._process_forensic_job(job)
                 
                 job.end_time = datetime.now()
                 
@@ -155,28 +152,6 @@ class BatchProcessorThread(QThread):
         except Exception as e:
             return False, f"Error processing forensic job: {e}", None
             
-    def _process_custom_job(self, job: BatchJob) -> tuple[bool, str, Any]:
-        """Process a custom template job"""
-        try:
-            # Build the folder path
-            relative_path = self._build_folder_path(job, "custom")
-            
-            # Create the full output path
-            output_path = job.output_directory / relative_path
-            output_path.mkdir(parents=True, exist_ok=True)
-            
-            # Prepare items for copying
-            items_to_copy = []
-            
-            # Add individual files
-            for file_path in job.files:
-                if file_path.exists():
-                    items_to_copy.append(('file', file_path, file_path.name))
-                    
-            # Add folders
-            for folder_path in job.folders:
-                if folder_path.exists():
-                    items_to_copy.append(('folder', folder_path, folder_path.name))
                     
             if not items_to_copy:
                 return False, "No valid files or folders to process", None
@@ -203,15 +178,6 @@ class BatchProcessorThread(QThread):
         if template_type == "forensic":
             # Use the static forensic structure method
             return FolderBuilder.build_forensic_structure(job.form_data)
-        else:
-            # Use custom template
-            levels = job.template_levels if job.template_levels else ["{occurrence_number}"]
-            template = FolderTemplate(
-                name="Custom Template",
-                description="Custom template for batch processing",
-                levels=levels
-            )
-            return template.build_path(job.form_data)
         
     def _copy_items_sync(self, items_to_copy: List[tuple], destination: Path, job: BatchJob) -> tuple[bool, str, Dict]:
         """Copy items synchronously with progress reporting"""

@@ -78,7 +78,7 @@ def test_batch_queue():
         job_name="Test Job 2", 
         form_data=form_data,
         files=[Path(__file__)],
-        template_type="custom"
+        template_type="forensic"
     )
     
     # Test adding jobs
