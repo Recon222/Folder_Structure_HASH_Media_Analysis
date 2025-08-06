@@ -57,8 +57,8 @@ class FormPanel(QGroupBox):
         self.location_address.textChanged.connect(lambda t: self._update_field('location_address', t))
         layout.addWidget(self.location_address, 2, 1)
         
-        # Row 3: Extraction Times
-        layout.addWidget(QLabel("Extraction Start:"), 3, 0)
+        # Row 3: Video Times
+        layout.addWidget(QLabel("Video Start:"), 3, 0)
         self.extraction_start = QDateTimeEdit(QDateTime.currentDateTime())
         self.extraction_start.setCalendarPopup(True)
         self.extraction_start.dateTimeChanged.connect(lambda dt: self._update_field('extraction_start', dt))
@@ -66,7 +66,7 @@ class FormPanel(QGroupBox):
         # Initialize form data with current value
         self.form_data.extraction_start = self.extraction_start.dateTime()
         
-        layout.addWidget(QLabel("Extraction End:"), 4, 0)
+        layout.addWidget(QLabel("Video End:"), 4, 0)
         self.extraction_end = QDateTimeEdit(QDateTime.currentDateTime())
         self.extraction_end.setCalendarPopup(True)
         self.extraction_end.dateTimeChanged.connect(lambda dt: self._update_field('extraction_end', dt))
