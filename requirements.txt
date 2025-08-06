@@ -12,8 +12,7 @@ reportlab>=3.6.12
 # System Monitoring (for performance optimization)
 psutil>=5.9.0
 
-# Optional: Parallel hashing acceleration
-# Uncomment to enable faster hash calculations
-# hashwise>=0.1.0
+# Parallel hashing acceleration for improved performance
+hashwise>=0.1.0
 
 # Python version requirement: Python 3.7 or higher is recommended

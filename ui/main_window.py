@@ -26,11 +26,6 @@ from core.workers.zip_operations import ZipOperationThread
 from ui.components import FormPanel, FilesPanel, LogConsole
 from ui.styles import CarolinaBlueTheme
 from ui.dialogs import ZipSettingsDialog, AboutDialog, UserSettingsDialog
-try:
-    from ui.dialogs.performance_settings_safe import PerformanceSettingsDialog
-    PERFORMANCE_UI_AVAILABLE = True
-except ImportError:
-    PERFORMANCE_UI_AVAILABLE = False
 from ui.tabs import ForensicTab
 from ui.tabs.batch_tab import BatchTab
 from utils.zip_utils import ZipSettings
@@ -61,9 +56,6 @@ class MainWindow(QMainWindow):
         self._setup_ui()
         self._apply_theme()
         self._load_settings()
-        
-        # Initialize performance monitoring
-        self.setup_performance_monitoring()
         
         # Current operation tracking
         self.current_copy_speed = 0.0
@@ -108,9 +100,6 @@ class MainWindow(QMainWindow):
         
         # Connect batch tab status messages
         self.batch_tab.status_message.connect(self.status_bar.showMessage)
-        
-        # Add performance indicators to status bar
-        self.setup_status_bar_monitoring()
         
     def _create_forensic_tab(self):
         """Create the forensic mode tab"""
@@ -160,11 +149,6 @@ class MainWindow(QMainWindow):
         zip_settings_action.triggered.connect(self.show_zip_settings)
         settings_menu.addAction(zip_settings_action)
         
-        if PERFORMANCE_UI_AVAILABLE:
-            performance_action = QAction("Performance Settings", self)
-            performance_action.triggered.connect(self.show_performance_settings)
-            settings_menu.addAction(performance_action)
-        
         # Help menu
         help_menu = menubar.addMenu("Help")
         
@@ -195,7 +179,11 @@ class MainWindow(QMainWindow):
             return
             
         # Get files
+        print(f"DEBUG: Using files_panel {id(self.files_panel)}")
+        print(f"DEBUG: Forensic tab files_panel {id(self.forensic_tab.files_panel)}")
         files, folders = self.files_panel.get_all_items()
+        print(f"DEBUG: Retrieved files: {files}")
+        print(f"DEBUG: Retrieved folders: {folders}")
         
         if not files and not folders:
             QMessageBox.warning(self, "No Files", "Please select files or folders to process")
@@ -424,19 +412,9 @@ class MainWindow(QMainWindow):
                 if "MB/s" in speed_part:
                     speed_str = speed_part.split("MB/s")[0].strip()
                     self.current_copy_speed = float(speed_str)
-                    # Update the label immediately
-                    if hasattr(self, 'copy_speed_label'):
-                        self.copy_speed_label.setText(f"{self.current_copy_speed:.1f} MB/s")
-                        self.copy_speed_label.setStyleSheet("padding: 0 10px; font-weight: bold; color: green;")
-                        print(f"[DEBUG] Updated speed to: {self.current_copy_speed:.1f} MB/s")
+                    print(f"[DEBUG] Updated speed to: {self.current_copy_speed:.1f} MB/s")
             except (ValueError, IndexError) as e:
                 print(f"[DEBUG] Error parsing speed: {e}")
-        
-        # Also update when we see "Copying:" messages
-        if self.operation_active and "Copying:" in message:
-            if hasattr(self, 'copy_speed_label'):
-                self.copy_speed_label.setText("Processing...")
-                self.copy_speed_label.setStyleSheet("padding: 0 10px; font-weight: bold; color: blue;")
         
     def load_json(self):
         """Load form data from JSON"""
@@ -478,34 +456,6 @@ class MainWindow(QMainWindow):
             dialog.save_settings()
             self.log("ZIP settings saved")
             
-    def show_performance_settings(self):
-        """Show performance settings dialog"""
-        if PERFORMANCE_UI_AVAILABLE:
-            dialog = PerformanceSettingsDialog(self)
-            dialog.settings_changed.connect(self.on_performance_settings_changed)
-            dialog.exec()
-        else:
-            QMessageBox.information(
-                self, "Performance Settings", 
-                "Performance optimization modules are not available.\n"
-                "Install required dependencies to enable this feature."
-            )
-            
-    def on_performance_settings_changed(self):
-        """Handle performance settings changes"""
-        self.log("Performance settings updated")
-        
-        # Update performance mode indicator
-        try:
-            adaptive_enabled = self.settings.value("performance/adaptive_enabled", True, type=bool)
-            if hasattr(self, 'performance_label'):
-                if adaptive_enabled:
-                    self.performance_label.setText("Adaptive Mode")
-                else:
-                    self.performance_label.setText("Standard Mode")
-        except:
-            pass
-        
     def show_about(self):
         """Show about dialog"""
         dialog = AboutDialog(self)
@@ -531,90 +481,3 @@ class MainWindow(QMainWindow):
             self.settings.setValue('technician_name', self.form_panel.tech_name.text())
             self.settings.setValue('badge_number', self.form_panel.badge_number.text())
         event.accept()
-        
-    def setup_status_bar_monitoring(self):
-        """Set up performance monitoring in status bar"""
-        # Create mode indicator
-        self.performance_label = QLabel("Standard Mode")
-        self.performance_label.setStyleSheet("padding: 0 10px;")
-        
-        # Add separator
-        sep = QLabel("|")
-        sep.setStyleSheet("color: gray; padding: 0 5px;")
-        
-        # Copy speed indicator
-        self.copy_speed_label = QLabel("Ready")
-        self.copy_speed_label.setStyleSheet("padding: 0 10px; font-weight: bold;")
-        
-        # Add to status bar
-        self.status_bar.addPermanentWidget(self.performance_label)
-        self.status_bar.addPermanentWidget(sep)
-        self.status_bar.addPermanentWidget(self.copy_speed_label)
-            
-    def setup_performance_monitoring(self):
-        """Initialize performance monitoring timer"""
-        try:
-            import psutil
-            from collections import deque
-            
-            # Initialize CPU sampling buffer for smooth averaging
-            self.cpu_samples = deque(maxlen=5)
-            
-            # Check if adaptive mode is enabled
-            adaptive_enabled = self.settings.value("performance/adaptive_enabled", True, type=bool)
-            if hasattr(self, 'performance_label'):
-                if adaptive_enabled:
-                    self.performance_label.setText("Adaptive Mode")
-                else:
-                    self.performance_label.setText("Standard Mode")
-            
-            # Start monitoring timer
-            self.performance_timer = QTimer()
-            self.performance_timer.timeout.connect(self.update_performance_status)
-            self.performance_timer.start(2000)  # Update every 2 seconds
-            
-        except (ImportError, AttributeError):
-            # Monitoring not available
-            pass
-            
-    def update_performance_status(self):
-        """Update performance indicators in status bar"""
-        try:
-            import psutil
-            
-            # Non-blocking CPU check
-            cpu_percent = psutil.cpu_percent(interval=0)
-            if not hasattr(self, 'cpu_samples'):
-                from collections import deque
-                self.cpu_samples = deque(maxlen=5)
-            
-            self.cpu_samples.append(cpu_percent)
-            avg_cpu = sum(self.cpu_samples) / len(self.cpu_samples) if self.cpu_samples else 0
-            
-            if hasattr(self, 'cpu_label'):
-                self.cpu_label.setText(f"CPU: {avg_cpu:.0f}%")
-                
-                # Color code based on usage
-                if avg_cpu > 80:
-                    self.cpu_label.setStyleSheet("color: red;")
-                elif avg_cpu > 60:
-                    self.cpu_label.setStyleSheet("color: orange;")
-                else:
-                    self.cpu_label.setStyleSheet("")
-            
-            # Update memory usage
-            memory = psutil.virtual_memory()
-            if hasattr(self, 'memory_label'):
-                self.memory_label.setText(f"RAM: {memory.percent:.0f}%")
-                
-                if memory.percent > 85:
-                    self.memory_label.setStyleSheet("color: red;")
-                elif memory.percent > 70:
-                    self.memory_label.setStyleSheet("color: orange;")
-                else:
-                    self.memory_label.setStyleSheet("")
-            
-            # Don't update copy speed here - it's updated in log() method
-                
-        except (ImportError, AttributeError):
-            pass

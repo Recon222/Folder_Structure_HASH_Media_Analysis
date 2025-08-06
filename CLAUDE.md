@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Folder Structure Utility - A high-performance PySide6 (Qt) application for professional file organization and evidence management. Features an advanced adaptive performance optimization system that automatically adjusts to hardware capabilities. The app has two main modes: Forensic Mode (law enforcement) and Custom Mode (flexible template building).
+Folder Structure Utility - A PySide6 (Qt) application for professional file organization and evidence management. The app is designed for Forensic Mode (law enforcement) evidence processing with efficient file operations and batch processing capabilities.
 
 ## Commands
 
@@ -43,17 +43,16 @@ python test_batch_integration.py
 - reportlab >= 3.6.12 (PDF generation)
 - psutil >= 5.9.0 (System monitoring)
 - Python 3.7+
-- Optional: hashwise (for accelerated parallel hashing)
+- hashwise >= 0.1.0 (for accelerated parallel hashing)
 
 ## Architecture Overview
 
 ### Core Application Flow
-1. **main.py** initializes MainWindow with tabs for Forensic and Custom modes
-2. **Adaptive Performance System** analyzes hardware (disk type, CPU, thermal state) on startup
-3. User fills FormData fields which are bound to UI widgets via lambda connections
-4. File operations use **AdaptiveFileOperations** with automatic hardware optimization
-5. Operations run in separate QThreads (FileOperationThread, FolderStructureThread) to maintain UI responsiveness
-6. Results trigger PDF generation and optional ZIP creation
+1. **main.py** initializes MainWindow with tabs for Forensic mode and Batch Processing
+2. User fills FormData fields which are bound to UI widgets via lambda connections
+3. File operations use parallel hashing when available via hashwise library
+4. Operations run in separate QThreads (FileOperationThread, FolderStructureThread) to maintain UI responsiveness
+5. Results trigger PDF generation and optional ZIP creation
 
 ### Key Architectural Patterns
 
@@ -69,9 +68,8 @@ self.occ_number.textChanged.connect(lambda t: setattr(self.form_data, 'occurrenc
 - Thread classes bridge business logic to UI without coupling
 
 #### Template System
-- FolderTemplate class handles dynamic path building with format strings
-- Templates support nested folder structures via indentation
-- Custom templates saved in QSettings for persistence
+- FolderTemplate class handles forensic folder structure path building
+- Uses standardized law enforcement folder hierarchy
 
 #### Error Handling
 - Worker threads emit error signals for graceful error propagation
@@ -84,17 +82,11 @@ self.occ_number.textChanged.connect(lambda t: setattr(self.form_data, 'occurrenc
 **core/**
 - `models.py`: FormData dataclass with validation and JSON serialization
 - `templates.py`: FolderTemplate and FolderBuilder for path generation
-- `file_ops.py`: FileOperations class with hash verification
+- `file_ops.py`: FileOperations class with hash verification and parallel hashing support
 - `pdf_gen.py`: PDFGenerator for reports (Time Offset, Technician Log, Hash CSV)
 - `workers/`: QThread subclasses for file and folder operations
-- **Performance Optimization Modules (New):**
-  - `adaptive_performance.py`: Master controller for performance optimization
-  - `adaptive_file_operations.py`: Adaptive file copying with priority modes
-  - `disk_analyzer.py`: Disk type detection (SSD/HDD/NVMe) and benchmarking
-  - `workload_analyzer.py`: Dynamic threshold calculation and file grouping
-  - `numa_optimizer.py`: NUMA topology detection and CPU affinity
-  - `thermal_manager.py`: CPU temperature monitoring and throttling
-  - `storage_optimizer.py`: Storage queue depth and I/O monitoring
+- `batch_queue.py`: Queue management for batch processing
+- `batch_recovery.py`: Recovery system for interrupted batch operations
 
 **controllers/**
 - `file_controller.py`: Handles file selection and operations
@@ -102,11 +94,11 @@ self.occ_number.textChanged.connect(lambda t: setattr(self.form_data, 'occurrenc
 - `report_controller.py`: Controls PDF report generation
 
 **ui/**
-- `main_window.py`: Main application window with tab management and performance monitoring
-- `components/`: Reusable UI components (files panel, form panel, log console)
-- `custom_template_widget.py`: Custom template builder with drag-drop support, live preview
-- `dialogs/performance_settings.py`: Performance configuration dialog with real-time monitoring
+- `main_window.py`: Main application window with tab management
+- `components/`: Reusable UI components (files panel, form panel, log console, batch queue widget)
+- `dialogs/`: User settings, ZIP settings, and about dialogs
 - `styles/`: Theme definitions (Carolina Blue color scheme)
+- `tabs/`: Tab implementations (ForensicTab, BatchTab)
 
 **utils/**
 - `zip_utils.py`: Multi-level ZIP archive creation with compression settings
@@ -115,16 +107,11 @@ self.occ_number.textChanged.connect(lambda t: setattr(self.form_data, 'occurrenc
 
 1. **Folder Structure Preservation**: When adding folders, the app preserves complete directory hierarchies using `path.rglob('*')`
 
-2. **Hash Verification**: SHA-256 hashes calculated during copy for forensic integrity
+2. **Hash Verification**: SHA-256 hashes calculated during copy for forensic integrity, with parallel processing via hashwise when available
 
 3. **Path Sanitization**: FolderTemplate._sanitize_path_part() removes invalid characters for cross-platform compatibility
 
-4. **Custom Mode Tab Creation**: Templates can be saved as new tabs via signal emission:
-   ```python
-   self.custom_template_widget.create_tab_requested.connect(self.create_custom_tab)
-   ```
-
-5. **ZIP Archive Levels**: Created alongside folder structures at root/location/datetime levels based on settings
+4. **ZIP Archive Levels**: Created alongside folder structures at root/location/datetime levels based on settings
 
 6. **Batch Processing System**: Full queue-based batch processing with:
    - Save/load queue functionality
@@ -133,24 +120,17 @@ self.occ_number.textChanged.connect(lambda t: setattr(self.form_data, 'occurrenc
    - Sequential job processing with progress tracking
 
 ### UI State Management
-- QSettings stores user preferences (technician info, ZIP settings, custom templates)
+- QSettings stores user preferences (technician info, ZIP settings)
 - Form data can be saved/loaded as JSON for batch processing
 - Progress bars show/hide based on operation state
 
 ### Persistent Settings (QSettings)
 - Technician information (name, badge number)
 - ZIP compression preferences and levels
-- Custom templates and saved tabs
 - Window geometry and state
 - Last used directories
+- Hash calculation preferences
 
-### Custom Mode Template Format
-Templates use Python format strings with available fields:
-- Form fields: {occurrence_number}, {business_name}, {location_address}, etc.
-- Date/time: {date}, {time}, {year}, {month}, {day}
-- Extraction times: {extraction_start}, {extraction_end}
-
-Indentation in template editor determines folder hierarchy.
 
 ### Sample Data
 For testing and development, use the provided sample JSON files:
@@ -170,13 +150,6 @@ python test_batch_integration.py
 
 ## Key Architectural Patterns Not Obvious from File Structure
 
-### Performance Optimization Integration
-The adaptive performance system integrates seamlessly:
-- **FileOperations**: Automatically uses AdaptiveFileOperations when available
-- **QSettings Check**: Respects user's performance preferences
-- **Graceful Fallback**: Falls back to sequential processing if adaptive fails
-- **Progress Compatibility**: Both systems use same callback signature
-
 ### Dual-Signal Progress Reporting
 All worker threads emit paired `progress(int)` and `status(str)` signals using lambda pattern:
 ```python
@@ -194,12 +167,6 @@ Components forward signals to maintain loose coupling:
 - ForensicTab → MainWindow signal chain
 - Avoids direct component access
 - Example: `self.log_message.connect(self.parent().log_message.emit)`
-
-### Dynamic Tab Creation from Templates
-Custom templates can spawn persistent tabs:
-1. CustomTemplateWidget emits `create_tab_requested`
-2. MainWindow creates simplified tab with FilesPanel + process button
-3. Each tab maintains independent file selection state
 
 ### Report Output Reorganization
 Reports follow specific directory structure:
@@ -240,85 +207,9 @@ All settings in QSettings (no config files):
 - Linux: .config file
 - Simplifies deployment but less portable
 
-## Advanced Performance Optimization Architecture
-
-### Adaptive Performance Controller
-The `AdaptivePerformanceController` orchestrates all optimizations:
-- Analyzes hardware (disk type, NUMA topology, CPU temperature)
-- Profiles workload characteristics (file sizes, types, patterns)
-- Selects optimal configuration (workers, buffer sizes, priorities)
-- Learns from performance history to improve future operations
-
-### Three Optimization Modes
-1. **LATENCY**: Minimize response time
-   - Limited workers (max 4)
-   - Small buffers (256KB max)
-   - Immediate file processing
-   
-2. **THROUGHPUT**: Maximize total processing speed
-   - Maximum workers (based on hardware)
-   - Large buffers (up to 10MB)
-   - Batch processing by file size
-   
-3. **BALANCED**: Adaptive approach
-   - Dynamic worker allocation
-   - Mixed strategies based on file sizes
-
-### Worker Thread Management
-Every worker thread follows these patterns:
-- Stores thread reference as instance variable in MainWindow
-- Emits `finished(bool success, str message, object results)` signal
-- Checks `self.cancelled` flag in inner loops
-- Never terminated directly - graceful cancellation only
-
-### Hardware-Aware Optimizations
-- **Disk Detection**: Identifies SSD/HDD/NVMe and adjusts parallelism
-  - NVMe: Up to 32 workers
-  - SSD: Up to 16 workers  
-  - HDD: Max 2 workers (avoids seek thrashing)
-  
-- **NUMA Support**: Distributes work across CPU nodes for memory locality
-- **Thermal Management**: Reduces workers when CPU temperature is high
-- **I/O Monitoring**: Adjusts queue depth based on storage load
-
-### Dynamic File Grouping
-Files are categorized by adaptive thresholds:
-- **Tiny** (<1MB): Maximum parallelism, batched processing
-- **Small**: High parallelism
-- **Medium**: Moderate parallelism
-- **Large**: Limited parallelism
-- **Huge** (>1GB): Sequential processing, memory-mapped I/O
-
-### Performance Learning
-The system tracks operation metrics and learns optimal configurations:
-```python
-# Metrics tracked per operation
-{
-    'file_size': size,
-    'duration': time,
-    'efficiency': score,
-    'config': {...}
-}
-```
-
-### Integration with Existing Architecture
-- **Seamless Integration**: FileOperations automatically uses adaptive system when available
-- **Graceful Fallback**: Falls back to sequential processing if adaptive system fails
-- **Compatible API**: Results converted to match expected format for existing code
-- **Progress callbacks remain compatible** with both systems
-- **Thread cancellation supported** across all optimization modes
-- **Hash calculation optimized** with Hashwise when available
-- **Real-time monitoring** via status bar indicators (CPU/RAM usage, optimization mode)
-
-### Performance Optimization Integration Points
-- **core/file_ops.py**: Main integration point - automatically uses AdaptiveFileOperations
-- **ui/main_window.py**: Performance monitoring, settings menu, status bar indicators
-- **ui/dialogs/performance_settings.py**: User configuration interface
-- **QSettings integration**: All performance preferences stored in user settings
-
-### Key Performance Features for Development
-- **Hardware Detection**: Automatically optimizes based on SSD/HDD/NVMe detection
-- **Workload Analysis**: Files grouped by size for optimal processing strategies
-- **Thermal Management**: Reduces performance when CPU temperature exceeds thresholds
-- **Learning System**: Performance improves over time based on operation history
-- **Three Modes**: Latency (responsive), Throughput (maximum speed), Balanced (auto-adapt)
+### Parallel Hashing with Hashwise
+When hashwise is available, the application uses parallel hashing to significantly improve performance:
+- Automatically detects and uses hashwise for batches of 4+ files
+- Falls back to ThreadPoolExecutor for smaller batches
+- Gracefully degrades to sequential hashing if neither is available
+- SHA-256 is the default algorithm for forensic integrity

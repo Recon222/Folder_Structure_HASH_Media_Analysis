@@ -10,53 +10,29 @@ import time
 from pathlib import Path
 from typing import List, Dict, Callable, Optional
 import logging
+import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# Try to import adaptive operations
+# Try to import hashwise for accelerated parallel hashing
 try:
-    from .adaptive_file_operations import AdaptiveFileOperations
-    ADAPTIVE_AVAILABLE = True
+    from hashwise import ParallelHasher
+    HASHWISE_AVAILABLE = True
 except ImportError:
-    ADAPTIVE_AVAILABLE = False
-    logging.warning("Adaptive file operations not available - using basic implementation")
+    HASHWISE_AVAILABLE = False
 
 
 class FileOperations:
     """Handles file operations with progress reporting"""
     
-    def __init__(self, progress_callback: Optional[Callable[[int, str], None]] = None,
-                 use_adaptive: bool = None):
+    def __init__(self, progress_callback: Optional[Callable[[int, str], None]] = None):
         """
         Initialize with optional progress callback
         
         Args:
             progress_callback: Function that receives (progress_pct, status_message)
-            use_adaptive: Whether to use adaptive optimization (if available)
         """
         self.progress_callback = progress_callback
         self.cancelled = False
-        
-        # Check user settings if not explicitly specified
-        if use_adaptive is None:
-            try:
-                from PySide6.QtCore import QSettings
-                settings = QSettings()
-                use_adaptive = settings.value("performance/adaptive_enabled", False, type=bool)
-            except:
-                use_adaptive = False  # Default to safe mode
-        
-        self.use_adaptive = use_adaptive and ADAPTIVE_AVAILABLE
-        
-        # Initialize adaptive system if available and requested
-        if self.use_adaptive:
-            try:
-                self.adaptive = AdaptiveFileOperations(progress_callback)
-                logging.info("Adaptive file operations initialized successfully")
-            except Exception as e:
-                logging.warning(f"Failed to initialize adaptive operations: {e}")
-                self.use_adaptive = False
-                self.adaptive = None
-        else:
-            self.adaptive = None
         
     def copy_files(self, files: List[Path], destination: Path, 
                    calculate_hash: bool = True) -> Dict[str, Dict[str, str]]:
@@ -71,51 +47,6 @@ class FileOperations:
         Returns:
             Dict mapping filenames to their source and destination hashes
         """
-        # Use adaptive operations if available
-        if self.use_adaptive and self.adaptive:
-            try:
-                # Convert adaptive results to match expected format
-                adaptive_results = self.adaptive.copy_files_adaptive(
-                    files, destination, calculate_hash
-                )
-                
-                # Convert results to expected format
-                results = {}
-                performance_stats = adaptive_results.get('_performance_stats', {})
-                
-                for file_str, result in adaptive_results.items():
-                    if file_str == '_performance_stats':
-                        continue  # Skip the stats entry
-                        
-                    file_path = Path(file_str)
-                    if result.get('success', False):
-                        results[file_path.name] = {
-                            'source_path': result.get('source', str(file_path)),
-                            'dest_path': result.get('destination', str(destination / file_path.name)),
-                            'source_hash': result.get('hash', ''),
-                            'dest_hash': result.get('hash', ''),  # Same hash for both
-                            'verified': True
-                        }
-                    else:
-                        # Handle failed files
-                        logging.error(f"Failed to copy {file_path.name}: {result.get('error', 'Unknown error')}")
-                
-                # Add performance stats to results for UI display
-                if performance_stats:
-                    results['_performance_stats'] = performance_stats
-                        
-                return results
-                
-            except Exception as e:
-                logging.error(f"Adaptive copy failed, falling back to sequential: {e}")
-                # Fall through to sequential implementation
-                
-        # Original sequential implementation as fallback
-        return self._copy_files_sequential(files, destination, calculate_hash)
-    
-    def _copy_files_sequential(self, files: List[Path], destination: Path,
-                              calculate_hash: bool = True) -> Dict[str, Dict[str, str]]:
-        """Original sequential file copy implementation"""
         results = {}
         
         # Performance tracking for sequential mode
@@ -208,16 +139,6 @@ class FileOperations:
     
     def _calculate_file_hash(self, file_path: Path, algorithm: str = 'sha256') -> str:
         """Calculate hash of a file"""
-        # Use adaptive hash calculation if available
-        if self.use_adaptive and self.adaptive:
-            try:
-                results = self.adaptive.hash_files_adaptive([file_path])
-                return results.get(str(file_path), '')
-            except Exception:
-                # Fall through to basic implementation
-                pass
-                
-        # Basic implementation
         hash_func = hashlib.new(algorithm)
         
         # Dynamic buffer size based on file size
@@ -244,9 +165,6 @@ class FileOperations:
     def cancel(self):
         """Cancel the current operation"""
         self.cancelled = True
-        # Also cancel adaptive operations if available
-        if self.adaptive:
-            self.adaptive.cancel()
         
     def verify_hashes(self, file_results: Dict[str, Dict[str, str]]) -> Dict[str, bool]:
         """
@@ -267,6 +185,50 @@ class FileOperations:
                 verification_results[filename] = True  # No hash to verify
                 
         return verification_results
+    
+    def hash_files_parallel(self, files: List[Path]) -> Dict[str, str]:
+        """
+        Calculate SHA-256 hashes for multiple files in parallel
+        
+        Args:
+            files: List of files to hash
+            
+        Returns:
+            Dict mapping file paths to their hashes
+        """
+        results = {}
+        
+        # Use hashwise if available for large batches
+        if HASHWISE_AVAILABLE and len(files) >= 4:
+            try:
+                hasher = ParallelHasher(
+                    algorithm='sha256',
+                    workers=min(os.cpu_count() or 4, 8),  # Reasonable worker limit
+                    chunk_size='auto'
+                )
+                hash_results = hasher.hash_files(files)
+                return {str(path): hash_val for path, hash_val in hash_results.items()}
+            except Exception as e:
+                logging.warning(f"Hashwise failed, falling back to ThreadPoolExecutor: {e}")
+        
+        # Fallback to ThreadPoolExecutor for parallel hashing
+        workers = min(os.cpu_count() or 4, 8)
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            future_to_file = {
+                executor.submit(self._calculate_file_hash, file): file
+                for file in files
+            }
+            
+            for future in as_completed(future_to_file):
+                file = future_to_file[future]
+                try:
+                    hash_value = future.result()
+                    results[str(file)] = hash_value
+                except Exception as e:
+                    logging.error(f"Failed to hash {file}: {e}")
+                    results[str(file)] = None
+                    
+        return results
     
     @staticmethod
     def get_folder_files(folder: Path, recursive: bool = False) -> List[Path]:

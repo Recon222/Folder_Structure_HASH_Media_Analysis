@@ -46,6 +46,7 @@ class FilesPanel(QGroupBox):
         btn_layout.addWidget(self.add_files_btn)
         
         self.add_folder_btn = QPushButton("Add Folder")
+        print(f"DEBUG: Connecting add_folder button in FilesPanel {id(self)}")
         self.add_folder_btn.clicked.connect(self.add_folder)
         btn_layout.addWidget(self.add_folder_btn)
         
@@ -70,19 +71,26 @@ class FilesPanel(QGroupBox):
         
     def add_folder(self):
         """Add entire folder structure with all subdirectories and files"""
+        print("DEBUG: add_folder called")
         folder = QFileDialog.getExistingDirectory(self, "Select Folder")
         if folder:
             folder_path = Path(folder)
+            print(f"DEBUG: Selected folder: {folder_path}")
             
             # Add the folder itself to track
             if folder_path not in self.selected_folders:
+                print(f"DEBUG: Folder not in list, adding it")
                 self.selected_folders.append(folder_path)
+                print(f"DEBUG: Current folders list: {self.selected_folders}")
                 self.file_list.addItem(f"📁 {folder_path.name}/ (entire folder structure)")
+                print(f"DEBUG: Added to UI list")
                 
                 # Count total files for logging
                 file_count = sum(1 for _ in folder_path.rglob('*') if _.is_file())
                 self.log_message.emit(f"Added folder '{folder_path.name}' with {file_count} files")
                 self.files_changed.emit()
+            else:
+                print(f"DEBUG: Folder already in list, skipping")
             
     def remove_files(self):
         """Remove selected files or folders"""
@@ -108,6 +116,12 @@ class FilesPanel(QGroupBox):
         
     def get_all_items(self) -> Tuple[List[Path], List[Path]]:
         """Return all selected files and folders"""
+        print(f"DEBUG: get_all_items called on FilesPanel {id(self)}")
+        print(f"DEBUG: selected_files: {self.selected_files}")
+        print(f"DEBUG: selected_folders: {self.selected_folders}")
+        print(f"DEBUG: UI list count: {self.file_list.count()}")
+        for i in range(self.file_list.count()):
+            print(f"DEBUG: UI item {i}: {self.file_list.item(i).text()}")
         return self.selected_files.copy(), self.selected_folders.copy()
         
     def has_items(self) -> bool:

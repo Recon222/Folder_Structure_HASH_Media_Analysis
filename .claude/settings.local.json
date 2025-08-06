@@ -6,7 +6,9 @@
       "Bash(grep:*)",
       "Bash(sed:*)",
       "Bash(python:*)",
-      "Bash(flake8:*)"
+      "Bash(flake8:*)",
+      "Bash(cd:*)",
+      "Bash(cd:*)"
     ],
     "deny": []
   }
