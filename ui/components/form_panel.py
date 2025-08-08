@@ -7,7 +7,7 @@ Form panel component for case information input
 from PySide6.QtCore import Qt, QDateTime, Signal
 from PySide6.QtWidgets import (
     QGroupBox, QGridLayout, QLabel, QLineEdit,
-    QDateTimeEdit, QHBoxLayout, QPushButton
+    QDateTimeEdit, QHBoxLayout, QPushButton, QCheckBox
 )
 
 from core.models import FormData
@@ -105,25 +105,11 @@ class FormPanel(QGroupBox):
         self.real_time.dateTimeChanged.connect(lambda dt: self._update_field('real_time', dt if dt.isValid() else None))
         layout.addWidget(self.real_time, 7, 1)
         
-        # Row 8: Technician Info
-        layout.addWidget(QLabel("Technician:"), 8, 0)
-        self.tech_name = QLineEdit()
-        self.tech_name.textChanged.connect(lambda t: self._update_field('technician_name', t))
-        layout.addWidget(self.tech_name, 8, 1)
-        
-        layout.addWidget(QLabel("Badge #:"), 9, 0)
-        self.badge_number = QLineEdit()
-        self.badge_number.textChanged.connect(lambda t: self._update_field('badge_number', t))
-        layout.addWidget(self.badge_number, 9, 1)
-        
-        # Row 10: Upload Timestamp
-        layout.addWidget(QLabel("Upload Time:"), 10, 0)
-        self.upload_timestamp = QDateTimeEdit(QDateTime.currentDateTime())
-        self.upload_timestamp.setCalendarPopup(True)
-        self.upload_timestamp.dateTimeChanged.connect(lambda dt: self._update_field('upload_timestamp', dt))
-        layout.addWidget(self.upload_timestamp, 10, 1)
-        # Initialize form data
-        self.form_data.upload_timestamp = self.upload_timestamp.dateTime()
+        # Row 8: Include tech info in time offset document
+        self.include_tech_in_offset = QCheckBox("Include analyst info in time offset document")
+        self.include_tech_in_offset.setChecked(False)
+        self.include_tech_in_offset.toggled.connect(lambda checked: self._update_field('include_tech_in_offset', checked))
+        layout.addWidget(self.include_tech_in_offset, 8, 0, 1, 2)
         
         self.setLayout(layout)
         
@@ -162,8 +148,6 @@ class FormPanel(QGroupBox):
         self.occ_number.setText(form_data.occurrence_number)
         self.business_name.setText(form_data.business_name)
         self.location_address.setText(form_data.location_address)
-        self.tech_name.setText(form_data.technician_name)
-        self.badge_number.setText(form_data.badge_number)
         if form_data.extraction_start:
             self.extraction_start.setDateTime(form_data.extraction_start)
         if form_data.extraction_end:
@@ -172,8 +156,6 @@ class FormPanel(QGroupBox):
             self.dvr_time.setDateTime(form_data.dvr_time)
         if form_data.real_time:
             self.real_time.setDateTime(form_data.real_time)
-        if form_data.upload_timestamp:
-            self.upload_timestamp.setDateTime(form_data.upload_timestamp)
         # Handle both string and legacy integer formats
         if isinstance(form_data.time_offset, int):
             # Convert legacy integer minutes to text format
@@ -185,3 +167,7 @@ class FormPanel(QGroupBox):
                 self.time_offset.setText("")
         else:
             self.time_offset.setText(form_data.time_offset)
+        
+        # Load checkbox state if available
+        if hasattr(form_data, 'include_tech_in_offset'):
+            self.include_tech_in_offset.setChecked(form_data.include_tech_in_offset)

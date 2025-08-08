@@ -20,6 +20,7 @@ except ImportError:
     REPORTLAB_AVAILABLE = False
 
 from .models import FormData
+from PySide6.QtCore import QSettings
 
 
 class PDFGenerator:
@@ -31,6 +32,11 @@ class PDFGenerator:
             
         self.styles = getSampleStyleSheet()
         self._setup_custom_styles()
+        
+        # Get technician info from settings
+        self.settings = QSettings('FolderStructureUtility', 'Settings')
+        self.tech_name = self.settings.value('technician_name', '', type=str)
+        self.badge_number = self.settings.value('badge_number', '', type=str)
         
     def _setup_custom_styles(self):
         """Set up custom paragraph styles"""
@@ -77,9 +83,12 @@ class PDFGenerator:
             case_data = [
                 ['Occurrence Number:', form_data.occurrence_number],
                 ['Location:', form_data.location_address],
-                ['Business:', form_data.business_name or 'N/A'],
-                ['Technician:', f"{form_data.technician_name} (Badge: {form_data.badge_number})"]
+                ['Business:', form_data.business_name or 'N/A']
             ]
+            
+            # Only include technician info if checkbox is selected
+            if hasattr(form_data, 'include_tech_in_offset') and form_data.include_tech_in_offset:
+                case_data.append(['Technician:', f"{self.tech_name} (Badge: {self.badge_number})"])
             
             case_table = Table(case_data, colWidths=[2*inch, 4*inch])
             case_table.setStyle(TableStyle([
@@ -178,20 +187,20 @@ class PDFGenerator:
             story = []
             
             # Title
-            story.append(Paragraph("Video Evidence Upload Log", self.styles['CustomTitle']))
+            story.append(Paragraph("Video Evidence Upload Preparation Log", self.styles['CustomTitle']))
             story.append(Spacer(1, 0.2*inch))
             
             # Upload information
             story.append(Paragraph("Upload Details", self.styles['CustomHeader']))
             
             upload_data = [
-                ['Upload Date/Time:', form_data.upload_timestamp.toString('yyyy-MM-dd HH:mm:ss') if form_data.upload_timestamp else datetime.now().strftime('%Y-%m-%d %H:%M:%S')],
-                ['Technician Name:', form_data.technician_name],
-                ['Badge Number:', form_data.badge_number],
+                ['Prepared for upload on:', datetime.now().strftime('%Y-%m-%d %H:%M:%S')],
+                ['Technician Name:', self.tech_name],
+                ['Badge Number:', self.badge_number],
                 ['', ''],
                 ['Occurrence Number:', form_data.occurrence_number],
-                ['Location:', form_data.location_address],
-                ['Business:', form_data.business_name or 'N/A']
+                ['Business:', form_data.business_name or 'N/A'],
+                ['Location:', form_data.location_address]
             ]
             
             upload_table = Table(upload_data, colWidths=[2*inch, 4*inch])
@@ -211,31 +220,12 @@ class PDFGenerator:
             story.append(Paragraph("Certification", self.styles['CustomHeader']))
             
             cert_text = (
-                f"I, {form_data.technician_name}, certify that the video evidence "
+                f"I, {self.tech_name}, certify that the video evidence "
                 f"associated with occurrence number {form_data.occurrence_number} "
                 f"was uploaded and processed according to departmental procedures."
             )
             
             story.append(Paragraph(cert_text, self.styles['Normal']))
-            story.append(Spacer(1, 0.5*inch))
-            
-            # Signature line
-            sig_data = [
-                ['', ''],
-                ['Signature:', '_' * 50],
-                ['', ''],
-                ['Date:', '_' * 50]
-            ]
-            
-            sig_table = Table(sig_data, colWidths=[1.5*inch, 3*inch])
-            sig_table.setStyle(TableStyle([
-                ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
-                ('FONTSIZE', (0, 0), (-1, -1), 10),
-                ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
-                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-            ]))
-            
-            story.append(sig_table)
             
             # Build PDF
             doc.build(story)

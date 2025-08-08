@@ -25,6 +25,7 @@ class FormData:
     real_time: Optional[QDateTime] = None
     technician_name: str = ""
     badge_number: str = ""
+    include_tech_in_offset: bool = False
     upload_timestamp: Optional[QDateTime] = None
     
     def validate(self) -> List[str]:
@@ -34,8 +35,7 @@ class FormData:
             errors.append("Occurrence number is required")
         if not self.location_address:
             errors.append("Location address is required")
-        if not self.technician_name:
-            errors.append("Technician name is required")
+        # Technician info is now stored in settings, not form data
         return errors
     
     def to_dict(self) -> dict:

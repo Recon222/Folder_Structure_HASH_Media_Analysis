@@ -81,9 +81,14 @@ self.occ_number.textChanged.connect(lambda t: setattr(self.form_data, 'occurrenc
 
 **core/**
 - `models.py`: FormData dataclass with validation and JSON serialization
+  - Includes `include_tech_in_offset` flag for selective technician info inclusion
 - `templates.py`: FolderTemplate and FolderBuilder for path generation
 - `file_ops.py`: FileOperations class with hash verification and parallel hashing support
-- `pdf_gen.py`: PDFGenerator for reports (Time Offset, Technician Log, Hash CSV)
+- `pdf_gen.py`: PDFGenerator for reports
+  - Time Offset Report (includes tech info when checkbox selected)
+  - Upload Log (always includes tech info, no signature fields)
+  - Hash CSV (SHA-256 verification results)
+  - Uses "Prepared for upload on" timestamp format
 - `workers/`: QThread subclasses for file and folder operations
 - `batch_queue.py`: Queue management for batch processing
 - `batch_recovery.py`: Recovery system for interrupted batch operations
@@ -95,8 +100,15 @@ self.occ_number.textChanged.connect(lambda t: setattr(self.form_data, 'occurrenc
 
 **ui/**
 - `main_window.py`: Main application window with tab management
-- `components/`: Reusable UI components (files panel, form panel, log console, batch queue widget)
-- `dialogs/`: User settings, ZIP settings, and about dialogs
+- `components/`: Reusable UI components
+  - `form_panel.py`: Form with Video Start/End times, includes tech info checkbox
+  - `files_panel.py`: File and folder selection
+  - `log_console.py`: Operation logging
+  - `batch_queue_widget.py`: Batch job queue management
+- `dialogs/`: Application dialogs
+  - `user_settings.py`: Tabbed settings (General, Analyst/Technician, Documentation)
+  - `zip_settings.py`: ZIP compression configuration
+  - `about.py`: Application information
 - `styles/`: Theme definitions (Carolina Blue color scheme)
 - `tabs/`: Tab implementations (ForensicTab, BatchTab)
 
@@ -125,11 +137,13 @@ self.occ_number.textChanged.connect(lambda t: setattr(self.form_data, 'occurrenc
 - Progress bars show/hide based on operation state
 
 ### Persistent Settings (QSettings)
-- Technician information (name, badge number)
+- Technician information (name, badge number) - stored in User Settings dialog
 - ZIP compression preferences and levels
 - Window geometry and state
 - Last used directories
-- Hash calculation preferences
+- Hash calculation preferences (combined with CSV generation)
+- PDF generation preferences (time offset, upload log)
+- UI behavior preferences (auto-scroll, exit confirmation)
 
 
 ### Sample Data
@@ -174,6 +188,13 @@ Reports follow specific directory structure:
 - Reports: `output/OccurrenceNumber/Documents/`
 - ZIP created at occurrence level to include both
 
+### PDF Generation Behavior
+- PDFs generate automatically after file copy (no user prompts)
+- Generation controlled by Documentation tab settings in User Settings
+- Timestamps use actual generation time for accuracy
+- Upload Log shows Business before Location in details
+- Technician info persists across sessions (User Settings → Analyst/Technician tab)
+
 ### Time Offset Format Flexibility
 Handles both legacy (integer minutes) and new text formats:
 - Legacy: `120` (minutes)
@@ -192,6 +213,10 @@ Results stored in MainWindow enable operation chaining.
 - Components bind via lambdas: `lambda t: setattr(self.form_data, 'field', t)`
 - No complex state management needed
 - JSON serialization preserves QDateTime objects
+- Form fields include:
+  - Video Start/End times (formerly Extraction Start/End)
+  - Include tech info checkbox for time offset documents
+  - No upload timestamp field (generated automatically in PDFs)
 
 ### Hash Verification Philosophy
 Optional at multiple levels:

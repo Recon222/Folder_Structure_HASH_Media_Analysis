@@ -7,7 +7,8 @@ User Settings Dialog for configuring application preferences
 from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QGroupBox, QCheckBox,
-    QDialogButtonBox, QLabel, QSpinBox, QHBoxLayout
+    QDialogButtonBox, QLabel, QSpinBox, QHBoxLayout,
+    QTabWidget, QWidget, QLineEdit, QFormLayout
 )
 
 
@@ -38,30 +39,29 @@ class UserSettingsDialog(QDialog):
         """Create the dialog UI"""
         layout = QVBoxLayout()
         
-        # File Operations group
-        file_group = QGroupBox("File Operations")
-        file_layout = QVBoxLayout()
+        # Create tab widget
+        self.tabs = QTabWidget()
+        layout.addWidget(self.tabs)
         
-        # Hash verification toggle
-        self.hash_check = QCheckBox("Calculate SHA-256 hashes during file copy")
-        self.hash_check.setToolTip(
-            "Enable hash calculation for file integrity verification.\n"
-            "Disabling this will significantly speed up file copying\n"
-            "but won't provide integrity verification."
+        # Create tabs
+        self._create_general_tab()
+        self._create_analyst_tab()
+        self._create_documentation_tab()
+        
+        # Dialog buttons
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel
         )
-        file_layout.addWidget(self.hash_check)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
         
-        # Hash verification info
-        hash_info = QLabel(
-            "Note: Disabling hash calculation will improve performance\n"
-            "but forensic integrity verification will not be available."
-        )
-        hash_info.setStyleSheet("color: gray; font-size: 10pt;")
-        hash_info.setWordWrap(True)
-        file_layout.addWidget(hash_info)
-        
-        file_group.setLayout(file_layout)
-        layout.addWidget(file_group)
+        self.setLayout(layout)
+    
+    def _create_general_tab(self):
+        """Create the general settings tab"""
+        tab = QWidget()
+        layout = QVBoxLayout()
         
         # Performance group
         perf_group = QGroupBox("Performance")
@@ -111,24 +111,115 @@ class UserSettingsDialog(QDialog):
         layout.addWidget(ui_group)
         
         layout.addStretch()
+        tab.setLayout(layout)
+        self.tabs.addTab(tab, "General")
+    
+    def _create_analyst_tab(self):
+        """Create the analyst/technician settings tab"""
+        tab = QWidget()
+        layout = QVBoxLayout()
         
-        # Dialog buttons
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.Ok | QDialogButtonBox.Cancel
+        # Analyst Information group
+        analyst_group = QGroupBox("Analyst/Technician Information")
+        analyst_layout = QFormLayout()
+        
+        # Name field
+        self.tech_name_edit = QLineEdit()
+        self.tech_name_edit.setPlaceholderText("Enter your full name")
+        analyst_layout.addRow("Name:", self.tech_name_edit)
+        
+        # Badge number field
+        self.badge_edit = QLineEdit()
+        self.badge_edit.setPlaceholderText("Enter your badge number")
+        analyst_layout.addRow("Badge #:", self.badge_edit)
+        
+        analyst_group.setLayout(analyst_layout)
+        layout.addWidget(analyst_group)
+        
+        # Info label
+        info_label = QLabel(
+            "This information will be automatically included in:\n"
+            "• Upload receipts (always)\n"
+            "• Time offset documents (when checkbox is selected)\n\n"
+            "The information is saved and will persist between sessions."
         )
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        info_label.setStyleSheet("color: gray; font-size: 10pt;")
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
         
-        self.setLayout(layout)
+        layout.addStretch()
+        tab.setLayout(layout)
+        self.tabs.addTab(tab, "Analyst/Technician")
+    
+    def _create_documentation_tab(self):
+        """Create the documentation settings tab"""
+        tab = QWidget()
+        layout = QVBoxLayout()
+        
+        # PDF Generation group
+        pdf_group = QGroupBox("PDF Document Generation")
+        pdf_layout = QVBoxLayout()
+        
+        # Checkboxes for each PDF type
+        self.generate_time_offset_check = QCheckBox("Generate Time Offset Report")
+        self.generate_time_offset_check.setToolTip(
+            "Automatically generate a time offset report PDF after file operations"
+        )
+        pdf_layout.addWidget(self.generate_time_offset_check)
+        
+        self.generate_upload_log_check = QCheckBox("Generate Upload Log")
+        self.generate_upload_log_check.setToolTip(
+            "Automatically generate an upload log PDF after file operations"
+        )
+        pdf_layout.addWidget(self.generate_upload_log_check)
+        
+        pdf_group.setLayout(pdf_layout)
+        layout.addWidget(pdf_group)
+        
+        # File Integrity group
+        integrity_group = QGroupBox("File Integrity Verification")
+        integrity_layout = QVBoxLayout()
+        
+        # Combined hash calculation and CSV generation
+        self.generate_hash_csv_check = QCheckBox("Calculate SHA-256 hashes and generate verification CSV")
+        self.generate_hash_csv_check.setToolTip(
+            "Enable SHA-256 hash calculation during file copy and\n"
+            "automatically generate a CSV file with verification results.\n"
+            "Disabling this will improve copy speed but forensic\n"
+            "integrity verification will not be available."
+        )
+        integrity_layout.addWidget(self.generate_hash_csv_check)
+        
+        # Hash info
+        hash_info = QLabel(
+            "Note: SHA-256 hashing ensures forensic integrity but may\n"
+            "slow down file operations on large datasets."
+        )
+        hash_info.setStyleSheet("color: gray; font-size: 10pt;")
+        hash_info.setWordWrap(True)
+        integrity_layout.addWidget(hash_info)
+        
+        integrity_group.setLayout(integrity_layout)
+        layout.addWidget(integrity_group)
+        
+        # Info label
+        info_label = QLabel(
+            "These settings control which documents are automatically generated\n"
+            "after file operations complete. Documents will be saved in the\n"
+            "Documents folder within your output directory.\n\n"
+            "Note: Documents are generated immediately after file copying\n"
+            "completes to ensure accurate timestamps."
+        )
+        info_label.setStyleSheet("color: gray; font-size: 10pt;")
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
+        
+        layout.addStretch()
+        tab.setLayout(layout)
+        self.tabs.addTab(tab, "Documentation")
         
     def _load_settings(self):
         """Load current settings into the dialog"""
-        # File operations
-        self.hash_check.setChecked(
-            self.settings.value('calculate_hashes', True, type=bool)
-        )
-        
         # Performance
         self.buffer_spin.setValue(
             self.settings.value('copy_buffer_size', 1024, type=int)
@@ -142,14 +233,42 @@ class UserSettingsDialog(QDialog):
             self.settings.value('confirm_exit_with_operations', True, type=bool)
         )
         
+        # Analyst/Technician info
+        self.tech_name_edit.setText(
+            self.settings.value('technician_name', '', type=str)
+        )
+        self.badge_edit.setText(
+            self.settings.value('badge_number', '', type=str)
+        )
+        
+        # Documentation settings
+        self.generate_time_offset_check.setChecked(
+            self.settings.value('generate_time_offset_pdf', True, type=bool)
+        )
+        self.generate_upload_log_check.setChecked(
+            self.settings.value('generate_upload_log_pdf', True, type=bool)
+        )
+        # Use calculate_hashes as the main setting for hash/CSV generation
+        self.generate_hash_csv_check.setChecked(
+            self.settings.value('calculate_hashes', True, type=bool)
+        )
+        
     def save_settings(self):
         """Save settings when dialog is accepted"""
-        # File operations
-        self.settings.setValue('calculate_hashes', self.hash_check.isChecked())
-        
         # Performance
         self.settings.setValue('copy_buffer_size', self.buffer_spin.value())
         
         # UI behavior
         self.settings.setValue('auto_scroll_log', self.auto_scroll_check.isChecked())
         self.settings.setValue('confirm_exit_with_operations', self.confirm_exit_check.isChecked())
+        
+        # Analyst/Technician info
+        self.settings.setValue('technician_name', self.tech_name_edit.text())
+        self.settings.setValue('badge_number', self.badge_edit.text())
+        
+        # Documentation settings
+        self.settings.setValue('generate_time_offset_pdf', self.generate_time_offset_check.isChecked())
+        self.settings.setValue('generate_upload_log_pdf', self.generate_upload_log_check.isChecked())
+        # Single setting controls both hash calculation and CSV generation
+        self.settings.setValue('calculate_hashes', self.generate_hash_csv_check.isChecked())
+        self.settings.setValue('generate_hash_csv', self.generate_hash_csv_check.isChecked())

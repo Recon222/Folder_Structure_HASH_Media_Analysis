@@ -162,13 +162,8 @@ class MainWindow(QMainWindow):
         
     def _load_settings(self):
         """Load saved settings"""
-        # Load technician info
-        tech_name = self.settings.value('technician_name', '')
-        badge_number = self.settings.value('badge_number', '')
-        
-        if hasattr(self, 'form_panel'):
-            self.form_panel.tech_name.setText(tech_name)
-            self.form_panel.badge_number.setText(badge_number)
+        # Settings are now loaded in User Settings dialog
+        pass
             
     def process_forensic_files(self):
         """Process files using forensic folder structure"""
@@ -271,22 +266,21 @@ class MainWindow(QMainWindow):
                 
                 completion_message += stats_text
             
-            # Ask user if they want to generate reports
-            reply = QMessageBox.question(self, "Generate Reports?",
-                                       completion_message + "\n\nWould you like to generate PDF reports?",
-                                       QMessageBox.Yes | QMessageBox.No)
-            
-            if reply == QMessageBox.Yes:
+            # Auto-generate reports based on user settings
+            if self.settings.value('generate_time_offset_pdf', True, type=bool) or \
+               self.settings.value('generate_upload_log_pdf', True, type=bool) or \
+               self.settings.value('calculate_hashes', True, type=bool):
+                self.log("Generating documentation...")
                 self.generate_reports()
-            else:
-                QMessageBox.information(self, "Success", message)
+            
+            QMessageBox.information(self, "Success", completion_message)
         else:
             QMessageBox.critical(self, "Error", message)
             
         self.log(message)
         
     def generate_reports(self):
-        """Generate PDF reports and hash verification CSV"""
+        """Generate PDF reports and hash verification CSV based on user settings"""
         try:
             # Get the output directory structure
             file_dest_path = Path(list(self.file_operation_results.values())[0]['dest_path'])
@@ -308,29 +302,60 @@ class MainWindow(QMainWindow):
             # Reports go directly into Documents folder
             reports_output_dir = documents_dir
             
-            # Generate reports
+            # Generate reports based on settings
             generated = self.report_controller.generate_reports(
                 self.form_data,
                 self.file_operation_results,
-                reports_output_dir
+                reports_output_dir,
+                generate_time_offset=self.settings.value('generate_time_offset_pdf', True, type=bool),
+                generate_upload_log=self.settings.value('generate_upload_log_pdf', True, type=bool),
+                generate_hash_csv=self.settings.value('calculate_hashes', True, type=bool)
             )
             
             # Log generated reports
-            for report_type, path in generated.items():
-                self.log(f"Generated: {path.name}")
+            if generated:
+                for report_type, path in generated.items():
+                    self.log(f"Generated: {path.name}")
+                self.log(f"Documentation saved to: {reports_output_dir}")
                 
-            # Ask about ZIP creation
+            # Check if we should ask about ZIP creation
             if self.report_controller.should_create_zip():
-                reply = QMessageBox.question(self, "Create ZIP Archive?",
-                                           "Would you like to create ZIP archive(s)?",
-                                           QMessageBox.Yes | QMessageBox.No)
-                if reply == QMessageBox.Yes:
+                # Check if user wants to be prompted
+                prompt_for_zip = self.settings.value('prompt_for_zip', True, type=bool)
+                auto_create_zip = self.settings.value('auto_create_zip', False, type=bool)
+                
+                create_zip = False
+                
+                if prompt_for_zip:
+                    # Create custom message box with checkbox
+                    msg_box = QMessageBox(self)
+                    msg_box.setWindowTitle("Create ZIP Archive?")
+                    msg_box.setText("Would you like to create ZIP archive(s)?")
+                    msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+                    
+                    # Add "Don't ask me again" checkbox
+                    dont_ask_checkbox = QCheckBox("Don't ask me again")
+                    msg_box.setCheckBox(dont_ask_checkbox)
+                    
+                    reply = msg_box.exec()
+                    
+                    # Save preference if checkbox was checked
+                    if dont_ask_checkbox.isChecked():
+                        self.settings.setValue('prompt_for_zip', False)
+                        self.settings.setValue('auto_create_zip', reply == QMessageBox.Yes)
+                    
+                    create_zip = (reply == QMessageBox.Yes)
+                else:
+                    # Use saved preference
+                    create_zip = auto_create_zip
+                
+                if create_zip:
                     # Pass the original file location for ZIP creation
                     original_output_dir = file_dest_path.parent
                     self.create_zip_archives(original_output_dir)
-                    
-            QMessageBox.information(self, "Reports Generated", 
-                                  f"Reports have been saved to:\n{reports_output_dir}")                                  
+                    self.log("Creating ZIP archive(s)...")
+                elif not prompt_for_zip:
+                    self.log("ZIP creation skipped (based on saved preference)")                                  
                                   
                                   
         except Exception as e:
@@ -476,8 +501,5 @@ class MainWindow(QMainWindow):
             self.folder_thread.cancel()
             self.folder_thread.wait()
         
-        # Save settings
-        if hasattr(self, 'form_panel'):
-            self.settings.setValue('technician_name', self.form_panel.tech_name.text())
-            self.settings.setValue('badge_number', self.form_panel.badge_number.text())
+        # Settings are saved through User Settings dialog
         event.accept()

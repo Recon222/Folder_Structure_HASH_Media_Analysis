@@ -8,7 +8,7 @@ import zipfile
 from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QGroupBox, QComboBox,
-    QCheckBox, QDialogButtonBox
+    QCheckBox, QDialogButtonBox, QPushButton, QLabel
 )
 
 
@@ -69,6 +69,24 @@ class ZipSettingsDialog(QDialog):
         level_group.setLayout(level_layout)
         layout.addWidget(level_group)
         
+        # Prompt Settings group
+        prompt_group = QGroupBox("ZIP Creation Prompt")
+        prompt_layout = QVBoxLayout()
+        
+        # Current status label
+        prompt_for_zip = self.settings.value('prompt_for_zip', True, type=bool)
+        status_text = "Currently: Prompting for ZIP creation" if prompt_for_zip else "Currently: Using saved preference (no prompt)"
+        self.status_label = QLabel(status_text)
+        prompt_layout.addWidget(self.status_label)
+        
+        # Reset button
+        self.reset_prompt_btn = QPushButton("Reset ZIP Prompt (ask me again)")
+        self.reset_prompt_btn.clicked.connect(self.reset_zip_prompt)
+        prompt_layout.addWidget(self.reset_prompt_btn)
+        
+        prompt_group.setLayout(prompt_layout)
+        layout.addWidget(prompt_group)
+        
         # Dialog buttons
         buttons = QDialogButtonBox(
             QDialogButtonBox.Ok | QDialogButtonBox.Cancel
@@ -109,3 +127,9 @@ class ZipSettingsDialog(QDialog):
         self.settings.setValue('zip_at_root', self.zip_root_check.isChecked())
         self.settings.setValue('zip_at_location', self.zip_location_check.isChecked())
         self.settings.setValue('zip_at_datetime', self.zip_datetime_check.isChecked())
+    
+    def reset_zip_prompt(self):
+        """Reset the ZIP prompt preference"""
+        self.settings.setValue('prompt_for_zip', True)
+        self.settings.remove('auto_create_zip')
+        self.status_label.setText("Currently: Prompting for ZIP creation")
