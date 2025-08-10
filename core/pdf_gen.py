@@ -142,8 +142,8 @@ class PDFGenerator:
             story.append(Paragraph("Extraction Period", self.styles['CustomHeader']))
             
             extraction_data = [
-                ['Start:', form_data.extraction_start.toString('yyyy-MM-dd HH:mm:ss') if form_data.extraction_start else 'N/A'],
-                ['End:', form_data.extraction_end.toString('yyyy-MM-dd HH:mm:ss') if form_data.extraction_end else 'N/A']
+                ['Start:', form_data.video_start_datetime.toString('yyyy-MM-dd HH:mm:ss') if form_data.video_start_datetime else 'N/A'],
+                ['End:', form_data.video_end_datetime.toString('yyyy-MM-dd HH:mm:ss') if form_data.video_end_datetime else 'N/A']
             ]
             
             extraction_table = Table(extraction_data, colWidths=[2*inch, 4*inch])

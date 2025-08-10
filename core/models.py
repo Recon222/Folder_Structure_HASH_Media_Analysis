@@ -18,8 +18,8 @@ class FormData:
     occurrence_number: str = ""
     business_name: str = ""
     location_address: str = ""
-    extraction_start: Optional[QDateTime] = None
-    extraction_end: Optional[QDateTime] = None
+    video_start_datetime: Optional[QDateTime] = None
+    video_end_datetime: Optional[QDateTime] = None
     time_offset: str = ""  # Text format: "DVR is X hr Y min Z sec AHEAD/BEHIND of realtime"
     dvr_time: Optional[QDateTime] = None
     real_time: Optional[QDateTime] = None
@@ -54,7 +54,7 @@ class FormData:
         form_data = cls()
         for key, value in data.items():
             if hasattr(form_data, key):
-                if key.endswith('_time') or key == 'upload_timestamp' or 'extraction' in key:
+                if key.endswith('_time') or key.endswith('_datetime') or key == 'upload_timestamp':
                     # Convert string dates back to QDateTime
                     if value:
                         setattr(form_data, key, QDateTime.fromString(value, Qt.ISODate))

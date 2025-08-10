@@ -59,20 +59,20 @@ class FormPanel(QGroupBox):
         
         # Row 3: Video Times
         layout.addWidget(QLabel("Video Start:"), 3, 0)
-        self.extraction_start = QDateTimeEdit(QDateTime.currentDateTime())
-        self.extraction_start.setCalendarPopup(True)
-        self.extraction_start.dateTimeChanged.connect(lambda dt: self._update_field('extraction_start', dt))
-        layout.addWidget(self.extraction_start, 3, 1)
+        self.video_start_datetime = QDateTimeEdit(QDateTime.currentDateTime())
+        self.video_start_datetime.setCalendarPopup(True)
+        self.video_start_datetime.dateTimeChanged.connect(lambda dt: self._update_field('video_start_datetime', dt))
+        layout.addWidget(self.video_start_datetime, 3, 1)
         # Initialize form data with current value
-        self.form_data.extraction_start = self.extraction_start.dateTime()
+        self.form_data.video_start_datetime = self.video_start_datetime.dateTime()
         
         layout.addWidget(QLabel("Video End:"), 4, 0)
-        self.extraction_end = QDateTimeEdit(QDateTime.currentDateTime())
-        self.extraction_end.setCalendarPopup(True)
-        self.extraction_end.dateTimeChanged.connect(lambda dt: self._update_field('extraction_end', dt))
-        layout.addWidget(self.extraction_end, 4, 1)
+        self.video_end_datetime = QDateTimeEdit(QDateTime.currentDateTime())
+        self.video_end_datetime.setCalendarPopup(True)
+        self.video_end_datetime.dateTimeChanged.connect(lambda dt: self._update_field('video_end_datetime', dt))
+        layout.addWidget(self.video_end_datetime, 4, 1)
         # Initialize form data with current value
-        self.form_data.extraction_end = self.extraction_end.dateTime()
+        self.form_data.video_end_datetime = self.video_end_datetime.dateTime()
         
         # Row 5: Time Offset
         layout.addWidget(QLabel("Time Offset:"), 5, 0)
@@ -148,10 +148,10 @@ class FormPanel(QGroupBox):
         self.occ_number.setText(form_data.occurrence_number)
         self.business_name.setText(form_data.business_name)
         self.location_address.setText(form_data.location_address)
-        if form_data.extraction_start:
-            self.extraction_start.setDateTime(form_data.extraction_start)
-        if form_data.extraction_end:
-            self.extraction_end.setDateTime(form_data.extraction_end)
+        if form_data.video_start_datetime:
+            self.video_start_datetime.setDateTime(form_data.video_start_datetime)
+        if form_data.video_end_datetime:
+            self.video_end_datetime.setDateTime(form_data.video_end_datetime)
         if form_data.dvr_time:
             self.dvr_time.setDateTime(form_data.dvr_time)
         if form_data.real_time:

@@ -5,7 +5,7 @@ ZIP Settings Dialog for configuring compression options
 """
 
 import zipfile
-from PySide6.QtCore import QSettings
+from core.settings_manager import SettingsManager
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QGroupBox, QComboBox,
     QCheckBox, QDialogButtonBox, QPushButton, QLabel
@@ -15,11 +15,11 @@ from PySide6.QtWidgets import (
 class ZipSettingsDialog(QDialog):
     """Dialog for configuring ZIP compression settings"""
     
-    def __init__(self, settings: QSettings, parent=None):
+    def __init__(self, settings: SettingsManager, parent=None):
         """Initialize ZIP settings dialog
         
         Args:
-            settings: QSettings instance for storing preferences
+            settings: SettingsManager instance for storing preferences
             parent: Parent widget
         """
         super().__init__(parent)
@@ -74,7 +74,7 @@ class ZipSettingsDialog(QDialog):
         prompt_layout = QVBoxLayout()
         
         # Current status label
-        prompt_for_zip = self.settings.value('prompt_for_zip', True, type=bool)
+        prompt_for_zip = self.settings.get('prompt_for_zip', True)
         status_text = "Currently: Prompting for ZIP creation" if prompt_for_zip else "Currently: Using saved preference (no prompt)"
         self.status_label = QLabel(status_text)
         prompt_layout.addWidget(self.status_label)
@@ -100,18 +100,18 @@ class ZipSettingsDialog(QDialog):
     def _load_settings(self):
         """Load current settings into the dialog"""
         # Compression level
-        comp_value = self.settings.value('zip_compression', 0)
+        comp_value = self.settings.get('zip_compression', 0)
         self.comp_combo.setCurrentIndex(comp_value)
         
         # ZIP levels
         self.zip_root_check.setChecked(
-            self.settings.value('zip_at_root', True, type=bool)
+            self.settings.get('zip_at_root', True)
         )
         self.zip_location_check.setChecked(
-            self.settings.value('zip_at_location', False, type=bool)
+            self.settings.get('zip_at_location', False)
         )
         self.zip_datetime_check.setChecked(
-            self.settings.value('zip_at_datetime', False, type=bool)
+            self.settings.get('zip_at_datetime', False)
         )
         
     def save_settings(self):
@@ -120,16 +120,16 @@ class ZipSettingsDialog(QDialog):
         comp_index = self.comp_combo.currentIndex()
         comp_level = 0 if comp_index == 0 else zipfile.ZIP_DEFLATED
         
-        self.settings.setValue('zip_compression', comp_index)
-        self.settings.setValue('zip_compression_level', comp_level)
+        self.settings.set('zip_compression', comp_index)
+        self.settings.set('zip_compression_level', comp_level)
         
         # ZIP levels
-        self.settings.setValue('zip_at_root', self.zip_root_check.isChecked())
-        self.settings.setValue('zip_at_location', self.zip_location_check.isChecked())
-        self.settings.setValue('zip_at_datetime', self.zip_datetime_check.isChecked())
+        self.settings.set('zip_at_root', self.zip_root_check.isChecked())
+        self.settings.set('zip_at_location', self.zip_location_check.isChecked())
+        self.settings.set('zip_at_datetime', self.zip_datetime_check.isChecked())
     
     def reset_zip_prompt(self):
         """Reset the ZIP prompt preference"""
-        self.settings.setValue('prompt_for_zip', True)
+        self.settings.set('prompt_for_zip', True)
         self.settings.remove('auto_create_zip')
         self.status_label.setText("Currently: Prompting for ZIP creation")

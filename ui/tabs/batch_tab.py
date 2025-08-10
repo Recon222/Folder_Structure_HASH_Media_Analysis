@@ -265,8 +265,8 @@ class BatchTab(QWidget):
             self.form_data.business_name = ""
             self.form_data.location_address = ""
             self.form_data.time_offset = ""
-            self.form_data.extraction_start = None
-            self.form_data.extraction_end = None
+            self.form_data.video_start_datetime = None
+            self.form_data.video_end_datetime = None
             self.form_data.dvr_time = None
             self.form_data.real_time = None
             self.form_data.upload_timestamp = None

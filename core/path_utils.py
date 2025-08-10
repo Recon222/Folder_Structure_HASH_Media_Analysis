@@ -218,38 +218,16 @@ class ForensicPathBuilder:
         location_part = sanitizer.sanitize_component(location_part, platform_type)
         
         # Build date range component
-        # Check for video_start_datetime (new field name) first
         if hasattr(form_data, 'video_start_datetime') and form_data.video_start_datetime:
-            date_format = "%Y-%m-%d_%H%M"
-            start_date = form_data.video_start_datetime.strftime(date_format)
+            # QDateTime objects need to use toString() method, not strftime()
+            start_date = form_data.video_start_datetime.toString("yyyy-MM-dd_HHmm")
             
             if hasattr(form_data, 'video_end_datetime') and form_data.video_end_datetime:
-                end_date = form_data.video_end_datetime.strftime(date_format)
+                end_date = form_data.video_end_datetime.toString("yyyy-MM-dd_HHmm")
             else:
                 end_date = start_date
             
             date_part = f"{start_date}_to_{end_date}"
-        # Check for extraction_start (legacy field name) 
-        elif hasattr(form_data, 'extraction_start') and form_data.extraction_start:
-            # Handle QDateTime objects from PySide6
-            if hasattr(form_data.extraction_start, 'toString'):
-                start = form_data.extraction_start.toString("yyyy-MM-dd_HHmm")
-                if hasattr(form_data, 'extraction_end') and form_data.extraction_end:
-                    end = form_data.extraction_end.toString("yyyy-MM-dd_HHmm")
-                else:
-                    end = start
-                date_part = f"{start}_to_{end}"
-            else:
-                # Handle standard datetime objects
-                date_format = "%Y-%m-%d_%H%M"
-                start_date = form_data.extraction_start.strftime(date_format)
-                
-                if hasattr(form_data, 'extraction_end') and form_data.extraction_end:
-                    end_date = form_data.extraction_end.strftime(date_format)
-                else:
-                    end_date = start_date
-                
-                date_part = f"{start_date}_to_{end_date}"
         else:
             # Fallback if no dates available
             from datetime import datetime

@@ -202,7 +202,7 @@ class MainWindow(QMainWindow):
         self.last_output_directory = self.output_directory
         
         # Get hash calculation preference
-        calculate_hash = self.settings.value('calculate_hashes', True, type=bool)
+        calculate_hash = self.settings.get('calculate_hashes', True)
         
         # Start file operation
         self.file_thread = self.file_controller.process_forensic_files(
@@ -269,9 +269,9 @@ class MainWindow(QMainWindow):
                 completion_message += stats_text
             
             # Auto-generate reports based on user settings
-            if self.settings.value('generate_time_offset_pdf', True, type=bool) or \
-               self.settings.value('generate_upload_log_pdf', True, type=bool) or \
-               self.settings.value('calculate_hashes', True, type=bool):
+            if self.settings.get('generate_time_offset_pdf', True) or \
+               self.settings.get('generate_upload_log_pdf', True) or \
+               self.settings.get('calculate_hashes', True):
                 self.log("Generating documentation...")
                 self.generate_reports()
             
@@ -309,9 +309,9 @@ class MainWindow(QMainWindow):
                 self.form_data,
                 self.file_operation_results,
                 reports_output_dir,
-                generate_time_offset=self.settings.value('generate_time_offset_pdf', True, type=bool),
-                generate_upload_log=self.settings.value('generate_upload_log_pdf', True, type=bool),
-                generate_hash_csv=self.settings.value('calculate_hashes', True, type=bool)
+                generate_time_offset=self.settings.get('generate_time_offset_pdf', True),
+                generate_upload_log=self.settings.get('generate_upload_log_pdf', True),
+                generate_hash_csv=self.settings.get('calculate_hashes', True)
             )
             
             # Log generated reports
@@ -323,8 +323,8 @@ class MainWindow(QMainWindow):
             # Check if we should ask about ZIP creation
             if self.report_controller.should_create_zip():
                 # Check if user wants to be prompted
-                prompt_for_zip = self.settings.value('prompt_for_zip', True, type=bool)
-                auto_create_zip = self.settings.value('auto_create_zip', False, type=bool)
+                prompt_for_zip = self.settings.get('prompt_for_zip', True)
+                auto_create_zip = self.settings.get('auto_create_zip', False)
                 
                 create_zip = False
                 
@@ -343,8 +343,8 @@ class MainWindow(QMainWindow):
                     
                     # Save preference if checkbox was checked
                     if dont_ask_checkbox.isChecked():
-                        self.settings.setValue('prompt_for_zip', False)
-                        self.settings.setValue('auto_create_zip', reply == QMessageBox.Yes)
+                        self.settings.set('prompt_for_zip', False)
+                        self.settings.set('auto_create_zip', reply == QMessageBox.Yes)
                     
                     create_zip = (reply == QMessageBox.Yes)
                 else:
@@ -368,10 +368,10 @@ class MainWindow(QMainWindow):
         try:
             # Create settings
             settings = ZipSettings()
-            settings.compression_level = self.settings.value('zip_compression_level', zipfile.ZIP_STORED)
-            settings.create_at_root = self.settings.value('zip_at_root', True, type=bool)
-            settings.create_at_location = self.settings.value('zip_at_location', False, type=bool)
-            settings.create_at_datetime = self.settings.value('zip_at_datetime', False, type=bool)
+            settings.compression_level = self.settings.get('zip_compression_level', zipfile.ZIP_STORED)
+            settings.create_at_root = self.settings.get('zip_at_root', True)
+            settings.create_at_location = self.settings.get('zip_at_location', False)
+            settings.create_at_datetime = self.settings.get('zip_at_datetime', False)
             settings.output_path = self.output_directory
             
             # Find the occurrence folder for zipping

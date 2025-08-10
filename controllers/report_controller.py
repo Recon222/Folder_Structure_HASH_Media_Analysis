@@ -69,24 +69,21 @@ class ReportController:
     def get_zip_settings(self) -> ZipSettings:
         """Get ZIP settings for thread creation"""
         settings = ZipSettings()
-        settings.compression_level = self.settings.value(
+        settings.compression_level = self.settings.get(
             'zip_compression_level', 
             zipfile.ZIP_STORED
         )
-        settings.create_at_root = self.settings.value(
+        settings.create_at_root = self.settings.get(
             'zip_at_root', 
-            True, 
-            type=bool
+            True
         )
-        settings.create_at_location = self.settings.value(
+        settings.create_at_location = self.settings.get(
             'zip_at_location', 
-            False, 
-            type=bool
+            False
         )
-        settings.create_at_datetime = self.settings.value(
+        settings.create_at_datetime = self.settings.get(
             'zip_at_datetime', 
-            False, 
-            type=bool
+            False
         )
         return settings
         
@@ -114,7 +111,7 @@ class ReportController:
     def should_create_zip(self) -> bool:
         """Check if ZIP creation is enabled in settings"""
         return (
-            self.settings.value('zip_at_root', True, type=bool) or
-            self.settings.value('zip_at_location', False, type=bool) or
-            self.settings.value('zip_at_datetime', False, type=bool)
+            self.settings.get('zip_at_root', True) or
+            self.settings.get('zip_at_location', False) or
+            self.settings.get('zip_at_datetime', False)
         )

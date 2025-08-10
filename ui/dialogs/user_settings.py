@@ -4,7 +4,7 @@
 User Settings Dialog for configuring application preferences
 """
 
-from PySide6.QtCore import QSettings
+from core.settings_manager import SettingsManager
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QGroupBox, QCheckBox,
     QDialogButtonBox, QLabel, QSpinBox, QHBoxLayout,
@@ -15,11 +15,11 @@ from PySide6.QtWidgets import (
 class UserSettingsDialog(QDialog):
     """Dialog for configuring user preferences"""
     
-    def __init__(self, settings: QSettings, parent=None):
+    def __init__(self, settings: SettingsManager, parent=None):
         """Initialize user settings dialog
         
         Args:
-            settings: QSettings instance for storing preferences
+            settings: SettingsManager instance for storing preferences
             parent: Parent widget
         """
         super().__init__(parent)
@@ -222,53 +222,53 @@ class UserSettingsDialog(QDialog):
         """Load current settings into the dialog"""
         # Performance
         self.buffer_spin.setValue(
-            self.settings.value('copy_buffer_size', 1024, type=int)
+            self.settings.get('copy_buffer_size', 1024)
         )
         
         # UI behavior
         self.auto_scroll_check.setChecked(
-            self.settings.value('auto_scroll_log', True, type=bool)
+            self.settings.get('auto_scroll_log', True)
         )
         self.confirm_exit_check.setChecked(
-            self.settings.value('confirm_exit_with_operations', True, type=bool)
+            self.settings.get('confirm_exit_with_operations', True)
         )
         
         # Analyst/Technician info
         self.tech_name_edit.setText(
-            self.settings.value('technician_name', '', type=str)
+            self.settings.get('technician_name', '')
         )
         self.badge_edit.setText(
-            self.settings.value('badge_number', '', type=str)
+            self.settings.get('badge_number', '')
         )
         
         # Documentation settings
         self.generate_time_offset_check.setChecked(
-            self.settings.value('generate_time_offset_pdf', True, type=bool)
+            self.settings.get('generate_time_offset_pdf', True)
         )
         self.generate_upload_log_check.setChecked(
-            self.settings.value('generate_upload_log_pdf', True, type=bool)
+            self.settings.get('generate_upload_log_pdf', True)
         )
         # Use calculate_hashes as the main setting for hash/CSV generation
         self.generate_hash_csv_check.setChecked(
-            self.settings.value('calculate_hashes', True, type=bool)
+            self.settings.get('calculate_hashes', True)
         )
         
     def save_settings(self):
         """Save settings when dialog is accepted"""
         # Performance
-        self.settings.setValue('copy_buffer_size', self.buffer_spin.value())
+        self.settings.set('copy_buffer_size', self.buffer_spin.value())
         
         # UI behavior
-        self.settings.setValue('auto_scroll_log', self.auto_scroll_check.isChecked())
-        self.settings.setValue('confirm_exit_with_operations', self.confirm_exit_check.isChecked())
+        self.settings.set('auto_scroll_log', self.auto_scroll_check.isChecked())
+        self.settings.set('confirm_exit_with_operations', self.confirm_exit_check.isChecked())
         
         # Analyst/Technician info
-        self.settings.setValue('technician_name', self.tech_name_edit.text())
-        self.settings.setValue('badge_number', self.badge_edit.text())
+        self.settings.set('technician_name', self.tech_name_edit.text())
+        self.settings.set('badge_number', self.badge_edit.text())
         
         # Documentation settings
-        self.settings.setValue('generate_time_offset_pdf', self.generate_time_offset_check.isChecked())
-        self.settings.setValue('generate_upload_log_pdf', self.generate_upload_log_check.isChecked())
+        self.settings.set('generate_time_offset_pdf', self.generate_time_offset_check.isChecked())
+        self.settings.set('generate_upload_log_pdf', self.generate_upload_log_check.isChecked())
         # Single setting controls both hash calculation and CSV generation
-        self.settings.setValue('calculate_hashes', self.generate_hash_csv_check.isChecked())
-        self.settings.setValue('generate_hash_csv', self.generate_hash_csv_check.isChecked())
+        self.settings.set('calculate_hashes', self.generate_hash_csv_check.isChecked())
+        self.settings.set('generate_hash_csv', self.generate_hash_csv_check.isChecked())

@@ -58,15 +58,15 @@ class FolderTemplate:
         }
         
         # Add datetime fields if they exist
-        if form_data.extraction_start:
-            format_dict['extraction_start'] = form_data.extraction_start.toString('yyyy-MM-dd_HH-mm')
-            format_dict['extraction_start_date'] = form_data.extraction_start.toString('yyyy-MM-dd')
-            format_dict['extraction_start_time'] = form_data.extraction_start.toString('HH-mm')
+        if form_data.video_start_datetime:
+            format_dict['video_start'] = form_data.video_start_datetime.toString('yyyy-MM-dd_HH-mm')
+            format_dict['video_start_date'] = form_data.video_start_datetime.toString('yyyy-MM-dd')
+            format_dict['video_start_time'] = form_data.video_start_datetime.toString('HH-mm')
             
-        if form_data.extraction_end:
-            format_dict['extraction_end'] = form_data.extraction_end.toString('yyyy-MM-dd_HH-mm')
-            format_dict['extraction_end_date'] = form_data.extraction_end.toString('yyyy-MM-dd')
-            format_dict['extraction_end_time'] = form_data.extraction_end.toString('HH-mm')
+        if form_data.video_end_datetime:
+            format_dict['video_end'] = form_data.video_end_datetime.toString('yyyy-MM-dd_HH-mm')
+            format_dict['video_end_date'] = form_data.video_end_datetime.toString('yyyy-MM-dd')
+            format_dict['video_end_time'] = form_data.video_end_datetime.toString('HH-mm')
             
         return format_dict
     

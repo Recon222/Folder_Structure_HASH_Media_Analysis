@@ -50,49 +50,6 @@ class SettingsManager:
         'LAST_INPUT_DIR': 'paths.last_input_directory'
     }
     
-    # Legacy key mappings for migration
-    LEGACY_MAPPINGS = {
-        # Multiple variants of compression settings
-        'zip_compression': 'archive.compression_level',
-        'zip_compression_level': 'archive.compression_level',
-        
-        # Hash settings variants
-        'generate_hash_csv': 'forensic.calculate_hashes',
-        'calculate_hashes': 'forensic.calculate_hashes',
-        'enable_hashing': 'forensic.calculate_hashes',
-        
-        # Buffer size variants
-        'buffer_size': 'performance.copy_buffer_size',
-        'copy_buffer_size': 'performance.copy_buffer_size',
-        
-        # ZIP settings variants
-        'create_zip_at_root': 'archive.create_at_root',
-        'create_zip_at_location': 'archive.create_at_location',
-        'create_zip_at_datetime': 'archive.create_at_datetime',
-        'auto_create_zip': 'archive.auto_create',
-        'prompt_for_zip': 'archive.prompt_user',
-        
-        # Report settings variants
-        'generate_time_offset': 'reports.generate_time_offset',
-        'generate_upload_log': 'reports.generate_upload_log',
-        'generate_csv': 'reports.generate_hash_csv',
-        'generate_time_offset_pdf': 'reports.generate_time_offset',
-        'generate_upload_log_pdf': 'reports.generate_upload_log',
-        
-        # Additional ZIP variants
-        'zip_at_root': 'archive.create_at_root',
-        'zip_at_location': 'archive.create_at_location', 
-        'zip_at_datetime': 'archive.create_at_datetime',
-        
-        # UI settings variants
-        'auto_scroll_log': 'ui.auto_scroll_log',
-        'confirm_exit_with_operations': 'ui.confirm_exit_with_operations',
-        
-        # User settings variants
-        'technician_name': 'user.technician_name',
-        'badge_number': 'user.badge_number'
-    }
-    
     _instance = None
     
     def __new__(cls):
@@ -110,27 +67,8 @@ class SettingsManager:
         self._initialized = True
         self._settings = QSettings('FolderStructureUtility', 'Settings')
         
-        # Perform migration on initialization
-        self._migrate_legacy_keys()
+        # Set defaults on initialization
         self._set_defaults()
-    
-    def _migrate_legacy_keys(self):
-        """Migrate legacy keys to canonical format"""
-        migrated_count = 0
-        
-        for old_key, new_key in self.LEGACY_MAPPINGS.items():
-            if self._settings.contains(old_key):
-                value = self._settings.value(old_key)
-                self._settings.setValue(new_key, value)
-                self._settings.remove(old_key)
-                migrated_count += 1
-        
-        if migrated_count > 0:
-            self._settings.sync()
-            # Note: Can't use logger here due to circular dependency at initialization
-            # This migration only happens once, so using print is acceptable
-            import sys
-            print(f"[SettingsManager] Migrated {migrated_count} legacy settings keys", file=sys.stderr)
     
     def _set_defaults(self):
         """Set default values for missing keys"""
@@ -185,50 +123,6 @@ class SettingsManager:
     def sync(self):
         """Force settings to disk"""
         self._settings.sync()
-    
-    def value(self, key: str, default: Any = None, type=None) -> Any:
-        """Compatibility method for QSettings API
-        
-        Args:
-            key: Settings key
-            default: Default value if key not found
-            type: Type hint for conversion (mimics QSettings API)
-            
-        Returns:
-            Setting value or default
-        """
-        # Use the get method which handles canonical keys
-        result = self.get(key, default)
-        
-        # Handle type conversion if specified (QSettings compatibility)
-        if type is not None and result is not None:
-            try:
-                if type == bool:
-                    # Handle string representations of booleans
-                    if isinstance(result, str):
-                        return result.lower() in ('true', '1', 'yes', 'on')
-                    return bool(result)
-                elif type == int:
-                    return int(result)
-                elif type == float:
-                    return float(result)
-                elif type == str:
-                    return str(result)
-                else:
-                    return type(result)
-            except (ValueError, TypeError):
-                return default
-        
-        return result
-    
-    def setValue(self, key: str, value: Any):
-        """Compatibility method for QSettings API
-        
-        Args:
-            key: Settings key
-            value: Value to set
-        """
-        self.set(key, value)
     
     def contains(self, key: str) -> bool:
         """Check if settings contains key
@@ -350,6 +244,27 @@ class SettingsManager:
     def set_last_input_directory(self, path: Path):
         """Set last input directory"""
         self.set('LAST_INPUT_DIR', str(path))
+    
+    def reset_all_settings(self):
+        """Reset all settings for beta testing
+        
+        This will clear all stored settings and restore defaults.
+        Useful for beta testers who need to start fresh.
+        """
+        from core.logger import logger
+        
+        # Clear all settings
+        self._settings.clear()
+        self._settings.sync()
+        
+        # Restore defaults
+        self._set_defaults()
+        
+        # Log the reset
+        if 'logger' in locals():
+            logger.info("All settings reset for beta testing")
+        
+        print("Settings reset successfully. All preferences have been restored to defaults.")
 
 
 # Global settings instance
