@@ -10,6 +10,7 @@ from typing import List, Dict
 from datetime import datetime
 
 from .models import FormData
+from .path_utils import ForensicPathBuilder
 
 
 @dataclass
@@ -32,12 +33,12 @@ class FolderTemplate:
                 # Replace template variables
                 part = level.format(**format_dict)
                 # Clean up the path part
-                part = self._sanitize_path_part(part)
+                part = FolderTemplate._sanitize_path_part(part)
                 if part:  # Only add non-empty parts
                     path_parts.append(part)
             except KeyError as e:
                 # If a variable doesn't exist, use the template as-is
-                path_parts.append(self._sanitize_path_part(level))
+                path_parts.append(FolderTemplate._sanitize_path_part(level))
                 
         return Path(*path_parts) if path_parts else Path('.')
     
@@ -69,7 +70,8 @@ class FolderTemplate:
             
         return format_dict
     
-    def _sanitize_path_part(self, part: str) -> str:
+    @staticmethod
+    def _sanitize_path_part(part: str) -> str:
         """Remove invalid characters from path part"""
         # Replace invalid characters with underscores
         invalid_chars = '<>:"|?*'
@@ -85,38 +87,16 @@ class FolderBuilder:
     
     @staticmethod
     def build_forensic_structure(form_data: FormData) -> Path:
-        """Build the standard forensic folder structure"""
-        # Root: Occurrence number
-        root = Path(form_data.occurrence_number)
+        """Build the standard forensic folder structure
         
-        # Level 2: Business @ Address or just Address
-        if form_data.business_name:
-            level2 = f"{form_data.business_name} @ {form_data.location_address}"
-        else:
-            level2 = form_data.location_address
-            
-        # Level 3: Date range
-        if form_data.extraction_start and form_data.extraction_end:
-            start = form_data.extraction_start.toString("yyyy-MM-dd_HHmm")
-            end = form_data.extraction_end.toString("yyyy-MM-dd_HHmm")
-            level3 = f"{start} - {end}"
-        else:
-            # Fallback if dates aren't set
-            from datetime import datetime
-            now = datetime.now().strftime("%Y-%m-%d_%H%M")
-            level3 = f"{now} - {now}"
-        
-        # Clean path parts
-        level2 = FolderTemplate._sanitize_path_part(None, level2)
-        level3 = FolderTemplate._sanitize_path_part(None, level3)
-        
-        # Combine
-        full_path = root / level2 / level3
-        
-        # Create directories
-        full_path.mkdir(parents=True, exist_ok=True)
-        
-        return full_path
+        DEPRECATED: This method has side effects (creates directories).
+        Use ForensicPathBuilder.create_forensic_structure() instead.
+        """
+        # Use ForensicPathBuilder for consistent behavior
+        # This creates directories in current working directory (legacy behavior)
+        from pathlib import Path
+        base_path = Path.cwd()
+        return ForensicPathBuilder.create_forensic_structure(base_path, form_data)
     
     @staticmethod
     def get_preset_templates() -> List[FolderTemplate]:

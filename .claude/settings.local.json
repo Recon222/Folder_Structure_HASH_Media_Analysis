@@ -8,7 +8,9 @@
       "Bash(python:*)",
       "Bash(flake8:*)",
       "Bash(cd:*)",
-      "Bash(cd:*)"
+      "Bash(cd:*)",
+      "Bash(find:*)",
+      "Bash(pip3 install:*)"
     ],
     "deny": []
   }

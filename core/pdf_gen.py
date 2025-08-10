@@ -20,7 +20,7 @@ except ImportError:
     REPORTLAB_AVAILABLE = False
 
 from .models import FormData
-from PySide6.QtCore import QSettings
+from .settings_manager import settings
 
 
 class PDFGenerator:
@@ -34,9 +34,9 @@ class PDFGenerator:
         self._setup_custom_styles()
         
         # Get technician info from settings
-        self.settings = QSettings('FolderStructureUtility', 'Settings')
-        self.tech_name = self.settings.value('technician_name', '', type=str)
-        self.badge_number = self.settings.value('badge_number', '', type=str)
+        self.settings = settings
+        self.tech_name = self.settings.technician_name
+        self.badge_number = self.settings.badge_number
         
     def _setup_custom_styles(self):
         """Set up custom paragraph styles"""

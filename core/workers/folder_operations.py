@@ -60,6 +60,17 @@ class FolderStructureThread(QThread):
                 try:
                     # Create destination path preserving folder structure
                     dest_file = self.destination / relative_path
+                    
+                    # SECURITY: Validate destination stays within bounds
+                    try:
+                        dest_resolved = dest_file.resolve()
+                        base_resolved = self.destination.resolve()
+                        if not str(dest_resolved).startswith(str(base_resolved)):
+                            raise ValueError(f"Security: Path traversal detected for {relative_path}")
+                    except Exception as e:
+                        self.status.emit(f"Security error: {str(e)}")
+                        continue
+                    
                     dest_file.parent.mkdir(parents=True, exist_ok=True)
                     
                     # Emit status

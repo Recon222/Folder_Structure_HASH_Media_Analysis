@@ -245,7 +245,11 @@ class BatchTab(QWidget):
             template_type=template_type
         )
         
-        self.log_message.emit(f"Added current configuration to batch queue")
+        # Clear the files panel after successfully adding to queue
+        # This prevents files from accumulating and being added to subsequent jobs
+        self.files_panel.clear_all()
+        
+        self.log_message.emit(f"Added current configuration to batch queue and cleared file selection")
         
     def _clear_form(self):
         """Clear the form and files"""

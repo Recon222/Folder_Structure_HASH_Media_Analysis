@@ -6,8 +6,9 @@ Log console component for displaying status messages
 
 from datetime import datetime
 
-from PySide6.QtCore import Signal, QSettings
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QTextEdit
+from core.settings_manager import settings
 
 
 class LogConsole(QTextEdit):
@@ -23,7 +24,7 @@ class LogConsole(QTextEdit):
         self.setMaximumHeight(150)
         
         # Check settings for auto-scroll preference
-        self.settings = QSettings('FolderStructureUtility', 'Settings')
+        self.settings = settings
         
     def log(self, message: str):
         """Add a timestamped message to the log
@@ -39,7 +40,7 @@ class LogConsole(QTextEdit):
         self.append(formatted_message)
         
         # Auto-scroll if enabled
-        if self.settings.value('auto_scroll_log', True, type=bool):
+        if self.settings.auto_scroll_log:
             cursor = self.textCursor()
             cursor.movePosition(cursor.MoveOperation.End)
             self.setTextCursor(cursor)

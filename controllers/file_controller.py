@@ -10,6 +10,7 @@ from typing import List, Dict, Tuple, Optional
 from core.models import FormData
 from core.templates import FolderTemplate, FolderBuilder
 from core.workers import FileOperationThread, FolderStructureThread
+from core.path_utils import ForensicPathBuilder
 
 
 class FileController:
@@ -39,35 +40,9 @@ class FileController:
         return thread
         
     def _build_forensic_structure(self, form_data: FormData, base_path: Path) -> Path:
-        """Build the forensic folder structure"""
-        # Create the structure in the specified base path
-        occurrence_path = base_path / form_data.occurrence_number
-        
-        # Level 2: Business @ Address or just Address
-        if form_data.business_name:
-            level2 = f"{form_data.business_name} @ {form_data.location_address}"
-        else:
-            level2 = form_data.location_address
-            
-        # Level 3: Date range
-        if form_data.extraction_start and form_data.extraction_end:
-            start = form_data.extraction_start.toString("yyyy-MM-dd_HHmm")
-            end = form_data.extraction_end.toString("yyyy-MM-dd_HHmm")
-            level3 = f"{start} - {end}"
-        else:
-            from datetime import datetime
-            now = datetime.now().strftime("%Y-%m-%d_%H%M")
-            level3 = f"{now} - {now}"
-            
-        # Clean path parts
-        level2 = FolderTemplate._sanitize_path_part(None, level2)
-        level3 = FolderTemplate._sanitize_path_part(None, level3)
-        
-        # Combine
-        full_path = occurrence_path / level2 / level3
-        full_path.mkdir(parents=True, exist_ok=True)
-        
-        return full_path
+        """Build the forensic folder structure using ForensicPathBuilder"""
+        # Use the centralized path builder to create forensic structure
+        return ForensicPathBuilder.create_forensic_structure(base_path, form_data)
         
     def _prepare_items(
         self,

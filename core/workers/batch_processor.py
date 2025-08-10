@@ -8,6 +8,7 @@ import copy
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any
+import shutil
 
 from PySide6.QtCore import QThread, Signal
 
@@ -17,6 +18,9 @@ from ..file_ops import FileOperations
 from ..templates import FolderBuilder
 from .file_operations import FileOperationThread
 from .folder_operations import FolderStructureThread
+from ..path_utils import ForensicPathBuilder, PathSanitizer
+from ..settings_manager import settings
+from ..logger import logger
 
 
 class BatchProcessorThread(QThread):
@@ -115,8 +119,8 @@ class BatchProcessorThread(QThread):
             # Build the folder path
             relative_path = self._build_folder_path(job, "forensic")
             
-            # Create the full output path
-            output_path = job.output_directory / relative_path
+            # Create the full output path (job.output_directory is a string)
+            output_path = Path(job.output_directory) / relative_path
             output_path.mkdir(parents=True, exist_ok=True)
             
             # Prepare items for copying (files and folders)
@@ -171,83 +175,160 @@ class BatchProcessorThread(QThread):
             return False, f"Error processing custom job: {e}", None
             
     def _build_folder_path(self, job: BatchJob, template_type: str) -> Path:
-        """Build the folder path for the job"""
-        # Import here to avoid circular imports
-        from ..templates import FolderTemplate, FolderBuilder
-        
+        """Build the folder path for the job without side effects"""
         if template_type == "forensic":
-            # Use the static forensic structure method
-            return FolderBuilder.build_forensic_structure(job.form_data)
+            # Use ForensicPathBuilder to build relative path without creating directories
+            relative_path = ForensicPathBuilder.build_relative_path(job.form_data)
+            # Return just the relative path - caller will combine with output directory
+            return relative_path
         
     def _copy_items_sync(self, items_to_copy: List[tuple], destination: Path, job: BatchJob) -> tuple[bool, str, Dict]:
-        """Copy items synchronously with progress reporting"""
+        """Copy items synchronously with progress reporting using FileOperations directly"""
         try:
-            # Create a folder structure thread and run it synchronously
-            folder_thread = FolderStructureThread(
-                items=items_to_copy,
-                destination=destination,
-                calculate_hash=True  # Always calculate hashes for batch jobs
-            )
+            # Create destination directory
+            destination.mkdir(parents=True, exist_ok=True)
             
-            # Connect progress signals to forward to batch processor signals
-            folder_thread.progress.connect(
-                lambda pct: self.job_progress.emit(job.job_id, pct, f"Processing files...")
-            )
-            folder_thread.status.connect(
-                lambda msg: self.job_progress.emit(job.job_id, -1, msg)
-            )
+            # Use FileOperations directly for reliable results
+            file_ops = FileOperations()
+            results = {}
             
-            # Store reference for cancellation
-            self.current_worker_thread = folder_thread
+            # Collect all files to process
+            all_files = []
+            for item_type, path, relative in items_to_copy:
+                if item_type == 'file':
+                    all_files.append((path, relative))
+                elif item_type == 'folder':
+                    # Get all files in folder recursively
+                    for file_path in path.rglob('*'):
+                        if file_path.is_file():
+                            # Preserve folder structure
+                            relative_path = file_path.relative_to(path.parent)
+                            all_files.append((file_path, relative_path))
             
-            # Run synchronously
-            folder_thread.run()
+            if not all_files:
+                return True, "No files to copy", {}
             
-            # Get results from the thread's finished signal
-            # Since we're running synchronously, we need to check the results directly
-            if hasattr(folder_thread, '_results'):
-                return True, "Files copied successfully", folder_thread._results
-            else:
-                # Fallback - assume success if no exception was raised
-                return True, "Files copied successfully", {}
+            # Calculate total size for progress
+            total_size = sum(f[0].stat().st_size for f in all_files if f[0].exists())
+            copied_size = 0
+            
+            # Copy each file
+            for idx, (source_file, relative_path) in enumerate(all_files):
+                if self.cancelled:
+                    return False, "Operation cancelled", results
+                
+                try:
+                    # Create destination path preserving structure
+                    dest_file = destination / relative_path
+                    
+                    # SECURITY: Validate destination stays within bounds
+                    dest_validated = PathSanitizer.validate_destination(dest_file, destination)
+                    dest_validated.parent.mkdir(parents=True, exist_ok=True)
+                    
+                    # Emit status
+                    self.job_progress.emit(
+                        job.job_id,  # Use job's ID instead of non-existent current_index
+                        int((idx / len(all_files)) * 100),
+                        f"Copying: {relative_path.name}"
+                    )
+                    
+                    # Calculate hash if enabled
+                    source_hash = ""
+                    if settings.calculate_hashes:
+                        source_hash = file_ops._calculate_file_hash(source_file)
+                    
+                    # Copy file
+                    shutil.copy2(source_file, dest_validated)
+                    
+                    # Calculate destination hash
+                    dest_hash = ""
+                    verified = True
+                    if settings.calculate_hashes:
+                        dest_hash = file_ops._calculate_file_hash(dest_validated)
+                        verified = source_hash == dest_hash
+                    
+                    # Store results
+                    results[str(dest_validated)] = {
+                        'source': str(source_file),
+                        'destination': str(dest_validated),
+                        'size': source_file.stat().st_size,
+                        'source_hash': source_hash,
+                        'dest_hash': dest_hash,
+                        'verified': verified
+                    }
+                    
+                    # Update progress
+                    copied_size += source_file.stat().st_size
+                    
+                except Exception as e:
+                    logger.error(f"Failed to copy {source_file}: {e}")
+                    results[str(source_file)] = {
+                        'error': str(e),
+                        'source': str(source_file),
+                        'verified': False
+                    }
+            
+            # Add performance stats
+            results['_performance_stats'] = {
+                'total_files': len(all_files),
+                'total_size': total_size,
+                'files_copied': len([r for r in results.values() if isinstance(r, dict) and 'error' not in r])
+            }
+            
+            success_count = results['_performance_stats']['files_copied']
+            return True, f"Successfully copied {success_count}/{len(all_files)} files", results
                 
         except Exception as e:
+            logger.error(f"Batch copy failed: {e}", exc_info=True)
             return False, f"Error copying files: {e}", {}
         finally:
             self.current_worker_thread = None
             
     def _generate_reports(self, job: BatchJob, output_path: Path, file_results: Dict) -> Dict:
-        """Generate reports for the job"""
+        """Generate reports for the job with correct API calls"""
         try:
-            if not self.main_window:
-                return {}
-                
-            # Import PDF generator
+            # Import PDF generator and use correct API
             from ..pdf_gen import PDFGenerator
             
             # Create reports directory
             reports_dir = output_path.parent.parent / "Documents"
             reports_dir.mkdir(parents=True, exist_ok=True)
             
-            pdf_gen = PDFGenerator(job.form_data)
+            # Create PDFGenerator instance (no constructor params)
+            pdf_gen = PDFGenerator()
             generated_reports = {}
             
-            # Generate time offset report
-            if job.form_data.time_offset:
+            # Generate time offset report if enabled and offset exists
+            if settings.generate_time_offset_pdf and job.form_data.time_offset:
                 time_offset_path = reports_dir / f"{job.form_data.occurrence_number}_TimeOffset.pdf"
-                pdf_gen.generate_time_offset_report(time_offset_path)
-                generated_reports['time_offset'] = time_offset_path
+                # Correct API: generate_time_offset_report(form_data, output_path)
+                if pdf_gen.generate_time_offset_report(job.form_data, time_offset_path):
+                    generated_reports['time_offset'] = time_offset_path
+                    logger.info(f"Generated time offset report: {time_offset_path}")
                 
-            # Generate technician log
-            tech_log_path = reports_dir / f"{job.form_data.occurrence_number}_TechnicianLog.pdf"
-            pdf_gen.generate_technician_log(tech_log_path)
-            generated_reports['technician_log'] = tech_log_path
+            # Generate upload log if enabled
+            if settings.generate_upload_log_pdf:
+                upload_log_path = reports_dir / f"{job.form_data.occurrence_number}_UploadLog.pdf"
+                # Correct API: generate_technician_log(form_data, output_path)
+                if pdf_gen.generate_technician_log(job.form_data, upload_log_path):
+                    generated_reports['upload_log'] = upload_log_path
+                    logger.info(f"Generated upload log: {upload_log_path}")
             
-            # Generate hash CSV if we have hash results
-            if file_results and any('hash' in result for result in file_results.values()):
-                hash_csv_path = reports_dir / f"{job.form_data.occurrence_number}_Hashes.csv"
-                pdf_gen.generate_hash_csv(hash_csv_path, file_results)
-                generated_reports['hash_csv'] = hash_csv_path
+            # Generate hash CSV if enabled and we have hash results
+            if settings.generate_hash_csv and file_results:
+                # Check if any file has hash values (skip _performance_stats)
+                has_hashes = any(
+                    result.get('source_hash') or result.get('dest_hash')
+                    for key, result in file_results.items()
+                    if isinstance(result, dict) and key != '_performance_stats'
+                )
+                
+                if has_hashes:
+                    hash_csv_path = reports_dir / f"{job.form_data.occurrence_number}_Hashes.csv"
+                    # Correct API: generate_hash_verification_csv(file_results, output_path)
+                    if pdf_gen.generate_hash_verification_csv(file_results, hash_csv_path):
+                        generated_reports['hash_csv'] = hash_csv_path
+                        logger.info(f"Generated hash CSV: {hash_csv_path}")
                 
             return generated_reports
             

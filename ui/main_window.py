@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import List
 import json
 
-from PySide6.QtCore import Qt, QSettings, QDateTime, QTimer
+from PySide6.QtCore import Qt, QDateTime, QTimer
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QMainWindow, QTabWidget, QVBoxLayout, QWidget,
@@ -21,6 +21,8 @@ import zipfile
 
 from controllers import FileController, ReportController, FolderController
 from core.models import FormData
+from core.settings_manager import settings
+from core.logger import logger
 from core.workers import FolderStructureThread
 from core.workers.zip_operations import ZipOperationThread
 from ui.components import FormPanel, FilesPanel, LogConsole
@@ -39,7 +41,7 @@ class MainWindow(QMainWindow):
         
         # Initialize data
         self.form_data = FormData()
-        self.settings = QSettings('FolderStructureUtility', 'Settings')
+        self.settings = settings  # Use centralized settings manager
         self.file_operation_results = {}  # Store results for PDF generation
         self.output_directory = None
         self.last_output_directory = None
@@ -174,11 +176,11 @@ class MainWindow(QMainWindow):
             return
             
         # Get files
-        print(f"DEBUG: Using files_panel {id(self.files_panel)}")
-        print(f"DEBUG: Forensic tab files_panel {id(self.forensic_tab.files_panel)}")
+        logger.debug(f"Using files_panel {id(self.files_panel)}")
+        logger.debug(f"Forensic tab files_panel {id(self.forensic_tab.files_panel)}")
         files, folders = self.files_panel.get_all_items()
-        print(f"DEBUG: Retrieved files: {files}")
-        print(f"DEBUG: Retrieved folders: {folders}")
+        logger.debug(f"Retrieved files: {files}")
+        logger.debug(f"Retrieved folders: {folders}")
         
         if not files and not folders:
             QMessageBox.warning(self, "No Files", "Please select files or folders to process")
