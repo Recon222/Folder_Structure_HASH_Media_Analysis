@@ -15,6 +15,7 @@ from PySide6.QtCore import QThread, Signal
 from ..batch_queue import BatchQueue
 from ..models import BatchJob
 from ..file_ops import FileOperations
+from ..buffered_file_ops import BufferedFileOperations, PerformanceMetrics
 from ..templates import FolderBuilder
 from .file_operations import FileOperationThread
 from .folder_operations import FolderStructureThread
@@ -188,8 +189,18 @@ class BatchProcessorThread(QThread):
             # Create destination directory
             destination.mkdir(parents=True, exist_ok=True)
             
-            # Use FileOperations directly for reliable results
-            file_ops = FileOperations()
+            # Choose file operations based on settings
+            if settings.use_buffered_operations:
+                # Use high-performance buffered operations
+                file_ops = BufferedFileOperations(
+                    progress_callback=lambda pct, msg: self.job_progress.emit(
+                        self.current_index, pct, msg
+                    )
+                )
+            else:
+                # Use legacy file operations
+                file_ops = FileOperations()
+            
             results = {}
             
             # Collect all files to process
@@ -232,20 +243,32 @@ class BatchProcessorThread(QThread):
                         f"Copying: {relative_path.name}"
                     )
                     
-                    # Calculate hash if enabled
-                    source_hash = ""
-                    if settings.calculate_hashes:
-                        source_hash = file_ops._calculate_file_hash(source_file)
-                    
-                    # Copy file
-                    shutil.copy2(source_file, dest_validated)
-                    
-                    # Calculate destination hash
-                    dest_hash = ""
-                    verified = True
-                    if settings.calculate_hashes:
-                        dest_hash = file_ops._calculate_file_hash(dest_validated)
-                        verified = source_hash == dest_hash
+                    # Use buffered copy if available
+                    if settings.use_buffered_operations:
+                        # Use buffered copy for better performance
+                        copy_result = file_ops.copy_file_buffered(
+                            source_file, 
+                            dest_validated,
+                            calculate_hash=settings.calculate_hashes
+                        )
+                        source_hash = copy_result.get('source_hash', '')
+                        dest_hash = copy_result.get('dest_hash', '')
+                        verified = copy_result.get('verified', True)
+                    else:
+                        # Legacy method
+                        source_hash = ""
+                        if settings.calculate_hashes:
+                            source_hash = file_ops._calculate_file_hash(source_file)
+                        
+                        # Copy file
+                        shutil.copy2(source_file, dest_validated)
+                        
+                        # Calculate destination hash
+                        dest_hash = ""
+                        verified = True
+                        if settings.calculate_hashes:
+                            dest_hash = file_ops._calculate_file_hash(dest_validated)
+                            verified = source_hash == dest_hash
                     
                     # Store results
                     results[str(dest_validated)] = {

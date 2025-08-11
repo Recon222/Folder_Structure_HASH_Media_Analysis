@@ -147,6 +147,13 @@ class MainWindow(QMainWindow):
         user_settings_action.triggered.connect(self.show_user_settings)
         settings_menu.addAction(user_settings_action)
         
+        # Add Performance Monitor action
+        performance_monitor_action = QAction("Performance Monitor", self)
+        performance_monitor_action.triggered.connect(self.show_performance_monitor)
+        settings_menu.addAction(performance_monitor_action)
+        
+        settings_menu.addSeparator()
+        
         zip_settings_action = QAction("ZIP Settings", self)
         zip_settings_action.triggered.connect(self.show_zip_settings)
         settings_menu.addAction(zip_settings_action)
@@ -204,13 +211,17 @@ class MainWindow(QMainWindow):
         # Get hash calculation preference
         calculate_hash = self.settings.get('calculate_hashes', True)
         
+        # Get performance monitor if it exists
+        perf_monitor = getattr(self, 'performance_monitor', None) if hasattr(self, 'performance_monitor') else None
+        
         # Start file operation
         self.file_thread = self.file_controller.process_forensic_files(
             self.form_data,
             files,
             folders,
             self.output_directory,
-            calculate_hash
+            calculate_hash,
+            perf_monitor
         )
         
         # Connect signals
@@ -235,6 +246,11 @@ class MainWindow(QMainWindow):
         self.process_btn.setEnabled(True)
         self.operation_active = False
         self.current_copy_speed = 0.0
+        
+        # Stop performance monitor if it's running
+        if hasattr(self, 'performance_monitor') and self.performance_monitor:
+            if hasattr(self.performance_monitor, 'stop_monitoring'):
+                self.performance_monitor.stop_monitoring()
         
         # Reset status label
         if hasattr(self, 'copy_speed_label'):
@@ -320,44 +336,19 @@ class MainWindow(QMainWindow):
                     self.log(f"Generated: {path.name}")
                 self.log(f"Documentation saved to: {reports_output_dir}")
                 
-            # Check if we should ask about ZIP creation
+            # Store report results for final summary
+            self.reports_generated = generated
+            self.reports_output_dir = reports_output_dir
+            
+            # Check if we should create ZIP based on settings (NO PROMPTS)
             if self.report_controller.should_create_zip():
-                # Check if user wants to be prompted
-                prompt_for_zip = self.settings.get('prompt_for_zip', True)
-                auto_create_zip = self.settings.get('auto_create_zip', False)
-                
-                create_zip = False
-                
-                if prompt_for_zip:
-                    # Create custom message box with checkbox
-                    msg_box = QMessageBox(self)
-                    msg_box.setWindowTitle("Create ZIP Archive?")
-                    msg_box.setText("Would you like to create ZIP archive(s)?")
-                    msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-                    
-                    # Add "Don't ask me again" checkbox
-                    dont_ask_checkbox = QCheckBox("Don't ask me again")
-                    msg_box.setCheckBox(dont_ask_checkbox)
-                    
-                    reply = msg_box.exec()
-                    
-                    # Save preference if checkbox was checked
-                    if dont_ask_checkbox.isChecked():
-                        self.settings.set('prompt_for_zip', False)
-                        self.settings.set('auto_create_zip', reply == QMessageBox.Yes)
-                    
-                    create_zip = (reply == QMessageBox.Yes)
-                else:
-                    # Use saved preference
-                    create_zip = auto_create_zip
-                
-                if create_zip:
-                    # Pass the original file location for ZIP creation
-                    original_output_dir = file_dest_path.parent
-                    self.create_zip_archives(original_output_dir)
-                    self.log("Creating ZIP archive(s)...")
-                elif not prompt_for_zip:
-                    self.log("ZIP creation skipped (based on saved preference)")                                  
+                # Automatically create ZIP if enabled in settings
+                self.log("Creating ZIP archive(s)...")
+                original_output_dir = file_dest_path.parent
+                self.create_zip_archives(original_output_dir)
+            else:
+                # No ZIP creation, show final completion now
+                self.show_final_completion_message()                                  
                                   
                                   
         except Exception as e:
@@ -409,18 +400,58 @@ class MainWindow(QMainWindow):
         
         if success and created_archives:
             self.log(f"Created {len(created_archives)} ZIP archive(s)")
-            zip_names = [z.name for z in created_archives]
-            QMessageBox.information(
-                self, 
-                "ZIP Archives Created",
-                f"Created {len(created_archives)} ZIP archive(s) in:\n{self.output_directory}\n\n"
-                f"Files:\n" + "\n".join(zip_names)
-            )
+            # Store ZIP results for final summary
+            self.zip_archives_created = created_archives
+            # Show final completion message that includes everything
+            self.show_final_completion_message()
         else:
             if not success:
-                QMessageBox.critical(self, "ZIP Error", message)
+                # Only show error if ZIP actually failed
+                self.log(f"ZIP creation failed: {message}")
             else:
                 self.log("No ZIP archives created")
+                # Still show completion message even if no ZIPs
+                self.show_final_completion_message()
+    
+    def show_final_completion_message(self):
+        """Show a single final completion message with all results"""
+        # Build summary message
+        message_parts = ["Operation Complete!\n"]
+        
+        # Add file copy summary
+        if hasattr(self, 'file_operation_results') and self.file_operation_results:
+            file_count = len([r for r in self.file_operation_results.values() 
+                            if isinstance(r, dict) and 'verified' in r])
+            message_parts.append(f"✓ Copied {file_count} files")
+        
+        # Add report summary
+        if hasattr(self, 'reports_generated') and self.reports_generated:
+            report_count = len(self.reports_generated)
+            message_parts.append(f"✓ Generated {report_count} reports")
+        
+        # Add ZIP summary
+        if hasattr(self, 'zip_archives_created') and self.zip_archives_created:
+            zip_count = len(self.zip_archives_created)
+            message_parts.append(f"✓ Created {zip_count} ZIP archive(s)")
+        
+        # Add output location
+        if hasattr(self, 'output_directory'):
+            message_parts.append(f"\nOutput location:\n{self.output_directory}")
+        
+        # Show the single completion dialog
+        QMessageBox.information(
+            self,
+            "Process Complete",
+            "\n".join(message_parts)
+        )
+        
+        # Clean up temporary attributes
+        if hasattr(self, 'zip_archives_created'):
+            delattr(self, 'zip_archives_created')
+        if hasattr(self, 'reports_generated'):
+            delattr(self, 'reports_generated')
+        if hasattr(self, 'reports_output_dir'):
+            delattr(self, 'reports_output_dir')
             
     def log(self, message):
         """Add message to log console"""
@@ -475,6 +506,18 @@ class MainWindow(QMainWindow):
         if dialog.exec() == QDialog.Accepted:
             dialog.save_settings()
             self.log("User settings saved")
+    
+    def show_performance_monitor(self):
+        """Show performance monitor dialog"""
+        from ui.dialogs.performance_monitor import PerformanceMonitorDialog
+        
+        # Create or show existing monitor
+        if not hasattr(self, 'performance_monitor') or not self.performance_monitor:
+            self.performance_monitor = PerformanceMonitorDialog(self)
+        
+        self.performance_monitor.show()
+        self.performance_monitor.raise_()
+        self.performance_monitor.activateWindow()
         
     def show_zip_settings(self):
         """Show ZIP settings dialog"""
@@ -489,19 +532,96 @@ class MainWindow(QMainWindow):
         dialog.exec()
         
     def closeEvent(self, event):
-        """Save settings on close and ensure threads are stopped"""
-        # Stop any running threads
-        if hasattr(self, 'zip_thread') and self.zip_thread.isRunning():
-            self.zip_thread.cancel()
-            self.zip_thread.wait()  # Wait for thread to finish
-            
-        if hasattr(self, 'file_thread') and self.file_thread.isRunning():
-            self.file_thread.cancel()
-            self.file_thread.wait()
-            
-        if hasattr(self, 'folder_thread') and self.folder_thread.isRunning():
-            self.folder_thread.cancel()
-            self.folder_thread.wait()
+        """Properly clean up all threads before closing
         
-        # Settings are saved through User Settings dialog
+        This method:
+        1. Identifies all running threads
+        2. Asks user confirmation if threads are active
+        3. Cancels threads with proper timeout handling
+        4. Logs all thread lifecycle events
+        """
+        from core.logger import logger
+        
+        # Collect all active threads
+        threads_to_stop = []
+        
+        # Check file operation thread
+        if hasattr(self, 'file_thread') and self.file_thread and self.file_thread.isRunning():
+            threads_to_stop.append(('File operations', self.file_thread))
+            
+        # Check folder operation thread
+        if hasattr(self, 'folder_thread') and self.folder_thread and self.folder_thread.isRunning():
+            threads_to_stop.append(('Folder operations', self.folder_thread))
+            
+        # Check ZIP operation thread
+        if hasattr(self, 'zip_thread') and self.zip_thread and self.zip_thread.isRunning():
+            threads_to_stop.append(('ZIP operations', self.zip_thread))
+            
+        # Check batch processor thread
+        if hasattr(self, 'batch_tab') and self.batch_tab:
+            # Access the batch queue widget within the batch tab
+            if hasattr(self.batch_tab, 'queue_widget'):
+                batch_widget = self.batch_tab.queue_widget
+                if hasattr(batch_widget, 'processor_thread') and batch_widget.processor_thread:
+                    if batch_widget.processor_thread.isRunning():
+                        threads_to_stop.append(('Batch processing', batch_widget.processor_thread))
+        
+        # If there are active operations, ask user for confirmation
+        if threads_to_stop:
+            # Check if user wants confirmation (from settings)
+            if self.settings.get('CONFIRM_EXIT', True):
+                thread_names = [name for name, _ in threads_to_stop]
+                message = (
+                    f"The following operations are still running:\n"
+                    f"• {chr(10).join('• ' + name for name in thread_names)}\n\n"
+                    f"Do you want to cancel them and exit?"
+                )
+                
+                reply = QMessageBox.question(
+                    self,
+                    "Active Operations",
+                    message,
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No  # Default to No for safety
+                )
+                
+                if reply == QMessageBox.No:
+                    event.ignore()
+                    return
+            
+            # User confirmed or confirmation disabled - proceed with cleanup
+            logger.info(f"Shutting down with {len(threads_to_stop)} active threads")
+            
+            # First, send cancel signal to all threads
+            for name, thread in threads_to_stop:
+                logger.info(f"Cancelling {name}")
+                try:
+                    if hasattr(thread, 'cancel'):
+                        thread.cancel()
+                    elif hasattr(thread, 'cancelled'):
+                        # Some threads use a flag instead of method
+                        thread.cancelled = True
+                except Exception as e:
+                    logger.error(f"Error cancelling {name}: {e}")
+            
+            # Then wait for threads with timeout
+            for name, thread in threads_to_stop:
+                logger.info(f"Waiting for {name} to stop...")
+                try:
+                    if not thread.wait(5000):  # 5 second timeout
+                        logger.warning(f"{name} did not stop gracefully, terminating...")
+                        thread.terminate()
+                        # Give it a moment to terminate
+                        if not thread.wait(1000):  # 1 more second
+                            logger.error(f"{name} failed to terminate properly")
+                    else:
+                        logger.info(f"{name} stopped successfully")
+                except Exception as e:
+                    logger.error(f"Error stopping {name}: {e}")
+        
+        # Save settings
+        self.settings.sync()
+        logger.info("Application closing normally")
+        
+        # Accept the close event
         event.accept()

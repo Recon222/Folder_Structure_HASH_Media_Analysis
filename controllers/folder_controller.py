@@ -17,13 +17,19 @@ class FolderController:
     
     @staticmethod
     def build_forensic_structure(form_data: FormData, base_path: Optional[Path] = None) -> Path:
-        """Build the standard forensic folder structure using ForensicPathBuilder"""
-        if base_path:
-            # Use the centralized path builder to create forensic structure
-            return ForensicPathBuilder.create_forensic_structure(base_path, form_data)
-        else:
-            # Use the core function (legacy support)
-            return FolderBuilder.build_forensic_structure(form_data)
+        """Build the standard forensic folder structure using ForensicPathBuilder
+        
+        Args:
+            form_data: FormData instance with case information
+            base_path: Base directory for structure. If None, uses current directory
+            
+        Returns:
+            Path to created directory structure
+        """
+        # Always use ForensicPathBuilder for consistent behavior
+        if not base_path:
+            base_path = Path.cwd()
+        return ForensicPathBuilder.create_forensic_structure(base_path, form_data)
             
     @staticmethod
     def get_preset_templates() -> List[FolderTemplate]:

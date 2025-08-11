@@ -47,6 +47,7 @@ class UserSettingsDialog(QDialog):
         self._create_general_tab()
         self._create_analyst_tab()
         self._create_documentation_tab()
+        self._create_performance_tab()
         
         # Dialog buttons
         buttons = QDialogButtonBox(
@@ -217,20 +218,123 @@ class UserSettingsDialog(QDialog):
         layout.addStretch()
         tab.setLayout(layout)
         self.tabs.addTab(tab, "Documentation")
+    
+    def _create_performance_tab(self):
+        """Create Performance tab for advanced performance settings"""
+        tab = QWidget()
+        layout = QVBoxLayout()
+        
+        # High-Performance Mode group
+        perf_mode_group = QGroupBox("High-Performance Mode")
+        perf_mode_layout = QVBoxLayout()
+        
+        # Enable buffered operations checkbox
+        self.use_buffered_ops_check = QCheckBox("Enable high-performance buffered file operations")
+        self.use_buffered_ops_check.setToolTip(
+            "Uses intelligent streaming and buffering for optimal performance.\n"
+            "• Small files (<1MB): Direct copy for speed\n"
+            "• Medium files (1-100MB): Buffered streaming\n"
+            "• Large files (>100MB): Large buffer streaming\n"
+            "Recommended for all operations."
+        )
+        perf_mode_layout.addWidget(self.use_buffered_ops_check)
+        
+        # Performance info label
+        info_label = QLabel(
+            "When enabled, the application will use:\n"
+            "• Intelligent file size detection\n"
+            "• Streaming copy for large files\n"
+            "• Byte-level progress reporting\n"
+            "• Memory-efficient operations"
+        )
+        info_label.setStyleSheet("color: gray; font-size: 9pt; margin-left: 20px;")
+        perf_mode_layout.addWidget(info_label)
+        
+        perf_mode_group.setLayout(perf_mode_layout)
+        layout.addWidget(perf_mode_group)
+        
+        # Buffer Size group (existing, but enhanced)
+        buffer_group = QGroupBox("Buffer Configuration")
+        buffer_layout = QVBoxLayout()
+        
+        # Buffer size setting
+        buffer_size_layout = QHBoxLayout()
+        buffer_label = QLabel("File copy buffer size:")
+        buffer_size_layout.addWidget(buffer_label)
+        
+        self.perf_buffer_spin = QSpinBox()
+        self.perf_buffer_spin.setMinimum(8)
+        self.perf_buffer_spin.setMaximum(10240)
+        self.perf_buffer_spin.setSingleStep(256)
+        self.perf_buffer_spin.setSuffix(" KB")
+        self.perf_buffer_spin.setToolTip(
+            "Buffer size for streaming operations.\n"
+            "• 8-512 KB: Good for many small files\n"
+            "• 512-2048 KB: Balanced (recommended)\n"
+            "• 2048-10240 KB: Best for large files\n"
+            "Default: 1024 KB"
+        )
+        buffer_size_layout.addWidget(self.perf_buffer_spin)
+        buffer_size_layout.addStretch()
+        
+        buffer_layout.addLayout(buffer_size_layout)
+        
+        # Buffer size recommendation label
+        rec_label = QLabel(
+            "Larger buffers improve performance for large files but use more memory.\n"
+            "The system automatically adjusts buffer usage based on file size."
+        )
+        rec_label.setStyleSheet("color: gray; font-size: 9pt;")
+        rec_label.setWordWrap(True)
+        buffer_layout.addWidget(rec_label)
+        
+        buffer_group.setLayout(buffer_layout)
+        layout.addWidget(buffer_group)
+        
+        # Performance Monitoring group
+        monitor_group = QGroupBox("Performance Monitoring")
+        monitor_layout = QVBoxLayout()
+        
+        monitor_info = QLabel(
+            "Access real-time performance monitoring from:\n"
+            "Settings → Performance Monitor\n\n"
+            "Monitor shows:\n"
+            "• Real-time transfer speeds\n"
+            "• File size distribution\n"
+            "• Performance graphs\n"
+            "• Detailed metrics report"
+        )
+        monitor_info.setStyleSheet("color: gray; font-size: 9pt;")
+        monitor_layout.addWidget(monitor_info)
+        
+        monitor_group.setLayout(monitor_layout)
+        layout.addWidget(monitor_group)
+        
+        layout.addStretch()
+        tab.setLayout(layout)
+        self.tabs.addTab(tab, "Performance")
         
     def _load_settings(self):
         """Load current settings into the dialog"""
-        # Performance
+        # General tab - Performance (legacy)
         self.buffer_spin.setValue(
             self.settings.get('copy_buffer_size', 1024)
         )
         
+        # Performance tab settings
+        self.use_buffered_ops_check.setChecked(
+            self.settings.use_buffered_operations
+        )
+        # Convert buffer size from bytes to KB for display
+        buffer_size_kb = self.settings.copy_buffer_size // 1024
+        self.perf_buffer_spin.setValue(buffer_size_kb)
+        
         # UI behavior
         self.auto_scroll_check.setChecked(
-            self.settings.get('auto_scroll_log', True)
+            bool(self.settings.get('auto_scroll_log', True))
         )
         self.confirm_exit_check.setChecked(
-            self.settings.get('confirm_exit_with_operations', True)
+            bool(self.settings.get('confirm_exit_with_operations', True))
         )
         
         # Analyst/Technician info
@@ -243,20 +347,26 @@ class UserSettingsDialog(QDialog):
         
         # Documentation settings
         self.generate_time_offset_check.setChecked(
-            self.settings.get('generate_time_offset_pdf', True)
+            bool(self.settings.get('generate_time_offset_pdf', True))
         )
         self.generate_upload_log_check.setChecked(
-            self.settings.get('generate_upload_log_pdf', True)
+            bool(self.settings.get('generate_upload_log_pdf', True))
         )
         # Use calculate_hashes as the main setting for hash/CSV generation
         self.generate_hash_csv_check.setChecked(
-            self.settings.get('calculate_hashes', True)
+            bool(self.settings.get('calculate_hashes', True))
         )
         
     def save_settings(self):
         """Save settings when dialog is accepted"""
-        # Performance
+        # General tab - Performance (legacy)
         self.settings.set('copy_buffer_size', self.buffer_spin.value())
+        
+        # Performance tab settings
+        self.settings.set('USE_BUFFERED_OPS', self.use_buffered_ops_check.isChecked())
+        # Convert KB to bytes for storage
+        buffer_size_bytes = self.perf_buffer_spin.value() * 1024
+        self.settings.set('COPY_BUFFER_SIZE', buffer_size_bytes)
         
         # UI behavior
         self.settings.set('auto_scroll_log', self.auto_scroll_check.isChecked())

@@ -25,7 +25,8 @@ class FileController:
         files: List[Path],
         folders: List[Path],
         output_directory: Path,
-        calculate_hash: bool = True
+        calculate_hash: bool = True,
+        performance_monitor = None
     ) -> FolderStructureThread:
         """Process files using forensic folder structure"""
         # Build forensic structure
@@ -34,8 +35,8 @@ class FileController:
         # Prepare all items
         all_items = self._prepare_items(files, folders)
         
-        # Create and return thread
-        thread = FolderStructureThread(all_items, folder_path, calculate_hash)
+        # Create and return thread with performance monitor
+        thread = FolderStructureThread(all_items, folder_path, calculate_hash, performance_monitor)
         self.current_operation = thread
         return thread
         

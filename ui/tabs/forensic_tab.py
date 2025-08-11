@@ -94,12 +94,13 @@ class ForensicTab(QWidget):
         self.process_btn.clicked.connect(self.process_requested)
         
     def log(self, message: str):
-        """Log a message to the console and emit signal
+        """Forward message to parent via signal
         
         Args:
             message: Message to log
         """
-        self.log_console.log(message)
+        # Don't log here - parent will handle it to avoid duplication
+        # self.log_console.log(message)
         self.log_message.emit(message)
         
     def get_selected_files(self):

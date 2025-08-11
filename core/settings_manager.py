@@ -20,6 +20,7 @@ class SettingsManager:
         
         # Performance settings
         'COPY_BUFFER_SIZE': 'performance.copy_buffer_size',
+        'USE_BUFFERED_OPS': 'performance.use_buffered_operations',
         
         # Archive settings
         'ZIP_COMPRESSION_LEVEL': 'archive.compression_level',
@@ -76,6 +77,7 @@ class SettingsManager:
             self.KEYS['CALCULATE_HASHES']: True,
             self.KEYS['HASH_ALGORITHM']: 'sha256',
             self.KEYS['COPY_BUFFER_SIZE']: 1048576,  # 1MB default
+            self.KEYS['USE_BUFFERED_OPS']: True,  # Default to new high-performance system
             self.KEYS['ZIP_COMPRESSION_LEVEL']: 6,
             self.KEYS['ZIP_AT_ROOT']: False,
             self.KEYS['ZIP_AT_LOCATION']: False,
@@ -150,9 +152,20 @@ class SettingsManager:
     @property
     def copy_buffer_size(self) -> int:
         """Buffer size for file copying (clamped to reasonable range)"""
-        size = int(self.get('COPY_BUFFER_SIZE', 1048576))
+        raw_value = self.get('COPY_BUFFER_SIZE', 1048576)
+        # Handle if it's stored in KB (legacy) vs bytes
+        if isinstance(raw_value, str):
+            raw_value = int(raw_value)
+        elif raw_value < 8192:  # Likely in KB if less than 8KB
+            raw_value = raw_value * 1024  # Convert KB to bytes
+        size = int(raw_value)
         # Clamp between 8KB and 10MB
         return min(max(size, 8192), 10485760)
+    
+    @property
+    def use_buffered_operations(self) -> bool:
+        """Whether to use high-performance buffered file operations"""
+        return bool(self.get('USE_BUFFERED_OPS', True))
     
     @property
     def technician_name(self) -> str:

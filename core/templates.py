@@ -85,18 +85,6 @@ class FolderTemplate:
 class FolderBuilder:
     """Handles folder structure creation"""
     
-    @staticmethod
-    def build_forensic_structure(form_data: FormData) -> Path:
-        """Build the standard forensic folder structure
-        
-        DEPRECATED: This method has side effects (creates directories).
-        Use ForensicPathBuilder.create_forensic_structure() instead.
-        """
-        # Use ForensicPathBuilder for consistent behavior
-        # This creates directories in current working directory (legacy behavior)
-        from pathlib import Path
-        base_path = Path.cwd()
-        return ForensicPathBuilder.create_forensic_structure(base_path, form_data)
     
     @staticmethod
     def get_preset_templates() -> List[FolderTemplate]:
