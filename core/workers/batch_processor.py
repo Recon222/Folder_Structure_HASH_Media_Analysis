@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any
 import shutil
+import os
 
 from PySide6.QtCore import QThread, Signal
 
@@ -262,6 +263,10 @@ class BatchProcessorThread(QThread):
                         
                         # Copy file
                         shutil.copy2(source_file, dest_validated)
+                        
+                        # Force flush to disk to ensure complete write (fixes VLC playback issue)
+                        with open(dest_validated, 'rb+') as f:
+                            os.fsync(f.fileno())
                         
                         # Calculate destination hash
                         dest_hash = ""

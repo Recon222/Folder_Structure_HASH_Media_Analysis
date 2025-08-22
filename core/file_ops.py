@@ -97,6 +97,10 @@ class FileOperations:
             dest_file = destination / file.name
             shutil.copy2(file, dest_file)
             
+            # Force flush to disk to ensure complete write (fixes VLC playback issue)
+            with open(dest_file, 'rb+') as f:
+                os.fsync(f.fileno())
+            
             # Calculate destination hash if requested
             dest_hash = ""
             if calculate_hash:

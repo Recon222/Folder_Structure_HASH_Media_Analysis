@@ -57,16 +57,30 @@ class FolderTemplate:
             'day': datetime.now().strftime('%d'),
         }
         
+        # Helper function to convert to military date format
+        def to_military_format(qdt):
+            """Convert QDateTime to military format: DDMMMYY_HHMM"""
+            if not qdt:
+                return ""
+            months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN',
+                     'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC']
+            month_idx = qdt.date().month() - 1
+            return f"{qdt.date().day()}{months[month_idx]}{qdt.toString('yy')}_{qdt.toString('HHmm')}"
+        
         # Add datetime fields if they exist
         if form_data.video_start_datetime:
             format_dict['video_start'] = form_data.video_start_datetime.toString('yyyy-MM-dd_HH-mm')
             format_dict['video_start_date'] = form_data.video_start_datetime.toString('yyyy-MM-dd')
             format_dict['video_start_time'] = form_data.video_start_datetime.toString('HH-mm')
+            # Add extraction_start in military format
+            format_dict['extraction_start'] = to_military_format(form_data.video_start_datetime)
             
         if form_data.video_end_datetime:
             format_dict['video_end'] = form_data.video_end_datetime.toString('yyyy-MM-dd_HH-mm')
             format_dict['video_end_date'] = form_data.video_end_datetime.toString('yyyy-MM-dd')
             format_dict['video_end_time'] = form_data.video_end_datetime.toString('HH-mm')
+            # Add extraction_end in military format
+            format_dict['extraction_end'] = to_military_format(form_data.video_end_datetime)
             
         return format_dict
     
@@ -96,7 +110,7 @@ class FolderBuilder:
                 levels=[
                     "{occurrence_number}",
                     "{business_name} @ {location_address}",
-                    "{extraction_start} - {extraction_end}"
+                    "{extraction_start}_to_{extraction_end}_DVR_Time"
                 ]
             ),
             FolderTemplate(

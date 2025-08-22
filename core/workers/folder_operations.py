@@ -7,6 +7,7 @@ Folder structure thread for copying files while preserving directory hierarchies
 import shutil
 import hashlib
 import time
+import os
 from pathlib import Path
 from typing import List, Tuple, Optional
 
@@ -111,6 +112,10 @@ class FolderStructureThread(QThread):
                         
                         # Copy file
                         shutil.copy2(source_file, dest_file)
+                        
+                        # Force flush to disk to ensure complete write (fixes VLC playback issue)
+                        with open(dest_file, 'rb+') as f:
+                            os.fsync(f.fileno())
                         
                         # Calculate destination hash
                         dest_hash = ""

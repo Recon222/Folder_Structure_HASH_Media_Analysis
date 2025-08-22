@@ -143,6 +143,10 @@ class BufferedFileOperations:
                 shutil.copy2(source, dest)
                 bytes_copied = file_size
                 
+                # Force flush to disk to ensure complete write (fixes VLC playback issue)
+                with open(dest, 'rb+') as f:
+                    os.fsync(f.fileno())
+                
             else:
                 # Medium/Large files: stream with buffer
                 bytes_copied = self._stream_copy(source, dest, buffer_size, file_size)
@@ -251,6 +255,10 @@ class BufferedFileOperations:
                     # Check for cancellation
                     if self.cancel_event.is_set():
                         raise InterruptedError("Operation cancelled")
+                
+                # Force flush to disk after streaming copy
+                dst.flush()
+                os.fsync(dst.fileno())
         
         return bytes_copied
     
