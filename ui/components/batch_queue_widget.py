@@ -320,6 +320,16 @@ class BatchQueueWidget(QWidget):
             QMessageBox.information(self, "No Jobs", "No pending jobs to process")
             return
             
+        # Handle ZIP prompt before starting batch processing
+        main_window = self.parent()
+        if hasattr(main_window, 'zip_controller') and main_window.zip_controller.should_prompt_user():
+            from ui.dialogs.zip_prompt import ZipPromptDialog
+            choice = ZipPromptDialog.prompt_user(self)
+            main_window.zip_controller.set_session_choice(
+                choice['create_zip'], 
+                choice['remember_for_session']
+            )
+            
         # Validate all jobs first
         validation = self.batch_queue.validate_all_jobs()
         if validation['invalid_jobs']:

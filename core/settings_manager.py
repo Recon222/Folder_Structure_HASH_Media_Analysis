@@ -24,11 +24,8 @@ class SettingsManager:
         
         # Archive settings
         'ZIP_COMPRESSION_LEVEL': 'archive.compression_level',
-        'ZIP_AT_ROOT': 'archive.create_at_root',
-        'ZIP_AT_LOCATION': 'archive.create_at_location',
-        'ZIP_AT_DATETIME': 'archive.create_at_datetime',
-        'AUTO_CREATE_ZIP': 'archive.auto_create',
-        'PROMPT_FOR_ZIP': 'archive.prompt_user',
+        'ZIP_ENABLED': 'archive.zip_enabled',
+        'ZIP_LEVEL': 'archive.zip_level',
         
         # User settings
         'TECHNICIAN_NAME': 'user.technician_name',
@@ -79,11 +76,8 @@ class SettingsManager:
             self.KEYS['COPY_BUFFER_SIZE']: 1048576,  # 1MB default
             self.KEYS['USE_BUFFERED_OPS']: True,  # Default to new high-performance system
             self.KEYS['ZIP_COMPRESSION_LEVEL']: 6,
-            self.KEYS['ZIP_AT_ROOT']: False,
-            self.KEYS['ZIP_AT_LOCATION']: False,
-            self.KEYS['ZIP_AT_DATETIME']: False,
-            self.KEYS['AUTO_CREATE_ZIP']: False,
-            self.KEYS['PROMPT_FOR_ZIP']: True,
+            self.KEYS['ZIP_ENABLED']: 'enabled',
+            self.KEYS['ZIP_LEVEL']: 'root',
             self.KEYS['TIME_OFFSET_PDF']: True,
             self.KEYS['UPLOAD_LOG_PDF']: True,
             self.KEYS['HASH_CSV']: True,
@@ -184,29 +178,20 @@ class SettingsManager:
         return min(max(level, 0), 9)
     
     @property
-    def auto_create_zip(self) -> bool:
-        """Whether to automatically create ZIP archives"""
-        return bool(self.get('AUTO_CREATE_ZIP', False))
+    def zip_enabled(self) -> str:
+        """ZIP creation behavior: 'enabled', 'disabled', or 'prompt'"""
+        value = str(self.get('ZIP_ENABLED', 'enabled'))
+        if value not in ['enabled', 'disabled', 'prompt']:
+            return 'enabled'  # Safe fallback
+        return value
     
-    @property
-    def prompt_for_zip(self) -> bool:
-        """Whether to prompt user for ZIP creation"""
-        return bool(self.get('PROMPT_FOR_ZIP', True))
-    
-    @property
-    def zip_at_root(self) -> bool:
-        """Create ZIP at root level"""
-        return bool(self.get('ZIP_AT_ROOT', False))
-    
-    @property
-    def zip_at_location(self) -> bool:
-        """Create ZIP at location level"""
-        return bool(self.get('ZIP_AT_LOCATION', False))
-    
-    @property
-    def zip_at_datetime(self) -> bool:
-        """Create ZIP at datetime level"""
-        return bool(self.get('ZIP_AT_DATETIME', False))
+    @property  
+    def zip_level(self) -> str:
+        """ZIP archive level: 'root', 'location', or 'datetime'"""
+        value = str(self.get('ZIP_LEVEL', 'root'))
+        if value not in ['root', 'location', 'datetime']:
+            return 'root'  # Safe fallback
+        return value
     
     @property
     def generate_time_offset_pdf(self) -> bool:

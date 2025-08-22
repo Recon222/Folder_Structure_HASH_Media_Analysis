@@ -17,9 +17,9 @@ from PySide6.QtWidgets import (
     QSplitter, QHBoxLayout, QDialog, QDialogButtonBox,
     QGroupBox, QComboBox, QCheckBox, QPushButton, QLabel
 )
-import zipfile
 
 from controllers import FileController, ReportController, FolderController
+from controllers.zip_controller import ZipController
 from core.models import FormData
 from core.settings_manager import settings
 from core.logger import logger
@@ -28,9 +28,9 @@ from core.workers.zip_operations import ZipOperationThread
 from ui.components import FormPanel, FilesPanel, LogConsole
 from ui.styles import CarolinaBlueTheme
 from ui.dialogs import ZipSettingsDialog, AboutDialog, UserSettingsDialog
+from ui.dialogs.zip_prompt import ZipPromptDialog
 from ui.tabs import ForensicTab
 from ui.tabs.batch_tab import BatchTab
-from utils.zip_utils import ZipSettings
 
 
 class MainWindow(QMainWindow):
@@ -48,8 +48,9 @@ class MainWindow(QMainWindow):
         
         # Initialize controllers
         self.file_controller = FileController()
-        self.report_controller = ReportController(self.settings)
         self.folder_controller = FolderController()
+        self.zip_controller = ZipController(self.settings)
+        self.report_controller = ReportController(self.settings, self.zip_controller)
         
         # Set up UI
         self.setWindowTitle("Folder Structure Utility")
@@ -192,6 +193,14 @@ class MainWindow(QMainWindow):
         if not files and not folders:
             QMessageBox.warning(self, "No Files", "Please select files or folders to process")
             return
+            
+        # Handle ZIP prompt BEFORE starting any operations
+        if self.zip_controller.should_prompt_user():
+            choice = ZipPromptDialog.prompt_user(self)
+            self.zip_controller.set_session_choice(
+                choice['create_zip'], 
+                choice['remember_for_session']
+            )
             
         # Ask user where to save the output
         output_dir = QFileDialog.getExistingDirectory(
@@ -340,14 +349,18 @@ class MainWindow(QMainWindow):
             self.reports_generated = generated
             self.reports_output_dir = reports_output_dir
             
-            # Check if we should create ZIP based on settings (NO PROMPTS)
-            if self.report_controller.should_create_zip():
-                # Automatically create ZIP if enabled in settings
-                self.log("Creating ZIP archive(s)...")
-                original_output_dir = file_dest_path.parent
-                self.create_zip_archives(original_output_dir)
-            else:
-                # No ZIP creation, show final completion now
+            # Handle ZIP creation (prompt already resolved at start of process)
+            try:
+                if self.zip_controller.should_create_zip():
+                    self.log("Creating ZIP archive(s)...")
+                    original_output_dir = file_dest_path.parent
+                    self.create_zip_archives(original_output_dir)
+                else:
+                    # No ZIP creation, show final completion now
+                    self.show_final_completion_message()
+            except ValueError as e:
+                # This shouldn't happen since prompt was resolved at start
+                self.log(f"ZIP configuration error: {e}")
                 self.show_final_completion_message()                                  
                                   
                                   
@@ -355,16 +368,8 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"Failed to generate reports: {str(e)}")
             
     def create_zip_archives(self, base_path: Path):
-        """Create ZIP archives using thread"""
+        """Create ZIP archives using ZipController"""
         try:
-            # Create settings
-            settings = ZipSettings()
-            settings.compression_level = self.settings.get('zip_compression_level', zipfile.ZIP_STORED)
-            settings.create_at_root = self.settings.get('zip_at_root', True)
-            settings.create_at_location = self.settings.get('zip_at_location', False)
-            settings.create_at_datetime = self.settings.get('zip_at_datetime', False)
-            settings.output_path = self.output_directory
-            
             # Find the occurrence folder for zipping
             current_path = base_path
             while current_path != self.output_directory and current_path.parent != self.output_directory:
@@ -373,11 +378,10 @@ class MainWindow(QMainWindow):
             # current_path should now be the occurrence number folder
             occurrence_folder = current_path
             
-            # Create and start thread
-            self.zip_thread = ZipOperationThread(
-                occurrence_folder,  # Zip the occurrence folder
+            # Create ZIP thread using controller
+            self.zip_thread = self.zip_controller.create_zip_thread(
+                occurrence_folder,
                 self.output_directory,
-                settings,
                 self.form_data
             )
             
@@ -524,6 +528,7 @@ class MainWindow(QMainWindow):
         dialog = ZipSettingsDialog(self.settings, self)
         if dialog.exec() == QDialog.Accepted:
             dialog.save_settings()
+            self.zip_controller.on_settings_changed()  # Notify controller of changes
             self.log("ZIP settings saved")
             
     def show_about(self):

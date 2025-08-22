@@ -147,9 +147,14 @@ class BatchProcessorThread(QThread):
             if success:
                 # Generate reports if successful
                 report_results = self._generate_reports(job, output_path, results)
+                
+                # Handle ZIP creation if enabled
+                zip_results = self._create_zip_archives(job, output_path)
+                
                 return True, f"Job completed successfully. {len(results)} files processed.", {
                     'file_results': results,
                     'report_results': report_results,
+                    'zip_results': zip_results,
                     'output_path': output_path
                 }
             else:
@@ -362,6 +367,61 @@ class BatchProcessorThread(QThread):
             
         except Exception as e:
             print(f"Warning: Failed to generate reports for job {job.job_id}: {e}")
+            return {}
+            
+    def _create_zip_archives(self, job: BatchJob, output_path: Path) -> Dict:
+        """Create ZIP archives for the job if enabled"""
+        try:
+            # Check if ZIP creation is enabled via the main window's zip controller
+            if not self.main_window or not hasattr(self.main_window, 'zip_controller'):
+                return {}
+                
+            zip_controller = self.main_window.zip_controller
+            
+            # Check if we should create ZIP (this handles session overrides)
+            try:
+                if not zip_controller.should_create_zip():
+                    return {}
+            except ValueError:
+                # Prompt not resolved - skip ZIP creation in batch mode
+                return {}
+            
+            # Find the occurrence folder (go up from output_path to occurrence level)
+            occurrence_folder = output_path.parent.parent  # output_path is datetime folder
+            
+            # Create ZIP synchronously using the controller's settings
+            from ..workers.zip_operations import ZipOperationThread
+            zip_thread = zip_controller.create_zip_thread(
+                occurrence_folder,
+                Path(job.output_directory),
+                job.form_data
+            )
+            
+            # Since we're in a thread already, we need to run this synchronously
+            # We'll use the ZipUtility directly instead of the thread
+            from ...utils.zip_utils import ZipUtility
+            
+            settings = zip_controller.get_zip_settings()
+            settings.output_path = Path(job.output_directory)
+            
+            zip_util = ZipUtility(
+                progress_callback=lambda pct, msg: self.job_progress.emit(
+                    job.job_id, pct, f"Creating ZIP: {msg}"
+                )
+            )
+            
+            created_archives = zip_util.create_multi_level_archives(occurrence_folder, settings)
+            
+            return {
+                'created_archives': created_archives,
+                'settings': {
+                    'compression_level': settings.compression_level,
+                    'zip_level': zip_controller.settings.zip_level
+                }
+            }
+            
+        except Exception as e:
+            print(f"Warning: Failed to create ZIP archives for job {job.job_id}: {e}")
             return {}
             
     def cancel(self):

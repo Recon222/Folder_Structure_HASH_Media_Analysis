@@ -18,8 +18,9 @@ from utils.zip_utils import ZipUtility, ZipSettings
 class ReportController:
     """Handles all report generation and archiving"""
     
-    def __init__(self, settings: QSettings):
+    def __init__(self, settings: QSettings, zip_controller=None):
         self.settings = settings
+        self.zip_controller = zip_controller
         
     def generate_reports(
         self,
@@ -68,23 +69,19 @@ class ReportController:
         
     def get_zip_settings(self) -> ZipSettings:
         """Get ZIP settings for thread creation"""
+        if self.zip_controller:
+            return self.zip_controller.get_zip_settings()
+        
+        # Fallback to legacy settings for backward compatibility
         settings = ZipSettings()
         settings.compression_level = self.settings.get(
-            'zip_compression_level', 
+            'ZIP_COMPRESSION_LEVEL', 
             zipfile.ZIP_STORED
         )
-        settings.create_at_root = self.settings.get(
-            'zip_at_root', 
-            True
-        )
-        settings.create_at_location = self.settings.get(
-            'zip_at_location', 
-            False
-        )
-        settings.create_at_datetime = self.settings.get(
-            'zip_at_datetime', 
-            False
-        )
+        # Legacy fallback - assume root level if no controller
+        settings.create_at_root = True
+        settings.create_at_location = False
+        settings.create_at_datetime = False
         return settings
         
     def create_zip_archives(
@@ -110,8 +107,12 @@ class ReportController:
         
     def should_create_zip(self) -> bool:
         """Check if ZIP creation is enabled in settings"""
-        return (
-            self.settings.get('zip_at_root', True) or
-            self.settings.get('zip_at_location', False) or
-            self.settings.get('zip_at_datetime', False)
-        )
+        if self.zip_controller:
+            try:
+                return self.zip_controller.should_create_zip()
+            except ValueError:
+                # Prompt not resolved - return False for safety
+                return False
+        
+        # Legacy fallback - assume enabled for backward compatibility
+        return True
