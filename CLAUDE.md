@@ -4,237 +4,159 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Folder Structure Utility - A PySide6 (Qt) application for professional file organization and evidence management. The app is designed for Forensic Mode (law enforcement) evidence processing with efficient file operations and batch processing capabilities.
+Folder Structure Utility - A PySide6 application for professional file organization and evidence management, primarily used in forensic/law enforcement contexts. Features optimized file operations with optional buffering, batch processing, and comprehensive reporting capabilities.
 
 ## Commands
 
-### Development Setup
+### Development & Testing
 ```bash
 # Install dependencies
 pip install -r requirements.txt
 
 # Run the application
 python main.py
+
+# Run specific tests
+python -m pytest tests/test_batch_processing.py -v
+python -m pytest tests/test_files_panel.py -v
+python -m pytest tests/test_performance.py -v
+
+# Format code (if black installed)
+black . --line-length 100
+
+# Lint code (if flake8 installed)
+flake8 . --max-line-length 100
 ```
-
-### Development Tools
-```bash
-# Install development tools (recommended)
-pip install flake8 black
-
-# Format code
-black .
-
-# Lint code
-flake8 .
-```
-
-### Testing
-```bash
-# Run integration test for batch processing
-python test_batch_integration.py
-
-# Note: No automated test suite currently implemented
-# Manual testing required for all changes
-```
-
-### Dependencies
-- PySide6 >= 6.4.0 (Qt UI framework)
-- reportlab >= 3.6.12 (PDF generation)
-- psutil >= 5.9.0 (System monitoring)
-- Python 3.7+
-- hashwise >= 0.1.0 (for accelerated parallel hashing)
 
 ## Architecture Overview
 
 ### Core Application Flow
-1. **main.py** initializes MainWindow with tabs for Forensic mode and Batch Processing
-2. User fills FormData fields which are bound to UI widgets via lambda connections
-3. File operations use parallel hashing when available via hashwise library
-4. Operations run in separate QThreads (FileOperationThread, FolderStructureThread) to maintain UI responsiveness
-5. Results trigger PDF generation and optional ZIP creation
+1. **main.py** creates MainWindow with tabs (Forensic, Batch Processing)
+2. User inputs are bound to **FormData** model via lambda connections
+3. File operations execute in **QThread** subclasses to maintain UI responsiveness
+4. Operations use either standard or **BufferedFileOperations** based on settings
+5. Results generate PDFs (Time Offset, Technician Log, Hash CSV) and optional ZIP archives
 
 ### Key Architectural Patterns
 
-#### Data Binding
-The app uses direct attribute binding between UI widgets and FormData model:
-```python
-self.occ_number.textChanged.connect(lambda t: setattr(self.form_data, 'occurrence_number', t))
-```
+#### Single FormData Instance Pattern
+- MainWindow creates one FormData instance shared across all components
+- UI widgets bind directly via lambdas: `lambda t: setattr(self.form_data, 'field', t)`
+- No complex state management or observers needed
 
 #### Thread Architecture
-- File copying operations run in QThread subclasses
-- Progress signals update UI via Qt signal/slot mechanism
-- Thread classes bridge business logic to UI without coupling
-
-#### Template System
-- FolderTemplate class handles forensic folder structure path building
-- Uses standardized law enforcement folder hierarchy
-
-#### Error Handling
-- Worker threads emit error signals for graceful error propagation
-- Main window displays QMessageBox for user-facing errors
-- File operation errors are logged to the console widget
-- Hash verification failures are reported but don't stop the operation
-
-### Module Responsibilities
-
-**core/**
-- `models.py`: FormData dataclass with validation and JSON serialization
-  - Includes `include_tech_in_offset` flag for selective technician info inclusion
-- `templates.py`: FolderTemplate and FolderBuilder for path generation
-- `file_ops.py`: FileOperations class with hash verification and parallel hashing support
-- `pdf_gen.py`: PDFGenerator for reports
-  - Time Offset Report (includes tech info when checkbox selected)
-  - Upload Log (always includes tech info, no signature fields)
-  - Hash CSV (SHA-256 verification results)
-  - Uses "Prepared for upload on" timestamp format
-- `workers/`: QThread subclasses for file and folder operations
-- `batch_queue.py`: Queue management for batch processing
-- `batch_recovery.py`: Recovery system for interrupted batch operations
-
-**controllers/**
-- `file_controller.py`: Handles file selection and operations
-- `folder_controller.py`: Manages folder structure creation
-- `report_controller.py`: Controls PDF report generation
-
-**ui/**
-- `main_window.py`: Main application window with tab management
-- `components/`: Reusable UI components
-  - `form_panel.py`: Form with Video Start/End times, includes tech info checkbox
-  - `files_panel.py`: File and folder selection
-  - `log_console.py`: Operation logging
-  - `batch_queue_widget.py`: Batch job queue management
-- `dialogs/`: Application dialogs
-  - `user_settings.py`: Tabbed settings (General, Analyst/Technician, Documentation)
-  - `zip_settings.py`: ZIP compression configuration
-  - `about.py`: Application information
-- `styles/`: Theme definitions (Carolina Blue color scheme)
-- `tabs/`: Tab implementations (ForensicTab, BatchTab)
-
-**utils/**
-- `zip_utils.py`: Multi-level ZIP archive creation with compression settings
-
-### Important Implementation Details
-
-1. **Folder Structure Preservation**: When adding folders, the app preserves complete directory hierarchies using `path.rglob('*')`
-
-2. **Hash Verification**: SHA-256 hashes calculated during copy for forensic integrity, with parallel processing via hashwise when available
-
-3. **Path Sanitization**: FolderTemplate._sanitize_path_part() removes invalid characters for cross-platform compatibility
-
-4. **ZIP Archive Levels**: Created alongside folder structures at root/location/datetime levels based on settings
-
-6. **Batch Processing System**: Full queue-based batch processing with:
-   - Save/load queue functionality
-   - Pause/resume capabilities  
-   - Crash recovery with auto-save
-   - Sequential job processing with progress tracking
-
-### UI State Management
-- QSettings stores user preferences (technician info, ZIP settings)
-- Form data can be saved/loaded as JSON for batch processing
-- Progress bars show/hide based on operation state
-
-### Persistent Settings (QSettings)
-- Technician information (name, badge number) - stored in User Settings dialog
-- ZIP compression preferences and levels
-- Window geometry and state
-- Last used directories
-- Hash calculation preferences (combined with CSV generation)
-- PDF generation preferences (time offset, upload log)
-- UI behavior preferences (auto-scroll, exit confirmation)
-
-
-### Sample Data
-For testing and development, use the provided sample JSON files:
-- `sample_dev_data.json` - Full form data example with all fields
-- `sample_dev_data2.json` - Alternative test data set
-- `sample_no_business.json` - Minimal data example without business info
-
-Load these via File → Load Form Data in the application.
-
-### Testing
-Note: No automated test suite is currently implemented. Manual testing is required for all changes.
-
-Integration test available for batch processing:
-```bash
-python test_batch_integration.py
+```python
+# All worker threads follow this pattern:
+finished = Signal(bool, str, dict)  # success, message, results
+progress = Signal(int)
+status = Signal(str)
 ```
+- FileOperationThread handles file copying with hash calculation
+- FolderStructureThread creates folder hierarchies
+- BatchProcessorThread processes queued jobs sequentially
+- ZipOperationThread creates multi-level archives
 
-## Key Architectural Patterns Not Obvious from File Structure
-
-### Dual-Signal Progress Reporting
-All worker threads emit paired `progress(int)` and `status(str)` signals using lambda pattern:
+#### Dual-Signal Progress Reporting
+Workers emit paired signals for UI updates:
 ```python
 lambda pct, msg: (self.progress.emit(pct), self.status.emit(msg))
 ```
 
-### Thread Lifecycle Management
-- MainWindow stores thread references as instance variables for proper cleanup
-- `closeEvent` waits for all threads before closing
-- Cancellation via `cancelled` flag, not thread termination
-- Workers check cancellation flag in inner loops
+#### Settings Management
+- **SettingsManager** singleton handles all QSettings storage
+- Stores: technician info, ZIP preferences, performance settings
+- Platform-specific storage (Registry/plist/.config)
 
-### Component Signal Forwarding
-Components forward signals to maintain loose coupling:
-- ForensicTab → MainWindow signal chain
-- Avoids direct component access
-- Example: `self.log_message.connect(self.parent().log_message.emit)`
+### Module Structure
 
-### Report Output Reorganization
-Reports follow specific directory structure:
-- Files: `output/OccurrenceNumber/Business @ Address/DateTime/`
-- Reports: `output/OccurrenceNumber/Documents/`
-- ZIP created at occurrence level to include both
+**core/**
+- `models.py`: FormData dataclass with validation and JSON serialization
+- `templates.py`: FolderTemplate system for dynamic path generation
+- `file_ops.py`: Standard file operations with SHA-256 hashing
+- `buffered_file_ops.py`: High-performance buffered operations with metrics
+- `pdf_gen.py`: Report generation (uses reportlab)
+- `batch_queue.py`: Queue management for batch processing
+- `settings_manager.py`: Centralized settings with QSettings
+- `workers/`: QThread implementations for async operations
 
-### PDF Generation Behavior
-- PDFs generate automatically after file copy (no user prompts)
-- Generation controlled by Documentation tab settings in User Settings
-- Timestamps use actual generation time for accuracy
-- Upload Log shows Business before Location in details
-- Technician info persists across sessions (User Settings → Analyst/Technician tab)
+**controllers/**
+- `file_controller.py`: File selection and operation coordination
+- `folder_controller.py`: Folder structure creation logic
+- `report_controller.py`: PDF report generation control
 
-### Time Offset Format Flexibility
-Handles both legacy (integer minutes) and new text formats:
-- Legacy: `120` (minutes)
-- New: `"DVR is 2 hr 0 min 0 sec AHEAD of realtime"`
-- Auto-conversion on JSON load
+**ui/**
+- `main_window.py`: Main window with tab management
+- `components/`: Reusable widgets (FormPanel, FilesPanel, LogConsole, BatchQueueWidget)
+- `tabs/`: Tab implementations (ForensicTab, BatchTab)
+- `dialogs/`: Settings and configuration dialogs
+- `styles/carolina_blue.py`: Theme definition
 
-### Worker Result Pattern
-All workers follow consistent result propagation:
-```python
-finished = pyqtSignal(bool, str, object)  # success, message, results
-```
-Results stored in MainWindow enable operation chaining.
+**utils/**
+- `zip_utils.py`: Multi-level ZIP creation with compression settings
 
-### Form Data as Central State
-- Single FormData instance created in MainWindow
-- Components bind via lambdas: `lambda t: setattr(self.form_data, 'field', t)`
-- No complex state management needed
-- JSON serialization preserves QDateTime objects
-- Form fields include:
-  - Video Start/End times (formerly Extraction Start/End)
-  - Include tech info checkbox for time offset documents
-  - No upload timestamp field (generated automatically in PDFs)
+### Important Implementation Details
 
-### Hash Verification Philosophy
-Optional at multiple levels:
-- Global user preference
-- Thread parameter
-- Failures logged but don't block operation
-- CSV report only if hashes calculated
+#### Path Building & Sanitization
+- ForensicPathBuilder creates standardized folder structures
+- Template system uses Python format strings: `{occurrence_number}`, `{business_name}`
+- Law enforcement templates use military date format: `{extraction_start}` = `30JUL25_2312`
+- Path sanitization removes invalid characters for cross-platform compatibility
 
-### Settings Storage Strategy
-All settings in QSettings (no config files):
-- Windows: Registry
-- macOS: plist
-- Linux: .config file
-- Simplifies deployment but less portable
+#### File Operation Modes
+1. **Standard Mode**: Sequential copying with real-time hash calculation
+2. **Buffered Mode**: High-performance with adaptive buffer sizing (256KB-10MB)
+3. Both modes support cancellation via `cancelled` flag
+4. **Forensic-Grade Integrity**: All modes use `os.fsync()` after file copying to ensure complete disk writes
 
-### Parallel Hashing with Hashwise
-When hashwise is available, the application uses parallel hashing to significantly improve performance:
-- Automatically detects and uses hashwise for batches of 4+ files
-- Falls back to ThreadPoolExecutor for smaller batches
-- Gracefully degrades to sequential hashing if neither is available
-- SHA-256 is the default algorithm for forensic integrity
+#### Hash Verification
+- Optional SHA-256 calculation during copy
+- Failures logged but don't block operations
+- CSV report generated only if hashes calculated
+- Accelerated with hashwise library when available
+
+#### Batch Processing
+- Jobs queued with independent FormData instances
+- Sequential processing with automatic recovery
+- Each job generates complete folder structure and reports
+- Recovery system persists queue state across sessions
+
+#### Report Generation
+- **Time Offset Sheet**: Documents DVR time discrepancies
+- **Technician Log**: Processing details and file inventory
+- **Hash CSV**: File integrity verification data
+- Reports saved to `output/OccurrenceNumber/Documents/`
+
+### Testing & Sample Data
+
+Test with provided JSON files:
+- `sample_dev_data.json`: Complete form data with all fields
+- `sample_dev_data2.json`: Alternative test dataset
+- `sample_no_business.json`: Minimal data without business info
+
+Load via: File → Load Form Data
+
+### Performance Considerations
+
+- **Buffer Sizing**: Automatically adjusts based on file sizes (256KB for small, up to 10MB for large)
+- **Thread Safety**: All UI updates via Qt signals, no direct cross-thread access
+- **Memory Management**: Streaming operations for large files prevent memory exhaustion
+- **Progress Granularity**: Updates throttled to prevent UI flooding
+
+### Common Development Tasks
+
+#### Adding a New Report Type
+1. Extend PDFGenerator in `core/pdf_gen.py`
+2. Add generation method to ReportController
+3. Update UI to trigger report generation
+
+#### Adding a New Tab
+1. Create tab class in `ui/tabs/`
+2. Emit signals for process_requested and log_message
+3. Add to MainWindow._setup_ui()
+4. Connect signals for processing and logging
+
+#### Modifying Form Fields
+1. Update FormData in `core/models.py`
+2. Update FormPanel UI in `ui/components/form_panel.py`
+3. Update template format dict in `core/templates.py`
+4. Update JSON loading/saving in FormData.to_dict/from_dict
