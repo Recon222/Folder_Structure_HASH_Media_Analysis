@@ -32,8 +32,9 @@ class BatchQueueWidget(QWidget):
     log_message = Signal(str)
     queue_status_changed = Signal(str)  # Status message for status bar
     
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, main_window=None):
         super().__init__(parent)
+        self.main_window = main_window  # Store reference to MainWindow
         self.batch_queue = BatchQueue()
         self.processor_thread: Optional[BatchProcessorThread] = None
         self.processing_active = False
@@ -321,14 +322,23 @@ class BatchQueueWidget(QWidget):
             return
             
         # Handle ZIP prompt before starting batch processing
-        main_window = self.parent()
-        if hasattr(main_window, 'zip_controller') and main_window.zip_controller.should_prompt_user():
-            from ui.dialogs.zip_prompt import ZipPromptDialog
-            choice = ZipPromptDialog.prompt_user(self)
-            main_window.zip_controller.set_session_choice(
-                choice['create_zip'], 
-                choice['remember_for_session']
-            )
+        print(f"[DEBUG] self.main_window: {self.main_window}")
+        print(f"[DEBUG] has zip_controller: {hasattr(self.main_window, 'zip_controller') if self.main_window else False}")
+        if self.main_window and hasattr(self.main_window, 'zip_controller'):
+            print(f"[DEBUG] zip_controller.should_prompt_user(): {self.main_window.zip_controller.should_prompt_user()}")
+            if self.main_window.zip_controller.should_prompt_user():
+                print(f"[DEBUG] Showing ZIP prompt dialog")
+                from ui.dialogs.zip_prompt import ZipPromptDialog
+                choice = ZipPromptDialog.prompt_user(self)
+                print(f"[DEBUG] User choice: {choice}")
+                self.main_window.zip_controller.set_session_choice(
+                    choice['create_zip'], 
+                    choice['remember_for_session']
+                )
+            else:
+                print(f"[DEBUG] No need to prompt user for ZIP")
+        else:
+            print(f"[DEBUG] No main_window or zip_controller available in batch queue widget")
             
         # Validate all jobs first
         validation = self.batch_queue.validate_all_jobs()
@@ -343,7 +353,7 @@ class BatchQueueWidget(QWidget):
                 return
                 
         # Create and start processor thread
-        self.processor_thread = BatchProcessorThread(self.batch_queue, self.parent())
+        self.processor_thread = BatchProcessorThread(self.batch_queue, self.main_window)
         self._connect_processor_signals()
         
         self.processing_active = True
@@ -426,6 +436,10 @@ class BatchQueueWidget(QWidget):
         self.processing_active = False
         self.recovery_manager.set_processing_active(False)
         self._update_ui_for_processing_state()
+        
+        # Clear batch operation choice from ZIP controller
+        if self.main_window and hasattr(self.main_window, 'zip_controller'):
+            self.main_window.zip_controller.clear_batch_operation_choice()
         
         self.current_job_label.setText("Batch processing completed")
         self.current_job_progress.setVisible(False)

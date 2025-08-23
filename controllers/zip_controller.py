@@ -25,6 +25,7 @@ class ZipController:
         self.settings = settings
         self.session_override = None  # 'enabled'/'disabled'/None for persistent session choices
         self.current_operation_choice = None  # 'enabled'/'disabled'/None for single operations
+        self.batch_operation_choice = None  # 'enabled'/'disabled'/None for current batch operation
         
     def should_prompt_user(self) -> bool:
         """Check if we need to show prompt to user
@@ -47,11 +48,17 @@ class ZipController:
         Raises:
             ValueError: If prompt is required but not resolved
         """
+        # Priority order: current operation > batch operation > session override > settings
+        
         # Check current operation choice first (single-use, then cleared)
         if self.current_operation_choice is not None:
             choice = self.current_operation_choice
             self.current_operation_choice = None  # Clear after use
             return choice == 'enabled'
+            
+        # Check batch operation choice (persistent for current batch)
+        if self.batch_operation_choice is not None:
+            return self.batch_operation_choice == 'enabled'
             
         # Check session override (persistent for session)
         if self.session_override is not None:
@@ -73,15 +80,23 @@ class ZipController:
         if remember_for_session:
             # Persistent choice for entire session
             self.session_override = 'enabled' if create_zip else 'disabled'
-            # Clear any single operation choice
+            # Clear other choices
             self.current_operation_choice = None
+            self.batch_operation_choice = None
         else:
-            # Single operation choice only
-            self.current_operation_choice = 'enabled' if create_zip else 'disabled'
+            # Batch operation choice (persists for current batch operation)
+            self.batch_operation_choice = 'enabled' if create_zip else 'disabled'
+            # Clear single operation choice
+            self.current_operation_choice = None
             
     def clear_session_override(self):
         """Clear session override (called when settings change or app restarts)"""
         self.session_override = None
+        self.current_operation_choice = None
+        
+    def clear_batch_operation_choice(self):
+        """Clear batch operation choice (called when batch operation completes)"""
+        self.batch_operation_choice = None
         self.current_operation_choice = None
         
     def get_zip_settings(self) -> ZipSettings:

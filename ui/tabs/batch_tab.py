@@ -54,7 +54,7 @@ class BatchTab(QWidget):
         main_splitter.addWidget(job_setup_widget)
         
         # Right side: Batch queue
-        self.batch_queue_widget = BatchQueueWidget(self)
+        self.batch_queue_widget = BatchQueueWidget(self, main_window=self.main_window)
         main_splitter.addWidget(self.batch_queue_widget)
         
         # Set splitter proportions (40% setup, 60% queue)

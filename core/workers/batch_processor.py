@@ -371,26 +371,31 @@ class BatchProcessorThread(QThread):
             
     def _create_zip_archives(self, job: BatchJob, output_path: Path) -> Dict:
         """Create ZIP archives for the job if enabled"""
+        print(f"[DEBUG] _create_zip_archives called for job {job.job_id}")
         try:
             # Check if ZIP creation is enabled via the main window's zip controller
             if not self.main_window or not hasattr(self.main_window, 'zip_controller'):
+                print(f"[DEBUG] No main_window or zip_controller available")
                 return {}
                 
             zip_controller = self.main_window.zip_controller
+            print(f"[DEBUG] Got zip_controller: {zip_controller}")
             
             # Check if we should create ZIP (this handles session overrides)
             try:
-                if not zip_controller.should_create_zip():
+                should_create = zip_controller.should_create_zip()
+                print(f"[DEBUG] should_create_zip() returned: {should_create}")
+                if not should_create:
                     return {}
-            except ValueError:
+            except ValueError as e:
                 # Prompt not resolved - skip ZIP creation in batch mode
+                print(f"[DEBUG] ValueError in should_create_zip: {e}")
                 return {}
             
             # Find the occurrence folder (go up from output_path to occurrence level)
             occurrence_folder = output_path.parent.parent  # output_path is datetime folder
             
             # Create ZIP synchronously using the controller's settings
-            from ..workers.zip_operations import ZipOperationThread
             zip_thread = zip_controller.create_zip_thread(
                 occurrence_folder,
                 Path(job.output_directory),
@@ -399,7 +404,7 @@ class BatchProcessorThread(QThread):
             
             # Since we're in a thread already, we need to run this synchronously
             # We'll use the ZipUtility directly instead of the thread
-            from ...utils.zip_utils import ZipUtility
+            from utils.zip_utils import ZipUtility
             
             settings = zip_controller.get_zip_settings()
             settings.output_path = Path(job.output_directory)
@@ -421,8 +426,11 @@ class BatchProcessorThread(QThread):
             }
             
         except Exception as e:
+            # Make error visible to user via progress signal
+            error_msg = f"ZIP creation failed: {e}"
+            self.job_progress.emit(job.job_id, -1, error_msg)
             print(f"Warning: Failed to create ZIP archives for job {job.job_id}: {e}")
-            return {}
+            return {'error': str(e)}
             
     def cancel(self):
         """Cancel the batch processing"""
