@@ -8,21 +8,17 @@ import copy
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any
-import shutil
-import os
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import QThread, Signal, QEventLoop, QTimer
 
 from ..batch_queue import BatchQueue
 from ..models import BatchJob
-from ..file_ops import FileOperations
-from ..buffered_file_ops import BufferedFileOperations, PerformanceMetrics
 from ..templates import FolderBuilder
-from .file_operations import FileOperationThread
 from .folder_operations import FolderStructureThread
-from ..path_utils import ForensicPathBuilder, PathSanitizer
+from ..path_utils import ForensicPathBuilder
 from ..settings_manager import settings
 from ..logger import logger
+from controllers.file_controller import FileController
 
 
 class BatchProcessorThread(QThread):
@@ -111,75 +107,164 @@ class BatchProcessorThread(QThread):
         # Emit final completion
         self.queue_completed.emit(total_jobs, successful, failed)
         
+    def _execute_folder_thread_sync(self, folder_thread: FolderStructureThread) -> tuple[bool, str, Dict]:
+        """Execute FolderStructureThread synchronously within batch thread"""
+        
+        # Create event loop for synchronous execution
+        loop = QEventLoop()
+        result_container = {'success': False, 'message': '', 'results': {}}
+        
+        # Connect completion handler
+        def on_thread_finished(success: bool, message: str, results: Dict):
+            result_container.update({
+                'success': success,
+                'message': message, 
+                'results': results
+            })
+            loop.quit()
+        
+        # Connect progress forwarding - scale file progress to job level (0-80% of job)
+        def on_thread_progress(pct: int):
+            job_file_progress = int(pct * 0.8)
+            if self.current_job:
+                self.job_progress.emit(self.current_job.job_id, job_file_progress, f"Copying files... {pct}%")
+                
+        def on_thread_status(msg: str):
+            if self.current_job:
+                self.job_progress.emit(self.current_job.job_id, -1, msg)
+        
+        # Wire up signals
+        folder_thread.finished.connect(on_thread_finished)
+        folder_thread.progress.connect(on_thread_progress) 
+        folder_thread.status.connect(on_thread_status)
+        
+        # Handle cancellation and timeout
+        def check_cancellation():
+            if self.cancelled:
+                logger.info(f"Cancelling folder thread for job {getattr(self.current_job, 'job_id', 'Unknown')}")
+                folder_thread.cancel()
+                loop.quit()
+        
+        # Start and wait for completion
+        folder_thread.start()
+        
+        # Periodically check for cancellation while waiting
+        cancel_timer = QTimer()
+        cancel_timer.timeout.connect(check_cancellation)
+        cancel_timer.start(100)  # Check every 100ms
+        
+        loop.exec()  # Synchronous wait
+        
+        cancel_timer.stop()
+        
+        return result_container['success'], result_container['message'], result_container['results']
+
+    def _validate_copy_results(self, results: Dict, job: BatchJob) -> bool:
+        """Validate that all expected files were copied successfully"""
+        
+        # Calculate expected file count
+        expected_file_count = len([f for f in job.files if f.exists()])
+        for folder in job.folders:
+            if folder.exists():
+                expected_file_count += len([f for f in folder.rglob('*') if f.is_file()])
+        
+        # Check results count (exclude _performance_stats entry)
+        actual_file_count = len([
+            r for key, r in results.items() 
+            if isinstance(r, dict) and key != '_performance_stats' and 'error' not in r
+        ])
+        
+        if actual_file_count != expected_file_count:
+            logger.error(f"File count mismatch: expected {expected_file_count}, got {actual_file_count}")
+            return False
+            
+        # Check for hash verification failures if hashing is enabled
+        if settings.calculate_hashes:
+            failed_verifications = [
+                path for path, result in results.items()
+                if isinstance(result, dict) and path != '_performance_stats' and not result.get('verified', True)
+            ]
+            if failed_verifications:
+                logger.error(f"Hash verification failed for {len(failed_verifications)} files: {failed_verifications[:5]}")  # Log first 5
+                return False
+        
+        return True
+
     def _process_forensic_job(self, job: BatchJob) -> tuple[bool, str, Any]:
         """Process a forensic mode job"""
         try:
-            # Create folder structure for forensic mode
+            # Validate inputs
             if not self.main_window:
                 return False, "Main window reference not available", None
                 
-            # Build the folder path
-            relative_path = self._build_folder_path(job, "forensic")
-            
-            # Create the full output path (job.output_directory is a string)
-            output_path = Path(job.output_directory) / relative_path
-            output_path.mkdir(parents=True, exist_ok=True)
-            
-            # Prepare items for copying (files and folders)
-            items_to_copy = []
-            
-            # Add individual files
-            for file_path in job.files:
-                if file_path.exists():
-                    items_to_copy.append(('file', file_path, file_path.name))
-                    
-            # Add folders
-            for folder_path in job.folders:
-                if folder_path.exists():
-                    items_to_copy.append(('folder', folder_path, folder_path.name))
-                    
-            if not items_to_copy:
+            if not job.files and not job.folders:
                 return False, "No valid files or folders to process", None
                 
-            # Process files using folder operations thread
-            success, message, results = self._copy_items_sync(items_to_copy, output_path, job)
+            # Use proven FileController pipeline instead of broken inline implementation
+            file_controller = FileController()
+            folder_thread = file_controller.process_forensic_files(
+                job.form_data,
+                job.files,
+                job.folders, 
+                Path(job.output_directory),
+                calculate_hash=settings.calculate_hashes,
+                performance_monitor=None  # Simplified for batch mode
+            )
             
-            if success:
-                # Generate reports if successful
-                report_results = self._generate_reports(job, output_path, results)
+            # Execute synchronously within batch thread using proven forensic pipeline
+            success, message, results = self._execute_folder_thread_sync(folder_thread)
+            
+            if not success:
+                # Log detailed error information including job details
+                logger.error(f"Job {job.job_id} ({job.job_name}) file operations failed: {message}")
+                logger.info(f"Job details - Files: {len(job.files)}, Folders: {len(job.folders)}, Output: {job.output_directory}")
+                return False, f"File operations failed: {message}", None
                 
-                # Handle ZIP creation if enabled
-                zip_results = self._create_zip_archives(job, output_path)
-                
-                return True, f"Job completed successfully. {len(results)} files processed.", {
-                    'file_results': results,
-                    'report_results': report_results,
-                    'zip_results': zip_results,
-                    'output_path': output_path
-                }
-            else:
-                return False, message, results
-                
+            # Validate results integrity
+            if not self._validate_copy_results(results, job):
+                logger.error(f"Job {job.job_id} ({job.job_name}) failed integrity validation")
+                return False, "File integrity validation failed", None
+            
+            # Get the actual output path from the results (FileController creates the full structure)
+            output_path = Path(job.output_directory) / self._build_folder_path(job, "forensic")
+            
+            # Update progress to 80% (file copying complete)
+            if self.current_job:
+                self.job_progress.emit(self.current_job.job_id, 80, "Generating reports...")
+            
+            # Generate reports if successful
+            report_results = self._generate_reports(job, output_path, results)
+            
+            # Update progress to 90% (reports complete)
+            if self.current_job:
+                self.job_progress.emit(self.current_job.job_id, 90, "Creating ZIP archives...")
+            
+            # Handle ZIP creation if enabled
+            zip_results = self._create_zip_archives(job, output_path)
+            
+            # Create memory-efficient summary instead of storing full results
+            file_summary = {
+                'files_processed': len([r for r in results.values() if isinstance(r, dict) and 'error' not in r]),
+                'total_size': sum(r.get('size', 0) for r in results.values() if isinstance(r, dict)),
+                'verification_passed': all(r.get('verified', True) for r in results.values() if isinstance(r, dict) and 'size' in r)
+            }
+            
+            # Update progress to 100% (job complete)
+            if self.current_job:
+                self.job_progress.emit(self.current_job.job_id, 100, f"Job completed - {file_summary['files_processed']} files processed")
+            
+            return True, f"Job completed successfully. {file_summary['files_processed']} files processed.", {
+                'file_summary': file_summary,
+                'report_results': report_results,
+                'zip_results': zip_results,
+                'output_path': output_path
+            }
+            
         except Exception as e:
-            return False, f"Error processing forensic job: {e}", None
-            
-                    
-            if not items_to_copy:
-                return False, "No valid files or folders to process", None
-                
-            # Process files
-            success, message, results = self._copy_items_sync(items_to_copy, output_path, job)
-            
-            if success:
-                return True, f"Custom job completed successfully. {len(results)} files processed.", {
-                    'file_results': results,
-                    'output_path': output_path
-                }
-            else:
-                return False, message, results
-                
-        except Exception as e:
-            return False, f"Error processing custom job: {e}", None
+            # Log full exception details for debugging
+            logger.error(f"Job {job.job_id} ({getattr(job, 'job_name', 'Unknown')}) failed with exception: {e}", exc_info=True)
+            logger.info(f"Failed job details - Files: {len(getattr(job, 'files', []))}, Folders: {len(getattr(job, 'folders', []))}")
+            return False, f"Unexpected error: {e}", None
             
     def _build_folder_path(self, job: BatchJob, template_type: str) -> Path:
         """Build the folder path for the job without side effects"""
@@ -189,134 +274,6 @@ class BatchProcessorThread(QThread):
             # Return just the relative path - caller will combine with output directory
             return relative_path
         
-    def _copy_items_sync(self, items_to_copy: List[tuple], destination: Path, job: BatchJob) -> tuple[bool, str, Dict]:
-        """Copy items synchronously with progress reporting using FileOperations directly"""
-        try:
-            # Create destination directory
-            destination.mkdir(parents=True, exist_ok=True)
-            
-            # Choose file operations based on settings
-            if settings.use_buffered_operations:
-                # Use high-performance buffered operations
-                file_ops = BufferedFileOperations(
-                    progress_callback=lambda pct, msg: self.job_progress.emit(
-                        self.current_index, pct, msg
-                    )
-                )
-            else:
-                # Use legacy file operations
-                file_ops = FileOperations()
-            
-            results = {}
-            
-            # Collect all files to process
-            all_files = []
-            for item_type, path, relative in items_to_copy:
-                if item_type == 'file':
-                    all_files.append((path, relative))
-                elif item_type == 'folder':
-                    # Get all files in folder recursively
-                    for file_path in path.rglob('*'):
-                        if file_path.is_file():
-                            # Preserve folder structure
-                            relative_path = file_path.relative_to(path.parent)
-                            all_files.append((file_path, relative_path))
-            
-            if not all_files:
-                return True, "No files to copy", {}
-            
-            # Calculate total size for progress
-            total_size = sum(f[0].stat().st_size for f in all_files if f[0].exists())
-            copied_size = 0
-            
-            # Copy each file
-            for idx, (source_file, relative_path) in enumerate(all_files):
-                if self.cancelled:
-                    return False, "Operation cancelled", results
-                
-                try:
-                    # Create destination path preserving structure
-                    dest_file = destination / relative_path
-                    
-                    # SECURITY: Validate destination stays within bounds
-                    dest_validated = PathSanitizer.validate_destination(dest_file, destination)
-                    dest_validated.parent.mkdir(parents=True, exist_ok=True)
-                    
-                    # Emit status
-                    self.job_progress.emit(
-                        job.job_id,  # Use job's ID instead of non-existent current_index
-                        int((idx / len(all_files)) * 100),
-                        f"Copying: {relative_path.name}"
-                    )
-                    
-                    # Use buffered copy if available
-                    if settings.use_buffered_operations:
-                        # Use buffered copy for better performance
-                        copy_result = file_ops.copy_file_buffered(
-                            source_file, 
-                            dest_validated,
-                            calculate_hash=settings.calculate_hashes
-                        )
-                        source_hash = copy_result.get('source_hash', '')
-                        dest_hash = copy_result.get('dest_hash', '')
-                        verified = copy_result.get('verified', True)
-                    else:
-                        # Legacy method
-                        source_hash = ""
-                        if settings.calculate_hashes:
-                            source_hash = file_ops._calculate_file_hash(source_file)
-                        
-                        # Copy file
-                        shutil.copy2(source_file, dest_validated)
-                        
-                        # Force flush to disk to ensure complete write (fixes VLC playback issue)
-                        with open(dest_validated, 'rb+') as f:
-                            os.fsync(f.fileno())
-                        
-                        # Calculate destination hash
-                        dest_hash = ""
-                        verified = True
-                        if settings.calculate_hashes:
-                            dest_hash = file_ops._calculate_file_hash(dest_validated)
-                            verified = source_hash == dest_hash
-                    
-                    # Store results
-                    results[str(dest_validated)] = {
-                        'source': str(source_file),
-                        'destination': str(dest_validated),
-                        'size': source_file.stat().st_size,
-                        'source_hash': source_hash,
-                        'dest_hash': dest_hash,
-                        'verified': verified
-                    }
-                    
-                    # Update progress
-                    copied_size += source_file.stat().st_size
-                    
-                except Exception as e:
-                    logger.error(f"Failed to copy {source_file}: {e}")
-                    results[str(source_file)] = {
-                        'error': str(e),
-                        'source': str(source_file),
-                        'verified': False
-                    }
-            
-            # Add performance stats
-            results['_performance_stats'] = {
-                'total_files': len(all_files),
-                'total_size': total_size,
-                'files_copied': len([r for r in results.values() if isinstance(r, dict) and 'error' not in r])
-            }
-            
-            success_count = results['_performance_stats']['files_copied']
-            return True, f"Successfully copied {success_count}/{len(all_files)} files", results
-                
-        except Exception as e:
-            logger.error(f"Batch copy failed: {e}", exc_info=True)
-            return False, f"Error copying files: {e}", {}
-        finally:
-            self.current_worker_thread = None
-            
     def _generate_reports(self, job: BatchJob, output_path: Path, file_results: Dict) -> Dict:
         """Generate reports for the job with correct API calls"""
         try:
