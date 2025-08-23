@@ -322,23 +322,14 @@ class BatchQueueWidget(QWidget):
             return
             
         # Handle ZIP prompt before starting batch processing
-        print(f"[DEBUG] self.main_window: {self.main_window}")
-        print(f"[DEBUG] has zip_controller: {hasattr(self.main_window, 'zip_controller') if self.main_window else False}")
         if self.main_window and hasattr(self.main_window, 'zip_controller'):
-            print(f"[DEBUG] zip_controller.should_prompt_user(): {self.main_window.zip_controller.should_prompt_user()}")
             if self.main_window.zip_controller.should_prompt_user():
-                print(f"[DEBUG] Showing ZIP prompt dialog")
                 from ui.dialogs.zip_prompt import ZipPromptDialog
                 choice = ZipPromptDialog.prompt_user(self)
-                print(f"[DEBUG] User choice: {choice}")
                 self.main_window.zip_controller.set_session_choice(
                     choice['create_zip'], 
                     choice['remember_for_session']
                 )
-            else:
-                print(f"[DEBUG] No need to prompt user for ZIP")
-        else:
-            print(f"[DEBUG] No main_window or zip_controller available in batch queue widget")
             
         # Validate all jobs first
         validation = self.batch_queue.validate_all_jobs()

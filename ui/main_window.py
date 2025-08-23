@@ -463,20 +463,16 @@ class MainWindow(QMainWindow):
             self.log_console.log(message)
         self.status_bar.showMessage(message, 3000)
         
-        # Debug: Print all messages during operation
-        if self.operation_active:
-            print(f"[DEBUG] Operation message: {message}")
-            
-        # Extract speed information from status messages
+        # Extract speed information from status messages for performance monitoring
         if self.operation_active and " @ " in message:
             try:
                 speed_part = message.split(" @ ")[1]
                 if "MB/s" in speed_part:
                     speed_str = speed_part.split("MB/s")[0].strip()
                     self.current_copy_speed = float(speed_str)
-                    print(f"[DEBUG] Updated speed to: {self.current_copy_speed:.1f} MB/s")
-            except (ValueError, IndexError) as e:
-                print(f"[DEBUG] Error parsing speed: {e}")
+            except (ValueError, IndexError):
+                # Speed parsing failed, use default speed value
+                pass
         
     def load_json(self):
         """Load form data from JSON"""

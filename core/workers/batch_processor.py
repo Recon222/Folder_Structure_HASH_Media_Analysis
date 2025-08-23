@@ -323,30 +323,28 @@ class BatchProcessorThread(QThread):
             return generated_reports
             
         except Exception as e:
-            print(f"Warning: Failed to generate reports for job {job.job_id}: {e}")
+            logger.warning(f"Failed to generate reports for job {job.job_id}: {e}")
             return {}
             
     def _create_zip_archives(self, job: BatchJob, output_path: Path) -> Dict:
         """Create ZIP archives for the job if enabled"""
-        print(f"[DEBUG] _create_zip_archives called for job {job.job_id}")
         try:
             # Check if ZIP creation is enabled via the main window's zip controller
             if not self.main_window or not hasattr(self.main_window, 'zip_controller'):
-                print(f"[DEBUG] No main_window or zip_controller available")
+                logger.debug("No main_window or zip_controller available for ZIP creation")
                 return {}
                 
             zip_controller = self.main_window.zip_controller
-            print(f"[DEBUG] Got zip_controller: {zip_controller}")
             
             # Check if we should create ZIP (this handles session overrides)
             try:
                 should_create = zip_controller.should_create_zip()
-                print(f"[DEBUG] should_create_zip() returned: {should_create}")
                 if not should_create:
+                    logger.debug("ZIP creation disabled by user settings")
                     return {}
             except ValueError as e:
                 # Prompt not resolved - skip ZIP creation in batch mode
-                print(f"[DEBUG] ValueError in should_create_zip: {e}")
+                logger.debug(f"ZIP creation prompt not resolved in batch mode: {e}")
                 return {}
             
             # Find the occurrence folder (go up from output_path to occurrence level)
@@ -386,7 +384,7 @@ class BatchProcessorThread(QThread):
             # Make error visible to user via progress signal
             error_msg = f"ZIP creation failed: {e}"
             self.job_progress.emit(job.job_id, -1, error_msg)
-            print(f"Warning: Failed to create ZIP archives for job {job.job_id}: {e}")
+            logger.warning(f"Failed to create ZIP archives for job {job.job_id}: {e}")
             return {'error': str(e)}
             
     def cancel(self):
