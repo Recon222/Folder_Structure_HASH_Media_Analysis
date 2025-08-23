@@ -7,5 +7,6 @@ Business logic controllers
 from .file_controller import FileController
 from .report_controller import ReportController
 from .folder_controller import FolderController
+from .hash_controller import HashController
 
-__all__ = ['FileController', 'ReportController', 'FolderController']
+__all__ = ['FileController', 'ReportController', 'FolderController', 'HashController']

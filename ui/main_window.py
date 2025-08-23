@@ -29,7 +29,7 @@ from ui.components import FormPanel, FilesPanel, LogConsole
 from ui.styles import CarolinaBlueTheme
 from ui.dialogs import ZipSettingsDialog, AboutDialog, UserSettingsDialog
 from ui.dialogs.zip_prompt import ZipPromptDialog
-from ui.tabs import ForensicTab
+from ui.tabs import ForensicTab, HashingTab
 from ui.tabs.batch_tab import BatchTab
 
 
@@ -89,6 +89,11 @@ class MainWindow(QMainWindow):
         self.batch_tab.log_message.connect(self.log)
         self.tabs.addTab(self.batch_tab, "Batch Processing")
         
+        # Hashing tab
+        self.hashing_tab = HashingTab()
+        self.hashing_tab.log_message.connect(self.log)
+        self.tabs.addTab(self.hashing_tab, "Hashing")
+        
         # Add tabs to layout
         layout.addWidget(self.tabs)
         
@@ -103,6 +108,9 @@ class MainWindow(QMainWindow):
         
         # Connect batch tab status messages
         self.batch_tab.status_message.connect(self.status_bar.showMessage)
+        
+        # Connect hashing tab status messages
+        self.hashing_tab.status_message.connect(self.status_bar.showMessage)
         
     def _create_forensic_tab(self):
         """Create the forensic mode tab"""
@@ -566,6 +574,13 @@ class MainWindow(QMainWindow):
                 if hasattr(batch_widget, 'processor_thread') and batch_widget.processor_thread:
                     if batch_widget.processor_thread.isRunning():
                         threads_to_stop.append(('Batch processing', batch_widget.processor_thread))
+        
+        # Check hashing operations thread
+        if hasattr(self, 'hashing_tab') and self.hashing_tab:
+            if self.hashing_tab.hash_controller.is_operation_running():
+                current_op = self.hashing_tab.hash_controller.get_current_operation()
+                if current_op:
+                    threads_to_stop.append(('Hash operations', current_op))
         
         # If there are active operations, ask user for confirmation
         if threads_to_stop:

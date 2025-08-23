@@ -140,8 +140,24 @@ class SettingsManager:
     
     @property
     def hash_algorithm(self) -> str:
-        """Hash algorithm to use"""
-        return str(self.get('HASH_ALGORITHM', 'sha256'))
+        """Hash algorithm to use (sha256 or md5)"""
+        algorithm = str(self.get('HASH_ALGORITHM', 'sha256')).lower()
+        # Validate algorithm
+        if algorithm not in ['sha256', 'md5']:
+            return 'sha256'  # Safe fallback
+        return algorithm
+    
+    @hash_algorithm.setter
+    def hash_algorithm(self, value: str):
+        """Set hash algorithm
+        
+        Args:
+            value: Algorithm name ('sha256' or 'md5')
+        """
+        algorithm = str(value).lower()
+        if algorithm not in ['sha256', 'md5']:
+            raise ValueError(f"Unsupported hash algorithm: {value}. Must be 'sha256' or 'md5'")
+        self.set('HASH_ALGORITHM', algorithm)
     
     @property
     def copy_buffer_size(self) -> int:
