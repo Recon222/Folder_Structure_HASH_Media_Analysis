@@ -63,41 +63,42 @@ class HashingTab(QWidget):
         
         layout.addWidget(algorithm_group)
         
-        # Main content splitter (operations on left, console on right)
-        main_splitter = QSplitter(Qt.Horizontal)
+        # Main content splitter (operations on top, console on bottom)
+        main_splitter = QSplitter(Qt.Vertical)
         
-        # Left side: Operations
+        # Top: Operations section (40% height)
         operations_widget = QWidget()
-        operations_layout = QVBoxLayout(operations_widget)
+        operations_layout = QHBoxLayout(operations_widget)  # Side-by-side operations
         
         # Single Hash Section
         single_hash_group = self._create_single_hash_section()
         operations_layout.addWidget(single_hash_group)
         
-        # Separator line
-        separator = QFrame()
-        separator.setFrameShape(QFrame.HLine)
-        separator.setFrameShadow(QFrame.Sunken)
-        operations_layout.addWidget(separator)
-        
-        # Verification Section
+        # Verification Section  
         verification_group = self._create_verification_section()
         operations_layout.addWidget(verification_group)
         
-        # Right side: Console
+        # Bottom: Console section (60% height)
         console_widget = QWidget()
         console_layout = QVBoxLayout(console_widget)
+        console_layout.setContentsMargins(5, 5, 5, 5)  # Reduce margins
+        console_layout.setSpacing(0)  # Remove spacing between label and console
         
-        console_layout.addWidget(QLabel("Processing Console:"))
+        console_label = QLabel("Processing Console:")
+        console_layout.addWidget(console_label)
         self.log_console = LogConsole()
-        self.log_console.setMinimumHeight(400)  # Make it large
+        self.log_console.setMaximumHeight(16777215)  # Remove the 150px max height restriction
+        self.log_console.setMinimumHeight(350)  # Large console
         console_layout.addWidget(self.log_console)
         
-        # Add to splitter
+        # Add to vertical splitter
         main_splitter.addWidget(operations_widget)
         main_splitter.addWidget(console_widget)
-        main_splitter.setStretchFactor(0, 1)  # Operations section
-        main_splitter.setStretchFactor(1, 1)  # Console section (equal weight)
+        main_splitter.setStretchFactor(0, 2)  # Operations: 40% height
+        main_splitter.setStretchFactor(1, 3)  # Console: 60% height
+        
+        # Set initial splitter sizes to enforce the ratio
+        main_splitter.setSizes([400, 600])  # 40% / 60% split
         
         layout.addWidget(main_splitter)
         
@@ -116,24 +117,33 @@ class HashingTab(QWidget):
         desc_label.setWordWrap(True)
         layout.addWidget(desc_label)
         
-        # Files panel
-        self.single_files_panel = FilesPanel()
-        self.single_files_panel.setMaximumHeight(200)
-        layout.addWidget(self.single_files_panel)
+        # Horizontal layout: files panel on left, buttons on right
+        content_layout = QHBoxLayout()
         
-        # Buttons
-        button_layout = QHBoxLayout()
+        # Files panel - takes most of the space (compact buttons, no remove button)
+        self.single_files_panel = FilesPanel(show_remove_selected=False, compact_buttons=True)
+        self.single_files_panel.setMinimumHeight(120)  # Compact height
+        content_layout.addWidget(self.single_files_panel, stretch=3)  # 75% of width
+        
+        # Buttons section on the right
+        button_widget = QWidget()
+        button_layout = QVBoxLayout(button_widget)
+        button_layout.setContentsMargins(10, 0, 0, 0)  # Add some left margin
         
         self.single_hash_btn = QPushButton("Calculate Hashes")
         self.single_hash_btn.setEnabled(False)
+        self.single_hash_btn.setMinimumWidth(120)
         button_layout.addWidget(self.single_hash_btn)
         
         self.export_single_csv_btn = QPushButton("Export CSV")
         self.export_single_csv_btn.setEnabled(False)
+        self.export_single_csv_btn.setMinimumWidth(120)
         button_layout.addWidget(self.export_single_csv_btn)
         
-        button_layout.addStretch()
-        layout.addLayout(button_layout)
+        button_layout.addStretch()  # Push buttons to top
+        content_layout.addWidget(button_widget, stretch=1)  # 25% of width
+        
+        layout.addLayout(content_layout)
         
         return group
         
@@ -147,38 +157,44 @@ class HashingTab(QWidget):
         desc_label.setWordWrap(True)
         layout.addWidget(desc_label)
         
-        # Source and target panels
+        # Horizontal layout: source panel on left, target panel on right
         panels_layout = QHBoxLayout()
         
         # Source panel
         source_widget = QWidget()
         source_layout = QVBoxLayout(source_widget)
+        source_layout.setContentsMargins(0, 0, 5, 0)  # Small right margin
         source_layout.addWidget(QLabel("Source Files/Folders:"))
-        self.source_files_panel = FilesPanel()
-        self.source_files_panel.setMaximumHeight(150)
+        self.source_files_panel = FilesPanel(show_remove_selected=False, compact_buttons=True)
+        self.source_files_panel.setMinimumHeight(120)  # Compact height
         source_layout.addWidget(self.source_files_panel)
         
         # Target panel
         target_widget = QWidget()
         target_layout = QVBoxLayout(target_widget)
+        target_layout.setContentsMargins(5, 0, 0, 0)  # Small left margin
         target_layout.addWidget(QLabel("Target Files/Folders:"))
-        self.target_files_panel = FilesPanel()
-        self.target_files_panel.setMaximumHeight(150)
+        self.target_files_panel = FilesPanel(show_remove_selected=False, compact_buttons=True)
+        self.target_files_panel.setMinimumHeight(120)  # Compact height
         target_layout.addWidget(self.target_files_panel)
         
-        panels_layout.addWidget(source_widget)
-        panels_layout.addWidget(target_widget)
+        # Add both panels side by side with equal width
+        panels_layout.addWidget(source_widget, stretch=1)
+        panels_layout.addWidget(target_widget, stretch=1)
+        
         layout.addLayout(panels_layout)
         
-        # Buttons
+        # Buttons at the bottom
         button_layout = QHBoxLayout()
         
         self.verify_hashes_btn = QPushButton("Verify Hashes")
         self.verify_hashes_btn.setEnabled(False)
+        self.verify_hashes_btn.setMinimumWidth(120)
         button_layout.addWidget(self.verify_hashes_btn)
         
         self.export_verification_csv_btn = QPushButton("Export CSV")
         self.export_verification_csv_btn.setEnabled(False)
+        self.export_verification_csv_btn.setMinimumWidth(120)
         button_layout.addWidget(self.export_verification_csv_btn)
         
         button_layout.addStretch()

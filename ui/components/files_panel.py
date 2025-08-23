@@ -25,8 +25,19 @@ class FilesPanel(QGroupBox):
     # Signal for logging
     log_message = Signal(str)
     
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, show_remove_selected=True, compact_buttons=False):
+        """Initialize FilesPanel
+        
+        Args:
+            parent: Parent widget
+            show_remove_selected: Whether to show the "Remove Selected" button
+            compact_buttons: Whether to use compact button styling
+        """
         super().__init__("Files to Process", parent)
+        
+        # Configuration options
+        self.show_remove_selected = show_remove_selected
+        self.compact_buttons = compact_buttons
         
         # Primary data structures
         self.selected_files: List[Path] = []
@@ -55,20 +66,37 @@ class FilesPanel(QGroupBox):
         # Buttons
         btn_layout = QHBoxLayout()
         
+        # Button styling based on compact_buttons option
+        button_style = "QPushButton { padding: 4px 8px; }" if self.compact_buttons else ""
+        
         self.add_files_btn = QPushButton("Add Files")
+        if button_style:
+            self.add_files_btn.setStyleSheet(button_style)
         self.add_files_btn.clicked.connect(self.add_files)
         btn_layout.addWidget(self.add_files_btn)
         
         self.add_folder_btn = QPushButton("Add Folder")
+        if button_style:
+            self.add_folder_btn.setStyleSheet(button_style)
         self.add_folder_btn.clicked.connect(self.add_folder)
         btn_layout.addWidget(self.add_folder_btn)
         
-        self.remove_btn = QPushButton("Remove Selected")
-        self.remove_btn.clicked.connect(self.remove_selected)
-        self.remove_btn.setEnabled(False)
-        btn_layout.addWidget(self.remove_btn)
+        # Conditionally add Remove Selected button
+        if self.show_remove_selected:
+            self.remove_btn = QPushButton("Remove Selected")
+            if button_style:
+                self.remove_btn.setStyleSheet(button_style)
+            self.remove_btn.clicked.connect(self.remove_selected)
+            self.remove_btn.setEnabled(False)
+            btn_layout.addWidget(self.remove_btn)
+        else:
+            self.remove_btn = None
         
-        self.clear_btn = QPushButton("Clear All")
+        # Clear button text depends on compact_buttons option
+        clear_text = "Clear" if self.compact_buttons else "Clear All"
+        self.clear_btn = QPushButton(clear_text)
+        if button_style:
+            self.clear_btn.setStyleSheet(button_style)
         self.clear_btn.clicked.connect(self.clear_all)
         self.clear_btn.setEnabled(False)
         btn_layout.addWidget(self.clear_btn)
@@ -234,7 +262,10 @@ class FilesPanel(QGroupBox):
     def _update_ui_state(self):
         """Update UI elements based on current state"""
         has_items = bool(self.entries)
-        self.remove_btn.setEnabled(has_items)
+        
+        # Update button states
+        if self.remove_btn:
+            self.remove_btn.setEnabled(has_items)
         self.clear_btn.setEnabled(has_items)
         
         # Update count label
