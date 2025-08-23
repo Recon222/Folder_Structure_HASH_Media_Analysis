@@ -101,8 +101,11 @@ class BatchJob:
                 errors.append(f"Folder not found: {folder_path}")
                 
         # Validate output directory
-        if self.output_directory and not self.output_directory.parent.exists():
-            errors.append(f"Output directory parent not found: {self.output_directory.parent}")
+        if self.output_directory:
+            # Handle both string and Path types
+            output_path = Path(self.output_directory) if isinstance(self.output_directory, str) else self.output_directory
+            if not output_path.parent.exists():
+                errors.append(f"Output directory parent not found: {output_path.parent}")
             
         return errors
     
