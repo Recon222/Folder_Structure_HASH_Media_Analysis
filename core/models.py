@@ -61,6 +61,18 @@ class FormData:
                 else:
                     setattr(form_data, key, value)
         return form_data
+    
+    def clear(self):
+        """Clear all form data fields to empty/default values"""
+        self.occurrence_number = ""
+        self.business_name = ""
+        self.location_address = ""
+        self.time_offset = ""
+        self.video_start_datetime = None
+        self.video_end_datetime = None
+        self.dvr_time = None
+        self.real_time = None
+        self.upload_timestamp = None
 
 
 @dataclass

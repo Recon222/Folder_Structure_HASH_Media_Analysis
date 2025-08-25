@@ -122,7 +122,7 @@ class BatchTab(QWidget):
         """)
         actions_layout.addWidget(self.add_to_queue_btn)
         
-        self.clear_form_btn = QPushButton("Clear Form")
+        self.clear_form_btn = QPushButton("Clear Form/Files")
         actions_layout.addWidget(self.clear_form_btn)
         
         actions_layout.addStretch()
@@ -260,16 +260,11 @@ class BatchTab(QWidget):
         )
         
         if reply == QMessageBox.Yes:
-            # Clear form data
-            self.form_data.occurrence_number = ""
-            self.form_data.business_name = ""
-            self.form_data.location_address = ""
-            self.form_data.time_offset = ""
-            self.form_data.video_start_datetime = None
-            self.form_data.video_end_datetime = None
-            self.form_data.dvr_time = None
-            self.form_data.real_time = None
-            self.form_data.upload_timestamp = None
+            # Clear form data using model method
+            self.form_data.clear()
+            
+            # Refresh UI from cleared model
+            self.form_panel.load_from_data(self.form_data)
             
             # Clear files
             self.files_panel.clear()
