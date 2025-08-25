@@ -2,6 +2,8 @@
 # -*- coding: utf-8 -*-
 """
 Batch processor thread for processing multiple jobs sequentially
+
+Nuclear migration complete - unified error handling and Result objects.
 """
 
 import copy
@@ -9,8 +11,18 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any
 
-from PySide6.QtCore import QThread, Signal, QEventLoop, QTimer
+from PySide6.QtCore import Signal, QEventLoop, QTimer
 
+# Nuclear migration imports
+from .base_worker import BaseWorkerThread
+from ..result_types import BatchOperationResult, Result
+from ..exceptions import (
+    BatchProcessingError, ValidationError, FileOperationError, 
+    ErrorSeverity, FSAError
+)
+from ..error_handler import handle_error
+
+# Existing imports
 from ..batch_queue import BatchQueue
 from ..models import BatchJob
 from .folder_operations import FolderStructureThread
@@ -20,91 +32,202 @@ from ..logger import logger
 from controllers.file_controller import FileController
 
 
-class BatchProcessorThread(QThread):
-    """Processes batch jobs sequentially"""
+class BatchProcessorThread(BaseWorkerThread):
+    """
+    Processes batch jobs sequentially with unified error handling
     
-    # Signals
+    NUCLEAR MIGRATION COMPLETE:
+    - NEW: result_ready = Signal(Result)       ✅ UNIFIED (inherited)
+    - NEW: progress_update = Signal(int, str)  ✅ UNIFIED (inherited)
+    - PRESERVED: Custom batch-specific signals for UI coordination
+    """
+    
+    # Custom batch-specific signals (preserved for batch UI coordination)
     job_started = Signal(str, str)  # job_id, job_name
     job_progress = Signal(str, int, str)  # job_id, percentage, message
     job_completed = Signal(str, bool, str, object)  # job_id, success, message, results
     queue_progress = Signal(int, int)  # completed_jobs, total_jobs
     queue_completed = Signal(int, int, int)  # total, successful, failed
     
+    # Unified signals inherited from BaseWorkerThread:
+    # result_ready = Signal(Result)      # Final batch operation result
+    # progress_update = Signal(int, str) # Queue-level progress
+    
     def __init__(self, batch_queue: BatchQueue, main_window=None):
         super().__init__()
         self.batch_queue = batch_queue
         self.main_window = main_window
-        self.cancelled = False
+        # cancelled is inherited from BaseWorkerThread
         self.pause_requested = False
         self.current_job = None
         self.current_worker_thread = None
         
-    def run(self):
-        """Process all jobs in the queue"""
-        pending_jobs = self.batch_queue.get_pending_jobs()
-        total_jobs = len(pending_jobs)
-        completed = 0
-        successful = 0
-        failed = 0
+        # Set descriptive operation name
+        pending_count = len(batch_queue.get_pending_jobs()) if batch_queue else 0
+        self.set_operation_name(f"Batch Processing ({pending_count} jobs)")
         
-        if total_jobs == 0:
-            self.queue_completed.emit(0, 0, 0)
-            return
+    def run(self):
+        """Process all jobs in the queue with unified error handling"""
+        try:
+            # Initial validation
+            if not self.batch_queue:
+                error = ValidationError(
+                    field_errors={"batch_queue": "Batch queue not available"},
+                    user_message="Batch queue is not available for processing."
+                )
+                self.handle_error(error, {'stage': 'initialization'})
+                self.emit_result(Result.error(error))
+                return
+                
+            pending_jobs = self.batch_queue.get_pending_jobs()
+            total_jobs = len(pending_jobs)
+            completed = 0
+            successful = 0
+            failed = 0
+            job_results = []
             
-        while True:
-            if self.cancelled:
-                break
+            if total_jobs == 0:
+                # Empty queue - emit successful empty result
+                self.queue_completed.emit(0, 0, 0)
+                result = BatchOperationResult.create(
+                    [], 
+                    metadata={'message': 'No jobs to process'}
+                )
+                self.emit_result(result)
+                return
                 
-            # Handle pause
-            while self.pause_requested and not self.cancelled:
-                self.msleep(100)
+            # Emit queue-level progress at start
+            self.emit_progress(0, f"Starting batch processing of {total_jobs} jobs")
+            
+            while True:
+                if self.cancelled:
+                    break
+                    
+                # Handle pause
+                while self.pause_requested and not self.cancelled:
+                    self.msleep(100)
+                    
+                # Get next job
+                job = self.batch_queue.get_next_pending_job()
+                if not job:
+                    break  # No more pending jobs
+                    
+                # Process the job
+                try:
+                    self.job_started.emit(job.job_id, job.job_name)
+                    job.status = "processing"
+                    job.start_time = datetime.now()
+                    self.current_job = job
+                    
+                    # Update job in queue
+                    self.batch_queue.update_job(job)
                 
-            # Get next job
-            job = self.batch_queue.get_next_pending_job()
-            if not job:
-                break  # No more pending jobs
-                
-            # Process the job
-            try:
-                self.job_started.emit(job.job_id, job.job_name)
-                job.status = "processing"
-                job.start_time = datetime.now()
-                self.current_job = job
-                
+                    # Run the actual processing (always forensic mode) - now returns Result
+                    job_result = self._process_forensic_job(job)
+                    
+                    job.end_time = datetime.now()
+                    
+                    # Handle Result object
+                    if job_result.success:
+                        job.status = "completed"
+                        successful += 1
+                        job_results.append({
+                            'success': True,
+                            'job_id': job.job_id,
+                            'job_name': job.job_name,
+                            'result': job_result.value,
+                            'metadata': job_result.metadata
+                        })
+                        # Keep existing signal for UI compatibility
+                        self.job_completed.emit(job.job_id, True, "Job completed successfully", job_result.value)
+                    else:
+                        job.status = "failed"
+                        job.error_message = job_result.error.user_message if job_result.error else "Unknown error"
+                        failed += 1
+                        job_results.append({
+                            'success': False,
+                            'job_id': job.job_id,
+                            'job_name': job.job_name,
+                            'error': job_result.error.user_message if job_result.error else "Unknown error",
+                            'error_details': job_result.error
+                        })
+                        # Keep existing signal for UI compatibility
+                        self.job_completed.emit(job.job_id, False, job.error_message, None)
+                    
+                except Exception as e:
+                    # Fallback error handling for unexpected exceptions in job processing loop
+                    job.status = "failed"
+                    job.error_message = str(e)
+                    job.end_time = datetime.now()
+                    failed += 1
+                    job_results.append({
+                        'success': False,
+                        'job_id': job.job_id,
+                        'job_name': job.job_name,
+                        'error': f"Unexpected error: {e}",
+                        'error_details': e
+                    })
+                    self.job_completed.emit(job.job_id, False, str(e), None)
+                    
                 # Update job in queue
                 self.batch_queue.update_job(job)
+                self.current_job = None
                 
-                # Run the actual processing (always forensic mode)
-                success, message, results = self._process_forensic_job(job)
-                
-                job.end_time = datetime.now()
-                
-                if success:
-                    job.status = "completed"
-                    successful += 1
-                    self.job_completed.emit(job.job_id, True, message, results)
-                else:
-                    job.status = "failed"
-                    job.error_message = message
-                    failed += 1
-                    self.job_completed.emit(job.job_id, False, message, results)
-                    
-            except Exception as e:
-                job.status = "failed"
-                job.error_message = str(e)
-                job.end_time = datetime.now()
-                failed += 1
-                self.job_completed.emit(job.job_id, False, str(e), None)
-                
-            # Update job in queue
-            self.batch_queue.update_job(job)
-            self.current_job = None
+                completed += 1
+                # Emit both queue-level and unified progress
+                self.queue_progress.emit(completed, total_jobs)
+                queue_progress_pct = int((completed / total_jobs) * 100) if total_jobs > 0 else 100
+                self.emit_progress(queue_progress_pct, f"Processed {completed}/{total_jobs} jobs")
             
-            completed += 1
-            self.queue_progress.emit(completed, total_jobs)
+            # Emit final completion signals
+            self.queue_completed.emit(total_jobs, successful, failed)
             
-        # Emit final completion
-        self.queue_completed.emit(total_jobs, successful, failed)
+            # Create final BatchOperationResult and emit via unified result_ready signal
+            batch_result = BatchOperationResult.create(
+                job_results,
+                metadata={
+                    'total_jobs': total_jobs,
+                    'successful_jobs': successful,
+                    'failed_jobs': failed,
+                    'success_rate': (successful / total_jobs * 100) if total_jobs > 0 else 100.0,
+                    'operation_name': self.operation_name
+                }
+            )
+            
+            # Final progress update
+            if successful == total_jobs:
+                self.emit_progress(100, f"All {total_jobs} jobs completed successfully")
+            elif failed == total_jobs:
+                self.emit_progress(100, f"All {total_jobs} jobs failed")
+            else:
+                self.emit_progress(100, f"Batch complete: {successful} successful, {failed} failed")
+                
+            # Emit the unified result
+            self.emit_result(batch_result)
+        
+        except Exception as e:
+            # Handle unexpected errors in the main run loop
+            error = BatchProcessingError(
+                job_id="batch_queue", 
+                successes=successful, 
+                failures=failed + 1,
+                error_details=[str(e)],
+                user_message="Batch processing encountered an unexpected error."
+            )
+            
+            context = {
+                'stage': 'main_processing_loop',
+                'total_jobs': total_jobs,
+                'completed': completed,
+                'successful': successful,
+                'failed': failed,
+                'exception_type': e.__class__.__name__,
+                'exception_str': str(e),
+                'severity': 'critical'
+            }
+            
+            self.handle_error(error, context)
+            self.emit_result(Result.error(error))
         
     def _execute_folder_thread_sync(self, folder_thread: FolderStructureThread) -> tuple[bool, str, Dict]:
         """Execute FolderStructureThread synchronously within batch thread"""
@@ -189,15 +312,25 @@ class BatchProcessorThread(QThread):
         
         return True
 
-    def _process_forensic_job(self, job: BatchJob) -> tuple[bool, str, Any]:
-        """Process a forensic mode job"""
+    def _process_forensic_job(self, job: BatchJob) -> Result:
+        """Process a forensic mode job with Result-based error handling"""
         try:
             # Validate inputs
             if not self.main_window:
-                return False, "Main window reference not available", None
+                error = ValidationError(
+                    field_errors={"main_window": "Main window reference not available"},
+                    user_message="System error: Main window not available for batch processing."
+                )
+                self.handle_error(error, {'job_id': job.job_id, 'validation': 'main_window'})
+                return Result.error(error)
                 
             if not job.files and not job.folders:
-                return False, "No valid files or folders to process", None
+                error = ValidationError(
+                    field_errors={"files_folders": "No valid files or folders to process"},
+                    user_message="No files or folders selected for processing."
+                )
+                self.handle_error(error, {'job_id': job.job_id, 'validation': 'empty_selection'})
+                return Result.error(error)
                 
             # Use proven FileController pipeline instead of broken inline implementation
             file_controller = FileController()
@@ -214,15 +347,30 @@ class BatchProcessorThread(QThread):
             success, message, results = self._execute_folder_thread_sync(folder_thread)
             
             if not success:
-                # Log detailed error information including job details
-                logger.error(f"Job {job.job_id} ({job.job_name}) file operations failed: {message}")
-                logger.info(f"Job details - Files: {len(job.files)}, Folders: {len(job.folders)}, Output: {job.output_directory}")
-                return False, f"File operations failed: {message}", None
+                # Create specific error for file operations failure
+                error = FileOperationError(
+                    f"File operations failed for job {job.job_id}: {message}",
+                    user_message="File copying failed. Please check permissions and disk space.",
+                    context={
+                        'job_id': job.job_id,
+                        'job_name': job.job_name,
+                        'files_count': len(job.files),
+                        'folders_count': len(job.folders),
+                        'output_directory': job.output_directory
+                    }
+                )
+                self.handle_error(error, {'stage': 'file_operations', 'job_id': job.job_id})
+                return Result.error(error)
                 
             # Validate results integrity
             if not self._validate_copy_results(results, job):
-                logger.error(f"Job {job.job_id} ({job.job_name}) failed integrity validation")
-                return False, "File integrity validation failed", None
+                error = FileOperationError(
+                    f"Job {job.job_id} failed file integrity validation",
+                    user_message="File integrity validation failed. Some files may not have been copied correctly.",
+                    context={'job_id': job.job_id, 'job_name': job.job_name}
+                )
+                self.handle_error(error, {'stage': 'integrity_validation', 'job_id': job.job_id})
+                return Result.error(error)
             
             # Get the actual output path from the results (FileController creates the full structure)
             output_path = Path(job.output_directory) / self._build_folder_path(job, "forensic")
@@ -252,18 +400,53 @@ class BatchProcessorThread(QThread):
             if self.current_job:
                 self.job_progress.emit(self.current_job.job_id, 100, f"Job completed - {file_summary['files_processed']} files processed")
             
-            return True, f"Job completed successfully. {file_summary['files_processed']} files processed.", {
+            # Create successful result with comprehensive job data
+            job_result = {
+                'job_id': job.job_id,
+                'job_name': job.job_name,
                 'file_summary': file_summary,
                 'report_results': report_results,
                 'zip_results': zip_results,
-                'output_path': output_path
+                'output_path': str(output_path)
             }
             
+            return Result.success(
+                job_result,
+                metadata={
+                    'files_processed': file_summary['files_processed'],
+                    'total_size': file_summary['total_size'],
+                    'verification_passed': file_summary['verification_passed'],
+                    'job_id': job.job_id
+                }
+            )
+            
+        except FSAError as e:
+            # FSA errors are already properly formatted
+            self.handle_error(e, {'job_id': job.job_id, 'stage': 'job_processing'})
+            return Result.error(e)
+            
         except Exception as e:
-            # Log full exception details for debugging
-            logger.error(f"Job {job.job_id} ({getattr(job, 'job_name', 'Unknown')}) failed with exception: {e}", exc_info=True)
-            logger.info(f"Failed job details - Files: {len(getattr(job, 'files', []))}, Folders: {len(getattr(job, 'folders', []))}")
-            return False, f"Unexpected error: {e}", None
+            # Convert unexpected errors to BatchProcessingError
+            error = BatchProcessingError(
+                job_id=job.job_id,
+                successes=0,
+                failures=1,
+                error_details=[str(e)],
+                user_message=f"Unexpected error processing job {job.job_name}. Please try again."
+            )
+            
+            context = {
+                'job_id': job.job_id,
+                'job_name': getattr(job, 'job_name', 'Unknown'),
+                'files_count': len(getattr(job, 'files', [])),
+                'folders_count': len(getattr(job, 'folders', [])),
+                'exception_type': e.__class__.__name__,
+                'exception_str': str(e),
+                'severity': 'critical'
+            }
+            
+            self.handle_error(error, context)
+            return Result.error(error)
             
     def _build_folder_path(self, job: BatchJob, template_type: str) -> Path:
         """Build the folder path for the job without side effects"""
@@ -388,11 +571,14 @@ class BatchProcessorThread(QThread):
             
     def cancel(self):
         """Cancel the batch processing"""
-        self.cancelled = True
+        # Call base class cancel for unified cancellation
+        super().cancel()
         
         # Cancel current worker thread if running
         if self.current_worker_thread:
-            if hasattr(self.current_worker_thread, 'cancelled'):
+            if hasattr(self.current_worker_thread, 'cancel'):
+                self.current_worker_thread.cancel()
+            elif hasattr(self.current_worker_thread, 'cancelled'):
                 self.current_worker_thread.cancelled = True
                 
     def pause(self):
