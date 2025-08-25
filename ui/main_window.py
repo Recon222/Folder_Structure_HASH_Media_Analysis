@@ -26,11 +26,14 @@ from core.logger import logger
 from core.workers import FolderStructureThread
 from core.workers.zip_operations import ZipOperationThread
 from ui.components import FormPanel, FilesPanel, LogConsole
+from ui.components.error_notification_system import ErrorNotificationManager
 from ui.styles import CarolinaBlueTheme
 from ui.dialogs import ZipSettingsDialog, AboutDialog, UserSettingsDialog
 from ui.dialogs.zip_prompt import ZipPromptDialog
 from ui.tabs import ForensicTab, HashingTab
 from ui.tabs.batch_tab import BatchTab
+from core.error_handler import get_error_handler
+from core.exceptions import FSAError
 
 
 class MainWindow(QMainWindow):
@@ -52,6 +55,10 @@ class MainWindow(QMainWindow):
         self.zip_controller = ZipController(self.settings)
         self.report_controller = ReportController(self.settings, self.zip_controller)
         
+        # Initialize error notification system
+        self.error_notification_manager = None  # Will be created after UI setup
+        self.error_handler = get_error_handler()
+        
         # Set up UI
         self.setWindowTitle("Folder Structure Utility")
         self.resize(1200, 800)
@@ -59,6 +66,7 @@ class MainWindow(QMainWindow):
         self._setup_ui()
         self._apply_theme()
         self._load_settings()
+        self._setup_error_notifications()
         
         # Current operation tracking
         self.current_copy_speed = 0.0
@@ -173,6 +181,25 @@ class MainWindow(QMainWindow):
         about_action = QAction("About", self)
         about_action.triggered.connect(self.show_about)
         help_menu.addAction(about_action)
+        
+        # Debug menu (for testing error notifications)
+        debug_menu = menubar.addMenu("Debug")
+        
+        test_info_action = QAction("Test Info Notification", self)
+        test_info_action.triggered.connect(lambda: self._test_error_notification('info'))
+        debug_menu.addAction(test_info_action)
+        
+        test_warning_action = QAction("Test Warning Notification", self)
+        test_warning_action.triggered.connect(lambda: self._test_error_notification('warning'))
+        debug_menu.addAction(test_warning_action)
+        
+        test_error_action = QAction("Test Error Notification", self)
+        test_error_action.triggered.connect(lambda: self._test_error_notification('error'))
+        debug_menu.addAction(test_error_action)
+        
+        test_critical_action = QAction("Test Critical Notification", self)
+        test_critical_action.triggered.connect(lambda: self._test_error_notification('critical'))
+        debug_menu.addAction(test_critical_action)
         
     def _apply_theme(self):
         """Apply Carolina Blue theme"""
@@ -698,9 +725,105 @@ class MainWindow(QMainWindow):
                 except Exception as e:
                     logger.error(f"Error stopping {name}: {e}")
         
+        # Clean up error notifications
+        if hasattr(self, 'error_notification_manager') and self.error_notification_manager:
+            self.error_handler.unregister_ui_callback(self._handle_error_notification)
+            self.error_notification_manager.clear_all()
+            self.error_notification_manager.close()  # Close the top-level notification window
+            self.error_notification_manager = None
+        
         # Save settings
         self.settings.sync()
         logger.info("Application closing normally")
         
         # Accept the close event
         event.accept()
+    
+    def _setup_error_notifications(self):
+        """Initialize error notification system and integrate with error handler"""
+        # Create notification manager
+        self.error_notification_manager = ErrorNotificationManager(self)
+        
+        # Register with error handler for notifications
+        self.error_handler.register_ui_callback(self._handle_error_notification)
+        
+        logger.info("Error notification system initialized")
+    
+    def _handle_error_notification(self, error: FSAError, context: dict):
+        """
+        Handle error notifications from the centralized error handler
+        
+        Args:
+            error: The FSAError that occurred
+            context: Additional context information
+        """
+        if self.error_notification_manager:
+            self.error_notification_manager.show_error(error, context)
+    
+    def resizeEvent(self, event):
+        """Handle window resize to maintain notification positioning"""
+        super().resizeEvent(event)
+        if hasattr(self, 'error_notification_manager') and self.error_notification_manager:
+            self.error_notification_manager._update_position()
+    
+    def moveEvent(self, event):
+        """Handle window move to maintain notification positioning"""
+        super().moveEvent(event)
+        if hasattr(self, 'error_notification_manager') and self.error_notification_manager:
+            self.error_notification_manager._update_position()
+    
+    def showEvent(self, event):
+        """Handle window show to ensure notifications are positioned correctly"""
+        super().showEvent(event)
+        if hasattr(self, 'error_notification_manager') and self.error_notification_manager:
+            self.error_notification_manager._update_position()
+    
+    
+    def _test_error_notification(self, severity: str):
+        """
+        Test error notification system with different severity levels
+        
+        Args:
+            severity: Severity level to test ('info', 'warning', 'error', 'critical')
+        """
+        from core.exceptions import ValidationError, FileOperationError
+        from core.error_handler import handle_error
+        
+        messages = {
+            'info': "This is a test info notification. It should auto-dismiss in 5 seconds.",
+            'warning': "This is a test warning notification. It should auto-dismiss in 8 seconds.",
+            'error': "This is a test error notification. It will not auto-dismiss.",
+            'critical': "This is a test critical notification. Requires manual dismissal."
+        }
+        
+        contexts = {
+            'info': {'operation': 'notification_test', 'severity': 'info', 'component': 'MainWindow'},
+            'warning': {'operation': 'validation_test', 'severity': 'warning', 'component': 'FormPanel'},
+            'error': {'operation': 'file_test', 'severity': 'error', 'component': 'FileController'},
+            'critical': {'operation': 'system_test', 'severity': 'critical', 'component': 'ErrorHandler'}
+        }
+        
+        # Create appropriate error type
+        message = messages.get(severity, "Unknown test notification")
+        context = contexts.get(severity, {})
+        
+        if severity == 'warning':
+            error = ValidationError(
+                {'test_field': 'Test validation error'},
+                user_message=message
+            )
+        elif severity == 'error':
+            error = FileOperationError(
+                "Test file operation error",
+                user_message=message
+            )
+        else:
+            error = FSAError(
+                f"Test {severity} error",
+                user_message=message
+            )
+        
+        # Send through error handler
+        handle_error(error, context)
+        
+        logger.info(f"Test {severity} notification triggered")

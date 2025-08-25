@@ -115,7 +115,7 @@ class FilesPanel(QGroupBox):
         # Add file count for folders
         if entry_type == 'folder':
             try:
-                file_count = len(list(path.rglob('*')))
+                file_count = len([f for f in path.rglob('*') if f.is_file()])
             except:
                 file_count = 0
                 

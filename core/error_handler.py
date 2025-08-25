@@ -207,12 +207,13 @@ class ErrorHandler(QObject):
         if context_str != 'None':
             log_msg += f" | Context: {context_str}"
         
-        # Log based on severity
-        if error.severity == ErrorSeverity.CRITICAL:
+        # Log based on severity (handle None severity)
+        severity = getattr(error, 'severity', None) or ErrorSeverity.ERROR
+        if severity == ErrorSeverity.CRITICAL:
             self.logger.critical(log_msg, exc_info=True)
-        elif error.severity == ErrorSeverity.ERROR:
+        elif severity == ErrorSeverity.ERROR:
             self.logger.error(log_msg, exc_info=True)
-        elif error.severity == ErrorSeverity.WARNING:
+        elif severity == ErrorSeverity.WARNING:
             self.logger.warning(log_msg)
         else:  # INFO
             self.logger.info(log_msg)
