@@ -331,7 +331,9 @@ class MainWindow(QMainWindow):
             
             # current_path should now be the occurrence number folder
             occurrence_dir = current_path
-            documents_dir = occurrence_dir / "Documents"
+            # Move Documents folder to business/location level instead of occurrence level
+            business_dir = file_dest_path.parent.parent  # Go from datetime -> business level
+            documents_dir = business_dir / "Documents"
             documents_dir.mkdir(parents=True, exist_ok=True)
             
             # Reports go directly into Documents folder

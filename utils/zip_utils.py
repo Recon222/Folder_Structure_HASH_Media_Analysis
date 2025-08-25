@@ -114,16 +114,8 @@ class ZipUtility:
         created_archives = []
         
         try:
-            # Helper to create archive name
-            def make_archive_name(path: Path, suffix: str = "") -> str:
-                name = path.name.replace(' ', '_')
-                return f"{name}{suffix}.zip"
-                
-            # Create at root level
-            if settings.create_at_root and root_path.exists():
-                output = settings.output_path or root_path.parent
-                
-                # Create descriptive name if form_data is provided
+            # Helper to create consistent descriptive archive name
+            def create_descriptive_archive_name() -> str:
                 if form_data:
                     occurrence = form_data.occurrence_number or "Unknown"
                     business = form_data.business_name or ""
@@ -137,10 +129,16 @@ class ZipUtility:
                         name_parts.append(f"@ {location}")
                     name_parts.append("Video Recovery")
                     
-                    archive_name = " ".join(name_parts) + ".zip"
+                    return " ".join(name_parts) + ".zip"
                 else:
-                    archive_name = make_archive_name(root_path, "_Complete")
-                    
+                    # Fallback naming when no form_data
+                    name = root_path.name.replace(' ', '_')
+                    return f"{name}_Complete.zip"
+                
+            # Create at root level
+            if settings.create_at_root and root_path.exists():
+                output = settings.output_path or root_path.parent
+                archive_name = create_descriptive_archive_name()
                 archive_path = output / archive_name
                 if self.create_archive(root_path, archive_path, settings):
                     created_archives.append(archive_path)
@@ -150,7 +148,8 @@ class ZipUtility:
                 for location_folder in root_path.iterdir():
                     if location_folder.is_dir() and not self.cancelled:
                         output = settings.output_path or location_folder.parent
-                        archive_path = output / make_archive_name(location_folder, "_Location")
+                        archive_name = create_descriptive_archive_name()
+                        archive_path = output / archive_name
                         if self.create_archive(location_folder, archive_path, settings):
                             created_archives.append(archive_path)
                             
@@ -161,7 +160,8 @@ class ZipUtility:
                         for datetime_folder in location_folder.iterdir():
                             if datetime_folder.is_dir() and not self.cancelled:
                                 output = settings.output_path or datetime_folder.parent
-                                archive_path = output / make_archive_name(datetime_folder, "_DateTime")
+                                archive_name = create_descriptive_archive_name()
+                                archive_path = output / archive_name
                                 if self.create_archive(datetime_folder, archive_path, settings):
                                     created_archives.append(archive_path)
                                     

@@ -280,8 +280,8 @@ class BatchProcessorThread(QThread):
             # Import PDF generator and use correct API
             from ..pdf_gen import PDFGenerator
             
-            # Create reports directory
-            reports_dir = output_path.parent.parent / "Documents"
+            # Create reports directory - move to business/location level instead of occurrence level
+            reports_dir = output_path.parent / "Documents"
             reports_dir.mkdir(parents=True, exist_ok=True)
             
             # Create PDFGenerator instance (no constructor params)
@@ -370,7 +370,7 @@ class BatchProcessorThread(QThread):
                 )
             )
             
-            created_archives = zip_util.create_multi_level_archives(occurrence_folder, settings)
+            created_archives = zip_util.create_multi_level_archives(occurrence_folder, settings, job.form_data)
             
             return {
                 'created_archives': created_archives,
