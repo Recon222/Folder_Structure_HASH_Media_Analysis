@@ -44,7 +44,7 @@ class VerificationResult:
     source_result: HashResult
     target_result: Optional[HashResult]
     match: bool
-    comparison_type: str  # 'exact_match', 'name_match', 'missing_target', 'error'
+    comparison_type: str  # 'exact_match', 'name_match', 'missing_target', 'ambiguous_match', 'error'
     notes: str = ""
     
     @property
@@ -139,21 +139,72 @@ class HashOperations:
         """
         discovered_files = []
         
+        # Find common base path for all selected items to ensure consistent relative paths
+        if not paths:
+            return discovered_files
+            
+        # Get all parent directories
+        all_parents = []
+        for path in paths:
+            if path.exists():
+                if path.is_file():
+                    all_parents.append(path.parent)
+                elif path.is_dir():
+                    all_parents.append(path.parent)
+        
+        # Find common base path
+        if all_parents:
+            # Use the common parent directory of all selected items
+            common_base = all_parents[0]
+            for parent in all_parents[1:]:
+                # Find common path
+                try:
+                    parent.relative_to(common_base)
+                except ValueError:
+                    try:
+                        common_base.relative_to(parent)
+                        common_base = parent
+                    except ValueError:
+                        # Find actual common ancestor
+                        common_parts = []
+                        base_parts = common_base.parts
+                        parent_parts = parent.parts
+                        for i, (b, p) in enumerate(zip(base_parts, parent_parts)):
+                            if b == p:
+                                common_parts.append(b)
+                            else:
+                                break
+                        if common_parts:
+                            common_base = Path(*common_parts)
+                        else:
+                            common_base = Path("/") if str(common_base).startswith("/") else Path("C:\\")
+        else:
+            common_base = Path(".")
+        
         for path in paths:
             if not path.exists():
                 logger.warning(f"Path does not exist: {path}")
                 continue
                 
             if path.is_file():
-                # Single file
-                discovered_files.append((path, Path(path.name)))
-            elif path.is_dir():
-                # Recursive folder discovery
+                # Single file - use consistent relative path from common base
                 try:
-                    base_path = path.parent
+                    relative_path = path.relative_to(common_base)
+                    discovered_files.append((path, relative_path))
+                except ValueError:
+                    # Fallback: use parent name + filename
+                    parent_name = path.parent.name
+                    if parent_name and parent_name not in [".", "/"]:
+                        relative_path = Path(parent_name) / path.name
+                    else:
+                        relative_path = Path(path.name)
+                    discovered_files.append((path, relative_path))
+            elif path.is_dir():
+                # Recursive folder discovery - use same common base
+                try:
                     for file_path in path.rglob('*'):
                         if file_path.is_file():
-                            relative_path = file_path.relative_to(base_path)
+                            relative_path = file_path.relative_to(common_base)
                             discovered_files.append((file_path, relative_path))
                 except Exception as e:
                     logger.error(f"Error discovering files in {path}: {e}")
@@ -338,6 +389,21 @@ class HashOperations:
         if self.status_callback:
             self.status_callback("Comparing hash results...")
         
+        # Debug logging: show sample of source and target paths
+        logger.debug("=== HASH VERIFICATION DEBUG ===")
+        logger.debug(f"Source files ({len(source_results)}):")
+        for i, result in enumerate(source_results[:5]):  # Show first 5
+            logger.debug(f"  [{i}] {result.relative_path}")
+        if len(source_results) > 5:
+            logger.debug(f"  ... and {len(source_results) - 5} more")
+            
+        logger.debug(f"Target files ({len(target_results)}):")
+        for i, result in enumerate(target_results[:5]):  # Show first 5
+            logger.debug(f"  [{i}] {result.relative_path}")
+        if len(target_results) > 5:
+            logger.debug(f"  ... and {len(target_results) - 5} more")
+        logger.debug("=== END DEBUG ===")
+        
         verification_results = self._compare_hash_results(source_results, target_results)
         
         # Summary
@@ -349,6 +415,35 @@ class HashOperations:
         
         return verification_results, combined_metrics
     
+    def _normalize_relative_path(self, relative_path: Path) -> Path:
+        """Normalize relative path by removing root folder variations
+        
+        This handles cases where source and target have slightly different root folder names
+        like 'Folder' vs 'Folder - Copy'
+        """
+        parts = relative_path.parts
+        if len(parts) <= 1:
+            return relative_path
+            
+        # Get the root folder name
+        root_folder = parts[0]
+        
+        # Check if this looks like a copy variation
+        # Remove common copy suffixes to normalize
+        normalized_root = root_folder
+        copy_suffixes = [' - Copy', ' - copy', ' (Copy)', ' (copy)', ' Copy', ' copy', '_Copy', '_copy']
+        
+        for suffix in copy_suffixes:
+            if root_folder.endswith(suffix):
+                normalized_root = root_folder[:-len(suffix)]
+                break
+                
+        # Rebuild path with normalized root
+        if normalized_root != root_folder:
+            return Path(normalized_root) / Path(*parts[1:])
+        else:
+            return relative_path
+
     def _compare_hash_results(self, source_results: List[HashResult], target_results: List[HashResult]) -> List[VerificationResult]:
         """Compare two sets of hash results
         
@@ -361,39 +456,62 @@ class HashOperations:
         """
         verification_results = []
         
-        # Create lookup map for target results by filename
-        target_map = {}
+        # Create lookup maps for target results with normalized paths
+        # Primary map: normalized relative path -> result (for exact path matching)
+        target_path_map = {}
+        # Secondary map: filename only -> list of results (for fallback matching)
+        target_filename_map = {}
+        
         for target_result in target_results:
+            # Normalize the relative path to handle copy variations
+            normalized_path = self._normalize_relative_path(target_result.relative_path)
+            normalized_path_str = str(normalized_path)
             filename = target_result.relative_path.name
-            if filename in target_map:
-                # Handle duplicate filenames by using relative path
-                target_map[str(target_result.relative_path)] = target_result
-            else:
-                target_map[filename] = target_result
+            
+            # Store by normalized relative path (primary key)
+            target_path_map[normalized_path_str] = target_result
+            
+            # Store by filename for fallback (handle multiple files with same name)
+            if filename not in target_filename_map:
+                target_filename_map[filename] = []
+            target_filename_map[filename].append(target_result)
         
         # Compare each source file
         for source_result in source_results:
             source_filename = source_result.relative_path.name
-            source_path_str = str(source_result.relative_path)
+            # Normalize source path for comparison
+            normalized_source_path = self._normalize_relative_path(source_result.relative_path)
+            normalized_source_path_str = str(normalized_source_path)
+            source_path_str = str(source_result.relative_path)  # Keep original for logging
             
             # Try to find matching target file
             target_result = None
             comparison_type = "missing_target"
             notes = ""
             
-            # First try exact filename match
-            if source_filename in target_map:
-                target_result = target_map[source_filename]
-                comparison_type = "name_match"
-            # Then try exact path match (for duplicate filenames)
-            elif source_path_str in target_map:
-                target_result = target_map[source_path_str]
+            # PRIORITY 1: Try exact normalized path match (most accurate)
+            if normalized_source_path_str in target_path_map:
+                target_result = target_path_map[normalized_source_path_str]
                 comparison_type = "exact_match"
+            # PRIORITY 2: Try filename-only match (fallback for single files)
+            elif source_filename in target_filename_map:
+                filename_matches = target_filename_map[source_filename]
+                if len(filename_matches) == 1:
+                    # Only one file with this name, safe to match
+                    target_result = filename_matches[0]
+                    comparison_type = "name_match"
+                else:
+                    # Multiple files with same name - cannot determine correct match
+                    target_result = None
+                    comparison_type = "ambiguous_match"
+                    notes = f"Multiple target files named '{source_filename}' - cannot determine correct match"
             
             # Determine match status
             if target_result is None:
                 match = False
-                notes = "No corresponding target file found"
+                if comparison_type == "missing_target":
+                    notes = "No corresponding target file found"
+                # notes already set for ambiguous_match case
             elif not source_result.success or not target_result.success:
                 match = False
                 comparison_type = "error"
@@ -402,8 +520,22 @@ class HashOperations:
                 match = source_result.hash_value == target_result.hash_value
                 if not match:
                     notes = f"Hash mismatch - Source: {source_result.hash_value[:16]}..., Target: {target_result.hash_value[:16]}..."
+                    # Log detailed mismatch info for debugging
+                    logger.info(f"Hash mismatch: '{source_path_str}' -> '{target_result.relative_path}' ({comparison_type})")
+                    logger.debug(f"  Source hash: {source_result.hash_value}")
+                    logger.debug(f"  Target hash: {target_result.hash_value}")
                 else:
-                    notes = f"Hash match: {source_result.hash_value[:16]}..."
+                    notes = f"Hash match: {source_result.hash_value[:16]}... ({comparison_type})"
+                    logger.debug(f"Hash match: '{source_path_str}' -> '{target_result.relative_path}' ({comparison_type})")
+                    if comparison_type == "exact_match":
+                        logger.debug(f"  Normalized: '{normalized_source_path_str}' -> '{normalized_source_path_str}'")
+            
+            # Log missing or ambiguous files for debugging
+            if target_result is None:
+                if comparison_type == "missing_target":
+                    logger.info(f"Missing target for: '{source_path_str}'")
+                elif comparison_type == "ambiguous_match":
+                    logger.warning(f"Ambiguous match for: '{source_path_str}' - {notes}")
             
             verification_results.append(VerificationResult(
                 source_result=source_result,
