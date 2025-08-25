@@ -20,7 +20,6 @@ class SettingsManager:
         
         # Performance settings
         'COPY_BUFFER_SIZE': 'performance.copy_buffer_size',
-        'USE_BUFFERED_OPS': 'performance.use_buffered_operations',
         
         # Archive settings
         'ZIP_COMPRESSION_LEVEL': 'archive.compression_level',
@@ -74,7 +73,6 @@ class SettingsManager:
             self.KEYS['CALCULATE_HASHES']: True,
             self.KEYS['HASH_ALGORITHM']: 'sha256',
             self.KEYS['COPY_BUFFER_SIZE']: 1048576,  # 1MB default
-            self.KEYS['USE_BUFFERED_OPS']: True,  # Default to new high-performance system
             self.KEYS['ZIP_COMPRESSION_LEVEL']: 6,
             self.KEYS['ZIP_ENABLED']: 'enabled',
             self.KEYS['ZIP_LEVEL']: 'root',
@@ -171,11 +169,6 @@ class SettingsManager:
         size = int(raw_value)
         # Clamp between 8KB and 10MB
         return min(max(size, 8192), 10485760)
-    
-    @property
-    def use_buffered_operations(self) -> bool:
-        """Whether to use high-performance buffered file operations"""
-        return bool(self.get('USE_BUFFERED_OPS', True))
     
     @property
     def technician_name(self) -> str:

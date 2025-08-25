@@ -161,8 +161,15 @@ class BatchTab(QWidget):
         self.batch_queue_widget.log_message.connect(self.log_message.emit)
         self.batch_queue_widget.queue_status_changed.connect(self.status_message.emit)
         
+        # Handle processing state changes to update button states
+        self.batch_queue_widget.processing_state_changed.connect(self._on_processing_state_changed)
+        
         # Form validation
         self.form_data.occurrence_number = ""  # Reset to trigger validation updates
+        
+    def _on_processing_state_changed(self, is_processing: bool):
+        """Handle processing state changes from batch queue widget"""
+        self.add_to_queue_btn.setEnabled(not is_processing)
         
     def _set_output_directory(self):
         """Set the output directory for batch processing"""

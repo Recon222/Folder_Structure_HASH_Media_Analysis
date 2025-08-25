@@ -9,14 +9,23 @@ import shutil
 import hashlib
 import time
 import os
+import logging
 from pathlib import Path
 from typing import List, Dict, Callable, Optional, Tuple
 from dataclasses import dataclass, field
 from datetime import datetime
 from threading import Event
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from core.settings_manager import SettingsManager
 from core.logger import logger
+
+# Try to import hashwise for accelerated parallel hashing
+try:
+    from hashwise import ParallelHasher
+    HASHWISE_AVAILABLE = True
+except ImportError:
+    HASHWISE_AVAILABLE = False
 
 
 @dataclass
@@ -110,8 +119,8 @@ class BufferedFileOperations:
         
         file_size = source.stat().st_size
         result = {
-            'source': str(source),
-            'destination': str(dest),
+            'source_path': str(source),
+            'dest_path': str(dest),
             'size': file_size,
             'start_time': time.time(),
             'buffer_size': buffer_size,
@@ -341,21 +350,17 @@ class BufferedFileOperations:
         self.metrics.end_time = time.time()
         self.metrics.calculate_summary()
         
-        # Add performance metrics to results
-        results['_performance_metrics'] = {
-            'total_files': self.metrics.total_files,
+        # Add performance stats to results (matching legacy format)
+        duration = self.metrics.end_time - self.metrics.start_time
+        results['_performance_stats'] = {
             'files_processed': self.metrics.files_processed,
-            'total_bytes': self.metrics.total_bytes,
-            'bytes_copied': self.metrics.bytes_copied,
-            'duration': self.metrics.end_time - self.metrics.start_time,
+            'total_bytes': self.metrics.bytes_copied,
+            'total_time_seconds': duration,
             'average_speed_mbps': self.metrics.average_speed_mbps,
             'peak_speed_mbps': self.metrics.peak_speed_mbps,
-            'buffer_size': self.metrics.buffer_size_used,
-            'small_files': self.metrics.small_files_count,
-            'medium_files': self.metrics.medium_files_count,
-            'large_files': self.metrics.large_files_count,
-            'errors': self.metrics.errors,
-            'operation_type': 'buffered_streaming'
+            'total_size_mb': self.metrics.bytes_copied / (1024 * 1024),
+            'efficiency_score': min(self.metrics.average_speed_mbps / 50, 1.0) if self.metrics.average_speed_mbps > 0 else 0,
+            'mode': 'buffered'
         }
         
         # Final progress report
@@ -387,3 +392,85 @@ class BufferedFileOperations:
         self.metrics = PerformanceMetrics()
         self.cancelled = False
         self.cancel_event.clear()
+    
+    def verify_hashes(self, file_results: Dict[str, Dict]) -> Dict[str, bool]:
+        """
+        Verify that source and destination hashes match
+        
+        Args:
+            file_results: Results from copy_files operation
+            
+        Returns:
+            Dict mapping filenames to verification status
+        """
+        verification_results = {}
+        
+        for filename, data in file_results.items():
+            if isinstance(data, dict) and 'source_hash' in data and 'dest_hash' in data:
+                if data['source_hash'] and data['dest_hash']:
+                    verification_results[filename] = data['source_hash'] == data['dest_hash']
+                else:
+                    verification_results[filename] = True  # No hash to verify
+        
+        return verification_results
+    
+    def hash_files_parallel(self, files: List[Path]) -> Dict[str, str]:
+        """
+        Calculate SHA-256 hashes for multiple files in parallel
+        
+        Args:
+            files: List of files to hash
+            
+        Returns:
+            Dict mapping file paths to their hashes
+        """
+        results = {}
+        
+        # Use hashwise if available for large batches
+        if HASHWISE_AVAILABLE and len(files) >= 4:
+            try:
+                hasher = ParallelHasher(
+                    algorithm='sha256',
+                    workers=min(os.cpu_count() or 4, 8),  # Reasonable worker limit
+                    chunk_size='auto'
+                )
+                hash_results = hasher.hash_files(files)
+                return {str(path): hash_val for path, hash_val in hash_results.items()}
+            except Exception as e:
+                logging.warning(f"Hashwise failed, falling back to ThreadPoolExecutor: {e}")
+        
+        # Fallback to ThreadPoolExecutor for parallel hashing
+        workers = min(os.cpu_count() or 4, 8)
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            future_to_file = {
+                executor.submit(self._calculate_hash_streaming, file, 65536): file
+                for file in files
+            }
+            
+            for future in as_completed(future_to_file):
+                file = future_to_file[future]
+                try:
+                    hash_value = future.result()
+                    results[str(file)] = hash_value
+                except Exception as e:
+                    logging.error(f"Failed to hash {file}: {e}")
+                    results[str(file)] = None
+                    
+        return results
+    
+    @staticmethod
+    def get_folder_files(folder: Path, recursive: bool = False) -> List[Path]:
+        """
+        Get all files in a folder
+        
+        Args:
+            folder: Folder path
+            recursive: Whether to include subdirectories
+            
+        Returns:
+            List of file paths
+        """
+        if recursive:
+            return [f for f in folder.rglob('*') if f.is_file()]
+        else:
+            return [f for f in folder.iterdir() if f.is_file()]

@@ -12,7 +12,6 @@ import os
 from pathlib import Path
 from typing import List, Tuple
 
-from core.file_ops import FileOperations
 from core.buffered_file_ops import BufferedFileOperations, PerformanceMetrics
 from core.settings_manager import SettingsManager
 
@@ -74,25 +73,11 @@ class TestPerformance:
         
         return file_path
     
-    def test_buffered_vs_unbuffered_small_files(self, small_files, temp_dirs):
-        """Test performance difference for small files"""
+    def test_buffered_small_files_performance(self, small_files, temp_dirs):
+        """Test performance of buffered operations with small files"""
         _, dst_dir = temp_dirs
         
-        # Test unbuffered (legacy)
-        legacy_ops = FileOperations()
-        legacy_start = time.time()
-        legacy_results = legacy_ops.copy_files(
-            small_files,
-            dst_dir / "legacy",
-            calculate_hash=True
-        )
-        legacy_time = time.time() - legacy_start
-        
-        # Clear destination
-        for f in (dst_dir / "legacy").glob("*"):
-            f.unlink()
-        
-        # Test buffered
+        # Test buffered operations
         buffered_ops = BufferedFileOperations()
         buffered_start = time.time()
         buffered_results = buffered_ops.copy_files(
@@ -106,16 +91,16 @@ class TestPerformance:
         assert len(buffered_results) >= len(small_files)
         
         # Performance metrics should be included
-        assert '_performance_metrics' in buffered_results
-        metrics = buffered_results['_performance_metrics']
-        assert metrics['small_files'] == len(small_files)
-        assert metrics['operation_type'] == 'buffered_streaming'
+        assert '_performance_stats' in buffered_results
+        metrics = buffered_results['_performance_stats']
+        assert metrics['files_processed'] == len(small_files)
+        assert metrics['mode'] == 'buffered'
         
-        # Log performance comparison
+        # Log performance results
         print(f"\nSmall Files Performance:")
-        print(f"  Legacy: {legacy_time:.2f}s")
         print(f"  Buffered: {buffered_time:.2f}s")
-        print(f"  Improvement: {((legacy_time - buffered_time) / legacy_time * 100):.1f}%")
+        print(f"  Speed: {metrics['average_speed_mbps']:.1f} MB/s")
+        print(f"  Files processed: {metrics['files_processed']}")
     
     def test_buffered_large_file_streaming(self, large_file, temp_dirs):
         """Test streaming performance for large files"""
@@ -273,10 +258,9 @@ class TestPerformance:
         assert metrics.peak_speed_mbps >= metrics.average_speed_mbps
         
         # Check performance report in results
-        perf_metrics = results['_performance_metrics']
-        assert perf_metrics['total_files'] == len(all_files)
+        perf_metrics = results['_performance_stats']
         assert perf_metrics['files_processed'] == len(all_files)
-        assert perf_metrics['operation_type'] == 'buffered_streaming'
+        assert perf_metrics['mode'] == 'buffered'
 
 
 class TestIntegration:
@@ -287,18 +271,12 @@ class TestIntegration:
         settings = SettingsManager()
         
         # Check default is enabled
-        assert settings.use_buffered_operations is True
+        # Buffered operations are now always enabled (no setting needed)
         
         # Test buffer size clamping
         assert 8192 <= settings.copy_buffer_size <= 10485760
         
-        # Test setting changes
-        settings.set('USE_BUFFERED_OPS', False)
-        assert settings.use_buffered_operations is False
-        
-        # Restore default
-        settings.set('USE_BUFFERED_OPS', True)
-        assert settings.use_buffered_operations is True
+        # Buffered operations are now always enabled (no setting toggle available)
 
 
 if __name__ == "__main__":

@@ -9,9 +9,7 @@ from typing import List, Optional
 
 from PySide6.QtCore import QThread, Signal
 
-from core.file_ops import FileOperations
 from core.buffered_file_ops import BufferedFileOperations, PerformanceMetrics
-from core.settings_manager import SettingsManager
 
 
 class FileOperationThread(QThread):
@@ -29,59 +27,41 @@ class FileOperationThread(QThread):
         self.calculate_hash = calculate_hash
         self.file_ops = None
         self.performance_monitor = performance_monitor
-        self.settings = SettingsManager()
         
     def run(self):
         """Run file operations in thread"""
         try:
-            # Check if we should use buffered operations
-            if self.settings.use_buffered_operations:
-                # Use high-performance buffered operations
-                self.file_ops = BufferedFileOperations(
-                    progress_callback=lambda pct, msg: (
-                        self.progress.emit(pct),
-                        self.status.emit(msg)
-                    ),
-                    metrics_callback=self._handle_metrics_update
+            # Use high-performance buffered operations
+            self.file_ops = BufferedFileOperations(
+                progress_callback=lambda pct, msg: (
+                    self.progress.emit(pct),
+                    self.status.emit(msg)
+                ),
+                metrics_callback=self._handle_metrics_update
+            )
+            
+            # Hook up to performance monitor if available
+            if self.performance_monitor:
+                self.file_ops.metrics_callback = lambda m: (
+                    self.performance_monitor.set_metrics_source(m),
+                    self.metrics_updated.emit(m)
                 )
-                
-                # Hook up to performance monitor if available
-                if self.performance_monitor:
-                    self.file_ops.metrics_callback = lambda m: (
-                        self.performance_monitor.set_metrics_source(m),
-                        self.metrics_updated.emit(m)
-                    )
-                
-                # Copy files with buffering
-                results = self.file_ops.copy_files(
-                    self.files, 
-                    self.destination, 
-                    self.calculate_hash
-                )
-            else:
-                # Use legacy file operations
-                self.file_ops = FileOperations(
-                    progress_callback=lambda pct, msg: (
-                        self.progress.emit(pct),
-                        self.status.emit(msg)
-                    )
-                )
-                
-                # Copy files
-                results = self.file_ops.copy_files(
-                    self.files, 
-                    self.destination, 
-                    self.calculate_hash
-                )
+            
+            # Copy files with buffering
+            results = self.file_ops.copy_files(
+                self.files, 
+                self.destination, 
+                self.calculate_hash
+            )
             
             # Check if all files were verified
             if self.calculate_hash:
-                all_verified = all(r['verified'] for r in results.values())
+                all_verified = all(r['verified'] for r in results.values() if isinstance(r, dict) and 'verified' in r)
                 if not all_verified:
                     self.finished.emit(False, "Some files failed hash verification!", results)
                     return
                     
-            self.finished.emit(True, f"Successfully copied {len(results)} files", results)
+            self.finished.emit(True, f"Successfully copied {len([r for r in results.values() if isinstance(r, dict) and 'dest_path' in r])} files", results)
             
         except Exception as e:
             self.finished.emit(False, f"Error: {str(e)}", {})

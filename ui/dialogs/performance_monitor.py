@@ -414,7 +414,7 @@ class PerformanceMonitorDialog(QDialog):
         # System configuration
         report += "CONFIGURATION\n"
         report += "-" * 40 + "\n"
-        report += f"Buffered Operations: {'Enabled' if self.settings.use_buffered_operations else 'Disabled'}\n"
+        report += f"Buffered Operations: Enabled (Always On)\n"
         report += f"Buffer Size: {self.settings.copy_buffer_size // 1024} KB\n"
         report += f"Hash Calculation: {'Enabled' if self.settings.calculate_hashes else 'Disabled'}\n"
         report += "\n"

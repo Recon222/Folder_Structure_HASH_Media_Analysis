@@ -228,16 +228,16 @@ class UserSettingsDialog(QDialog):
         perf_mode_group = QGroupBox("High-Performance Mode")
         perf_mode_layout = QVBoxLayout()
         
-        # Enable buffered operations checkbox
-        self.use_buffered_ops_check = QCheckBox("Enable high-performance buffered file operations")
-        self.use_buffered_ops_check.setToolTip(
-            "Uses intelligent streaming and buffering for optimal performance.\n"
+        # Performance mode information (always enabled)
+        buffered_ops_label = QLabel("✅ High-performance buffered operations: Always Enabled")
+        buffered_ops_label.setToolTip(
+            "High-performance operations are now always enabled for optimal performance:\n"
             "• Small files (<1MB): Direct copy for speed\n"
             "• Medium files (1-100MB): Buffered streaming\n"
-            "• Large files (>100MB): Large buffer streaming\n"
-            "Recommended for all operations."
+            "• Large files (>100MB): Large buffer streaming"
         )
-        perf_mode_layout.addWidget(self.use_buffered_ops_check)
+        buffered_ops_label.setStyleSheet("color: #2e7d32; font-weight: bold;")
+        perf_mode_layout.addWidget(buffered_ops_label)
         
         # Performance info label
         info_label = QLabel(
@@ -322,9 +322,7 @@ class UserSettingsDialog(QDialog):
         )
         
         # Performance tab settings
-        self.use_buffered_ops_check.setChecked(
-            self.settings.use_buffered_operations
-        )
+        # (Buffered operations are now always enabled)
         # Convert buffer size from bytes to KB for display
         buffer_size_kb = self.settings.copy_buffer_size // 1024
         self.perf_buffer_spin.setValue(buffer_size_kb)
@@ -363,7 +361,7 @@ class UserSettingsDialog(QDialog):
         self.settings.set('copy_buffer_size', self.buffer_spin.value())
         
         # Performance tab settings
-        self.settings.set('USE_BUFFERED_OPS', self.use_buffered_ops_check.isChecked())
+        # Buffered operations are now always enabled (no setting needed)
         # Convert KB to bytes for storage
         buffer_size_bytes = self.perf_buffer_spin.value() * 1024
         self.settings.set('COPY_BUFFER_SIZE', buffer_size_bytes)

@@ -62,84 +62,10 @@ class FolderStructureThread(QThread):
                 
             # Calculate total size for progress
             total_size = sum(f[0].stat().st_size for f in total_files if f[0].exists())
-            copied_size = 0
-            
-            # Check if we should use buffered operations
-            if self.settings.use_buffered_operations:
-                # Use high-performance buffered operations
-                self.status.emit("[HIGH-PERFORMANCE MODE] Using buffered file operations")
-                self._copy_with_buffering(total_files, total_size, results, empty_dirs)
-                return  # _copy_with_buffering handles the finished signal
-            else:
-                # Legacy method - copy each file preserving structure
-                # First create empty directories
-                if empty_dirs:
-                    for dir_path in empty_dirs:
-                        dest_dir = self.destination / dir_path
-                        try:
-                            dest_dir.mkdir(parents=True, exist_ok=True)
-                        except Exception as e:
-                            self.status.emit(f"Failed to create directory {dir_path}: {e}")
-                
-                for source_file, relative_path in total_files:
-                    if self.cancelled:
-                        self.finished.emit(False, "Operation cancelled", results)
-                        return
-                    
-                    try:
-                        # Create destination path preserving folder structure
-                        dest_file = self.destination / relative_path
-                        
-                        # SECURITY: Validate destination stays within bounds
-                        try:
-                            dest_resolved = dest_file.resolve()
-                            base_resolved = self.destination.resolve()
-                            if not str(dest_resolved).startswith(str(base_resolved)):
-                                raise ValueError(f"Security: Path traversal detected for {relative_path}")
-                        except Exception as e:
-                            self.status.emit(f"Security error: {str(e)}")
-                            continue
-                        
-                        dest_file.parent.mkdir(parents=True, exist_ok=True)
-                        
-                        # Emit status
-                        self.status.emit(f"Copying: {relative_path}")
-                        
-                        # Calculate hash if requested
-                        source_hash = ""
-                        if self.calculate_hash:
-                            source_hash = self._calculate_file_hash(source_file)
-                        
-                        # Copy file
-                        shutil.copy2(source_file, dest_file)
-                        
-                        # Force flush to disk to ensure complete write (fixes VLC playback issue)
-                        with open(dest_file, 'rb+') as f:
-                            os.fsync(f.fileno())
-                        
-                        # Calculate destination hash
-                        dest_hash = ""
-                        if self.calculate_hash:
-                            dest_hash = self._calculate_file_hash(dest_file)
-                        
-                        # Store results
-                        results[str(relative_path)] = {
-                            'source_path': str(source_file),
-                            'dest_path': str(dest_file),
-                            'source_hash': source_hash,
-                            'dest_hash': dest_hash,
-                            'verified': source_hash == dest_hash if self.calculate_hash else True
-                        }
-                        
-                        # Update progress
-                        copied_size += source_file.stat().st_size
-                        progress_pct = int((copied_size / total_size * 100) if total_size > 0 else 100)
-                        self.progress.emit(progress_pct)
-                        
-                    except Exception as e:
-                        self.status.emit(f"Error copying {source_file.name}: {str(e)}")
-                    
-            self.finished.emit(True, f"Successfully copied {len(results)} files", results)
+            # Always use high-performance buffered operations
+            self.status.emit("Using buffered file operations")
+            self._copy_with_buffering(total_files, total_size, results, empty_dirs)
+            return  # _copy_with_buffering handles the finished signal
             
         except Exception as e:
             self.finished.emit(False, f"Error: {str(e)}", {})

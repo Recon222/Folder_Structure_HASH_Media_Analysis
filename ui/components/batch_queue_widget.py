@@ -31,6 +31,7 @@ class BatchQueueWidget(QWidget):
     # Signals
     log_message = Signal(str)
     queue_status_changed = Signal(str)  # Status message for status bar
+    processing_state_changed = Signal(bool)  # Emit when processing state changes
     
     def __init__(self, parent=None, main_window=None):
         super().__init__(parent)
@@ -443,9 +444,11 @@ class BatchQueueWidget(QWidget):
         self.cancel_btn.setEnabled(self.processing_active)
         
         # Disable queue modification during processing
-        self.add_current_btn.setEnabled(not self.processing_active)
         self.remove_btn.setEnabled(not self.processing_active and self.queue_table.selectionModel().hasSelection())
         self.clear_btn.setEnabled(not self.processing_active)
+        
+        # Emit signal to parent to update external buttons (like "Add to Queue")
+        self.processing_state_changed.emit(self.processing_active)
         
     def _on_selection_changed(self):
         """Handle table selection changes"""
