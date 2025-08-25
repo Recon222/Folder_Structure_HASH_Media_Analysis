@@ -61,169 +61,152 @@ class TestFilesPanel:
         assert len(panel.selected_files) == 0
         assert len(panel.selected_folders) == 0
         assert len(panel.entries) == 0
-        assert panel._entry_counter == 0
-        assert len(panel._entry_map) == 0
         assert panel.file_list.count() == 0
         assert panel.count_label.text() == "No items selected"
         assert not panel.remove_btn.isEnabled()
         assert not panel.clear_btn.isEnabled()
     
     def test_add_files_state_tracking(self, panel, temp_files):
-        """Test that adding files properly updates all state"""
+        """Test that adding files properly updates simplified state"""
         file1, file2, _ = temp_files
         
-        # Manually add files (simulating UI interaction)
+        # Manually add files using simplified approach
         entry1 = panel._create_entry('file', file1)
         panel.entries.append(entry1)
-        panel._entry_map[entry1['id']] = entry1
-        panel.selected_files.append(file1)
         
         entry2 = panel._create_entry('file', file2)
         panel.entries.append(entry2)
-        panel._entry_map[entry2['id']] = entry2
-        panel.selected_files.append(file2)
         
-        # Verify state
+        # Verify simplified state
         assert len(panel.selected_files) == 2
         assert len(panel.entries) == 2
-        assert len(panel._entry_map) == 2
         assert file1 in panel.selected_files
         assert file2 in panel.selected_files
         
-        # Verify entries have unique IDs
-        assert entry1['id'] != entry2['id']
-        assert entry1['id'] in panel._entry_map
-        assert entry2['id'] in panel._entry_map
+        # Verify entries are FileEntry objects
+        assert entry1.path == file1
+        assert entry1.type == 'file'
+        assert entry2.path == file2
+        assert entry2.type == 'file'
     
     def test_add_folder_state_tracking(self, panel, temp_files):
-        """Test that adding folders properly updates state"""
+        """Test that adding folders properly updates simplified state"""
         _, _, folder1 = temp_files
         
-        # Add folder
+        # Add folder using simplified approach
         entry = panel._create_entry('folder', folder1)
         panel.entries.append(entry)
-        panel._entry_map[entry['id']] = entry
-        panel.selected_folders.append(folder1)
         
-        # Verify state
+        # Verify simplified state
         assert len(panel.selected_folders) == 1
         assert len(panel.entries) == 1
         assert folder1 in panel.selected_folders
-        assert 'file_count' in entry  # Should have file count
-        assert entry['file_count'] >= 2  # Has at least 2 files
+        assert entry.file_count is not None  # Should have file count
+        assert entry.file_count >= 2  # Has at least 2 files
+        assert entry.type == 'folder'
+        assert entry.path == folder1
     
     def test_mixed_files_folders(self, panel, temp_files):
-        """Test mixing files and folders maintains correct state"""
+        """Test mixing files and folders maintains correct simplified state"""
         file1, file2, folder1 = temp_files
         
-        # Add mixed items
+        # Add mixed items using simplified approach
         file_entry = panel._create_entry('file', file1)
         panel.entries.append(file_entry)
-        panel._entry_map[file_entry['id']] = file_entry
-        panel.selected_files.append(file1)
         
         folder_entry = panel._create_entry('folder', folder1)
         panel.entries.append(folder_entry)
-        panel._entry_map[folder_entry['id']] = folder_entry
-        panel.selected_folders.append(folder1)
         
-        # Verify state
+        # Verify simplified state
         assert len(panel.entries) == 2
         assert len(panel.selected_files) == 1
         assert len(panel.selected_folders) == 1
         assert file1 in panel.selected_files
         assert folder1 in panel.selected_folders
+        
+        # Verify entry types
+        assert file_entry.type == 'file'
+        assert folder_entry.type == 'folder'
     
     def test_remove_selected_items(self, panel, temp_files):
-        """Test that removing items correctly updates state"""
+        """Test that removing items correctly updates simplified state"""
         file1, file2, folder1 = temp_files
         
-        # Add items
+        # Add items using simplified approach
         entries = []
         for item_type, path in [('file', file1), ('file', file2), ('folder', folder1)]:
             entry = panel._create_entry(item_type, path)
             panel.entries.append(entry)
-            panel._entry_map[entry['id']] = entry
             entries.append(entry)
-            
-            if item_type == 'file':
-                panel.selected_files.append(path)
-            else:
-                panel.selected_folders.append(path)
         
-        # Remove middle item (file2)
+        # Remove middle item (file2) 
         entry_to_remove = entries[1]
         panel.entries.remove(entry_to_remove)
-        del panel._entry_map[entry_to_remove['id']]
-        panel.selected_files.remove(file2)
         
-        # Verify state after removal
+        # Verify simplified state after removal
         assert len(panel.entries) == 2
         assert len(panel.selected_files) == 1
         assert len(panel.selected_folders) == 1
         assert file1 in panel.selected_files
         assert file2 not in panel.selected_files
         assert folder1 in panel.selected_folders
-        assert entry_to_remove['id'] not in panel._entry_map
+        
+        # Verify remaining entries
+        remaining_files = [e for e in panel.entries if e.type == 'file']
+        remaining_folders = [e for e in panel.entries if e.type == 'folder']
+        assert len(remaining_files) == 1
+        assert len(remaining_folders) == 1
+        assert remaining_files[0].path == file1
+        assert remaining_folders[0].path == folder1
     
     def test_clear_all(self, panel, temp_files):
-        """Test that clear_all properly resets all state"""
+        """Test that clear_all properly resets simplified state"""
         file1, file2, folder1 = temp_files
         
-        # Add multiple items
+        # Add multiple items using simplified approach
         for item_type, path in [('file', file1), ('file', file2), ('folder', folder1)]:
             entry = panel._create_entry(item_type, path)
             panel.entries.append(entry)
-            panel._entry_map[entry['id']] = entry
-            
-            if item_type == 'file':
-                panel.selected_files.append(path)
-            else:
-                panel.selected_folders.append(path)
         
         # Clear all
         panel.clear_all()
         
-        # Verify complete reset
+        # Verify complete reset with simplified state
         assert len(panel.entries) == 0
         assert len(panel.selected_files) == 0
         assert len(panel.selected_folders) == 0
-        assert len(panel._entry_map) == 0
         assert panel.file_list.count() == 0
     
     def test_duplicate_prevention(self, panel, temp_files):
-        """Test that duplicate files/folders are not added"""
+        """Test that duplicate files/folders are not added with simplified state"""
         file1, _, _ = temp_files
         
-        # Add file first time
+        # Add file first time using simplified approach
         entry1 = panel._create_entry('file', file1)
         panel.entries.append(entry1)
-        panel._entry_map[entry1['id']] = entry1
-        panel.selected_files.append(file1)
         
         # Try to add same file again (should be prevented in real usage)
-        duplicate_exists = any(e['path'] == file1 for e in panel.entries if e['type'] == 'file')
+        duplicate_exists = any(entry.path == file1 and entry.type == 'file' for entry in panel.entries)
         
         assert duplicate_exists is True
         assert len(panel.selected_files) == 1
+        assert len(panel.entries) == 1
     
     def test_get_all_items_returns_copies(self, panel, temp_files):
-        """Test that get_all_items returns copies, not references"""
+        """Test that get_all_items returns new lists from simplified state"""
         file1, _, folder1 = temp_files
         
-        # Add items
+        # Add items using simplified approach
         file_entry = panel._create_entry('file', file1)
         panel.entries.append(file_entry)
-        panel.selected_files.append(file1)
         
         folder_entry = panel._create_entry('folder', folder1)
         panel.entries.append(folder_entry)
-        panel.selected_folders.append(folder1)
         
         # Get items
         files, folders = panel.get_all_items()
         
-        # Verify we got copies
+        # Verify we got proper lists
         assert files is not panel.selected_files
         assert folders is not panel.selected_folders
         assert files == panel.selected_files
@@ -235,32 +218,34 @@ class TestFilesPanel:
         assert len(panel.selected_files) == 1
         assert len(panel.selected_folders) == 1
     
-    def test_entry_id_generation(self, panel):
-        """Test that entry IDs are unique and sequential"""
-        ids = []
-        for i in range(10):
-            entry_id = panel._generate_entry_id()
-            ids.append(entry_id)
+    def test_fileentry_dataclass(self, panel, temp_files):
+        """Test that FileEntry dataclass works correctly"""
+        file1, _, folder1 = temp_files
         
-        # All IDs should be unique
-        assert len(ids) == len(set(ids))
+        # Test file entry
+        file_entry = panel._create_entry('file', file1)
+        assert file_entry.path == file1
+        assert file_entry.type == 'file'
+        assert file_entry.file_count is None
         
-        # IDs should be sequential
-        for i in range(1, len(ids)):
-            assert ids[i] == ids[i-1] + 1
+        # Test folder entry
+        folder_entry = panel._create_entry('folder', folder1)
+        assert folder_entry.path == folder1
+        assert folder_entry.type == 'folder'
+        assert folder_entry.file_count is not None
+        assert folder_entry.file_count >= 0
     
     def test_ui_state_updates(self, panel, temp_files):
-        """Test that UI state properly reflects data state"""
+        """Test that UI state properly reflects simplified data state"""
         file1, _, _ = temp_files
         
         # Initially disabled
         assert not panel.remove_btn.isEnabled()
         assert not panel.clear_btn.isEnabled()
         
-        # Add item
+        # Add item using simplified approach
         entry = panel._create_entry('file', file1)
         panel.entries.append(entry)
-        panel.selected_files.append(file1)
         panel._update_ui_state()
         
         # Should be enabled
@@ -277,21 +262,15 @@ class TestFilesPanel:
         assert panel.count_label.text() == "No items selected"
     
     def test_count_methods(self, panel, temp_files):
-        """Test count methods return correct values"""
+        """Test count methods return correct values with simplified state"""
         file1, file2, folder1 = temp_files
         
-        # Add items
+        # Add items using simplified approach
         for item_type, path in [('file', file1), ('file', file2), ('folder', folder1)]:
             entry = panel._create_entry(item_type, path)
             panel.entries.append(entry)
-            panel._entry_map[entry['id']] = entry
-            
-            if item_type == 'file':
-                panel.selected_files.append(path)
-            else:
-                panel.selected_folders.append(path)
         
-        # Test counts
+        # Test counts with simplified state
         assert panel.get_entry_count() == 3
         assert panel.get_file_count() == 2
         assert panel.get_folder_count() == 1
@@ -318,38 +297,37 @@ def run_tests():
         # Create panel
         panel = FilesPanel()
         
-        # Test initial state
+        # Test initial state with simplified approach
         assert len(panel.entries) == 0
         assert len(panel.selected_files) == 0
         assert len(panel.selected_folders) == 0
         
-        # Test adding entries
+        # Test adding entries using simplified state
         test_path1 = Path("/tmp/test1.txt")
         test_path2 = Path("/tmp/test_folder")
         
         entry1 = panel._create_entry('file', test_path1)
         panel.entries.append(entry1)
-        panel.selected_files.append(test_path1)
         
         entry2 = panel._create_entry('folder', test_path2)
         panel.entries.append(entry2)
-        panel.selected_folders.append(test_path2)
         
-        # Verify state
+        # Verify simplified state
         assert len(panel.entries) == 2
         assert len(panel.selected_files) == 1
         assert len(panel.selected_folders) == 1
-        assert entry1['id'] != entry2['id']
+        assert entry1.type == 'file'
+        assert entry2.type == 'folder'
         
         # Test clear
         panel.clear_all()
         assert len(panel.entries) == 0
         
-        print("✅ All FilesPanel tests passed!")
+        print("SUCCESS: All FilesPanel tests passed!")
         return True
         
     except Exception as e:
-        print(f"❌ Test failed: {e}")
+        print(f"FAILED: Test failed: {e}")
         return False
     
     finally:

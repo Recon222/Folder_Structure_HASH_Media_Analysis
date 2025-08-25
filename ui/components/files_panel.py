@@ -5,7 +5,8 @@ Files panel component for file and folder selection with proper state management
 """
 
 from pathlib import Path
-from typing import List, Tuple, Dict, Optional
+from typing import List, Tuple, Dict, Optional, Literal
+from dataclasses import dataclass
 
 from PySide6.QtCore import Signal, Qt
 from PySide6.QtWidgets import (
@@ -14,6 +15,14 @@ from PySide6.QtWidgets import (
     QFileDialog, QLabel
 )
 from core.logger import logger
+
+
+@dataclass
+class FileEntry:
+    """Represents a file or folder entry with consistent state"""
+    path: Path
+    type: Literal['file', 'folder']
+    file_count: Optional[int] = None  # For folders, tracks number of files inside
 
 
 class FilesPanel(QGroupBox):
@@ -39,14 +48,8 @@ class FilesPanel(QGroupBox):
         self.show_remove_selected = show_remove_selected
         self.compact_buttons = compact_buttons
         
-        # Primary data structures
-        self.selected_files: List[Path] = []
-        self.selected_folders: List[Path] = []
-        
-        # NEW: Unified entry tracking system
-        self.entries: List[Dict] = []  # List of {'type': 'file'|'folder', 'path': Path, 'id': int}
-        self._entry_counter = 0  # Unique ID generator
-        self._entry_map: Dict[int, Dict] = {}  # ID -> entry mapping for fast lookup
+        # Simplified state management - single source of truth
+        self.entries: List[FileEntry] = []
         
         self._setup_ui()
         
@@ -105,31 +108,21 @@ class FilesPanel(QGroupBox):
         
         self.setLayout(layout)
         
-    def _generate_entry_id(self) -> int:
-        """Generate unique entry ID"""
-        self._entry_counter += 1
-        return self._entry_counter
-        
-    def _create_entry(self, entry_type: str, path: Path) -> Dict:
-        """Create a new entry with unique ID"""
-        entry = {
-            'type': entry_type,
-            'path': path,
-            'id': self._generate_entry_id()
-        }
+    def _create_entry(self, entry_type: Literal['file', 'folder'], path: Path) -> FileEntry:
+        """Create a new FileEntry"""
+        file_count = None
         
         # Add file count for folders
         if entry_type == 'folder':
             try:
                 file_count = len(list(path.rglob('*')))
-                entry['file_count'] = file_count
             except:
-                entry['file_count'] = 0
+                file_count = 0
                 
-        return entry
+        return FileEntry(path=path, type=entry_type, file_count=file_count)
         
     def add_files(self):
-        """Add files to selection with proper tracking"""
+        """Add files to selection with simplified state management"""
         file_paths, _ = QFileDialog.getOpenFileNames(
             self, "Select Files", "", "All Files (*.*)"
         )
@@ -142,19 +135,17 @@ class FilesPanel(QGroupBox):
             path = Path(file_path)
             
             # Check for duplicates
-            if any(e['path'] == path for e in self.entries if e['type'] == 'file'):
+            if any(entry.path == path and entry.type == 'file' for entry in self.entries):
                 logger.debug(f"File already in list: {path}")
                 continue
                 
             # Create entry
             entry = self._create_entry('file', path)
             self.entries.append(entry)
-            self._entry_map[entry['id']] = entry
-            self.selected_files.append(path)
             
-            # Create list item
+            # Create list item (use index as ID for UI mapping)
             item = QListWidgetItem(f"📄 {path.name}")
-            item.setData(Qt.UserRole, entry['id'])
+            item.setData(Qt.UserRole, len(self.entries) - 1)  # Store index
             item.setToolTip(str(path))
             self.file_list.addItem(item)
             
@@ -167,7 +158,7 @@ class FilesPanel(QGroupBox):
             self._update_ui_state()
             
     def add_folder(self):
-        """Add folder to selection with proper tracking"""
+        """Add folder to selection with simplified state management"""
         folder_path = QFileDialog.getExistingDirectory(
             self, "Select Folder"
         )
@@ -178,20 +169,18 @@ class FilesPanel(QGroupBox):
         path = Path(folder_path)
         
         # Check for duplicates
-        if any(e['path'] == path for e in self.entries if e['type'] == 'folder'):
+        if any(entry.path == path and entry.type == 'folder' for entry in self.entries):
             logger.debug(f"Folder already in list: {path}")
             return
             
         # Create entry
         entry = self._create_entry('folder', path)
         self.entries.append(entry)
-        self._entry_map[entry['id']] = entry
-        self.selected_folders.append(path)
         
         # Create list item
-        file_count = entry.get('file_count', 0)
+        file_count = entry.file_count or 0
         item = QListWidgetItem(f"📁 {path.name} ({file_count} files)")
-        item.setData(Qt.UserRole, entry['id'])
+        item.setData(Qt.UserRole, len(self.entries) - 1)  # Store index
         item.setToolTip(str(path))
         self.file_list.addItem(item)
         
@@ -201,44 +190,43 @@ class FilesPanel(QGroupBox):
         self._update_ui_state()
         
     def remove_selected(self):
-        """Remove selected items with proper state management"""
+        """Remove selected items with simplified state management"""
         selected_items = self.file_list.selectedItems()
         
         if not selected_items:
             return
             
-        # Collect entries to remove
-        entries_to_remove = []
+        # Collect indices to remove (sorted in reverse order to avoid index shifting)
+        indices_to_remove = []
         for item in selected_items:
-            entry_id = item.data(Qt.UserRole)
-            if entry_id in self._entry_map:
-                entries_to_remove.append(self._entry_map[entry_id])
+            index = item.data(Qt.UserRole)
+            if index is not None and 0 <= index < len(self.entries):
+                indices_to_remove.append(index)
                 
-        # Remove from data structures
-        for entry in entries_to_remove:
-            # Remove from entries list
-            if entry in self.entries:
-                self.entries.remove(entry)
+        indices_to_remove.sort(reverse=True)
+        
+        # Remove entries from data structure (reverse order to maintain indices)
+        removed_count = 0
+        for index in indices_to_remove:
+            if 0 <= index < len(self.entries):
+                self.entries.pop(index)
+                removed_count += 1
                 
-            # Remove from type-specific lists
-            if entry['type'] == 'file':
-                if entry['path'] in self.selected_files:
-                    self.selected_files.remove(entry['path'])
-            else:  # folder
-                if entry['path'] in self.selected_folders:
-                    self.selected_folders.remove(entry['path'])
-                    
-            # Remove from entry map
-            if entry['id'] in self._entry_map:
-                del self._entry_map[entry['id']]
-                
-        # Remove from UI
-        for item in selected_items:
-            row = self.file_list.row(item)
-            self.file_list.takeItem(row)
+        # Clear and rebuild UI list to maintain correct indices
+        self.file_list.clear()
+        for i, entry in enumerate(self.entries):
+            if entry.type == 'file':
+                item = QListWidgetItem(f"📄 {entry.path.name}")
+            else:
+                file_count = entry.file_count or 0
+                item = QListWidgetItem(f"📁 {entry.path.name} ({file_count} files)")
             
-        logger.info(f"Removed {len(entries_to_remove)} items")
-        self.log_message.emit(f"Removed {len(entries_to_remove)} items")
+            item.setData(Qt.UserRole, i)
+            item.setToolTip(str(entry.path))
+            self.file_list.addItem(item)
+            
+        logger.info(f"Removed {removed_count} items")
+        self.log_message.emit(f"Removed {removed_count} items")
         self.files_changed.emit()
         self._update_ui_state()
         
@@ -247,11 +235,8 @@ class FilesPanel(QGroupBox):
         self.remove_selected()
         
     def clear_all(self):
-        """Clear all selections"""
+        """Clear all selections with simplified state"""
         self.entries.clear()
-        self.selected_files.clear()
-        self.selected_folders.clear()
-        self._entry_map.clear()
         self.file_list.clear()
         
         logger.info("Cleared all items")
@@ -260,7 +245,7 @@ class FilesPanel(QGroupBox):
         self._update_ui_state()
         
     def _update_ui_state(self):
-        """Update UI elements based on current state"""
+        """Update UI elements based on simplified state"""
         has_items = bool(self.entries)
         
         # Update button states
@@ -269,8 +254,8 @@ class FilesPanel(QGroupBox):
         self.clear_btn.setEnabled(has_items)
         
         # Update count label
-        file_count = len(self.selected_files)
-        folder_count = len(self.selected_folders)
+        file_count = len([e for e in self.entries if e.type == 'file'])
+        folder_count = len([e for e in self.entries if e.type == 'folder'])
         
         if file_count and folder_count:
             count_text = f"{file_count} files, {folder_count} folders"
@@ -284,18 +269,21 @@ class FilesPanel(QGroupBox):
         self.count_label.setText(count_text)
         
     def get_all_items(self) -> Tuple[List[Path], List[Path]]:
-        """Get all selected files and folders
+        """Get all selected files and folders with simplified state
         
         Returns:
             Tuple of (files list, folders list)
         """
         logger.debug(f"get_all_items called on FilesPanel {id(self)}")
-        logger.debug(f"selected_files: {self.selected_files}")
-        logger.debug(f"selected_folders: {self.selected_folders}")
         logger.debug(f"entries count: {len(self.entries)}")
         
-        # Return copies to prevent external modification
-        return self.selected_files.copy(), self.selected_folders.copy()
+        files = [entry.path for entry in self.entries if entry.type == 'file']
+        folders = [entry.path for entry in self.entries if entry.type == 'folder']
+        
+        logger.debug(f"files: {files}")
+        logger.debug(f"folders: {folders}")
+        
+        return files, folders
         
     def has_items(self) -> bool:
         """Check if any items are selected"""
@@ -307,12 +295,36 @@ class FilesPanel(QGroupBox):
         
     def get_file_count(self) -> int:
         """Get number of selected files"""
-        return len(self.selected_files)
+        return len([entry for entry in self.entries if entry.type == 'file'])
         
     def get_folder_count(self) -> int:
         """Get number of selected folders"""
-        return len(self.selected_folders)
+        return len([entry for entry in self.entries if entry.type == 'folder'])
         
     def clear(self):
         """Clear all selections (alias for clear_all)"""
         self.clear_all()
+        
+    # Additional interface methods for compatibility
+    def get_files(self) -> List[Path]:
+        """Get list of selected files"""
+        return [entry.path for entry in self.entries if entry.type == 'file']
+        
+    def get_folders(self) -> List[Path]:
+        """Get list of selected folders"""
+        return [entry.path for entry in self.entries if entry.type == 'folder']
+        
+    def has_files(self) -> bool:
+        """Check if any files are selected"""
+        return any(entry.type == 'file' for entry in self.entries)
+        
+    # Properties for backward compatibility (BatchTab direct access)
+    @property
+    def selected_files(self) -> List[Path]:
+        """Get selected files as property for backward compatibility"""
+        return [entry.path for entry in self.entries if entry.type == 'file']
+        
+    @property
+    def selected_folders(self) -> List[Path]:
+        """Get selected folders as property for backward compatibility"""
+        return [entry.path for entry in self.entries if entry.type == 'folder']
