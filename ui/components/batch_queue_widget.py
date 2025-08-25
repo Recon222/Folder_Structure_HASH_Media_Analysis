@@ -83,10 +83,6 @@ class BatchQueueWidget(QWidget):
         # Queue management buttons
         queue_controls = QHBoxLayout()
         
-        self.add_current_btn = QPushButton("Add Current Job")
-        self.add_current_btn.setToolTip("Add current form configuration as a new job")
-        queue_controls.addWidget(self.add_current_btn)
-        
         self.remove_btn = QPushButton("Remove Selected")
         self.remove_btn.setEnabled(False)
         queue_controls.addWidget(self.remove_btn)
@@ -199,7 +195,6 @@ class BatchQueueWidget(QWidget):
     def _connect_signals(self):
         """Connect widget signals"""
         # Button connections
-        self.add_current_btn.clicked.connect(self._add_current_job)
         self.remove_btn.clicked.connect(self._remove_selected_jobs)
         self.clear_btn.clicked.connect(self._clear_queue)
         self.save_queue_btn.clicked.connect(self._save_queue)
@@ -213,11 +208,6 @@ class BatchQueueWidget(QWidget):
         self.batch_queue.queue_changed.connect(self._refresh_table)
         self.batch_queue.job_added.connect(lambda job: self.log_message.emit(f"Added job: {job.job_name}"))
         self.batch_queue.job_removed.connect(lambda job_id: self.log_message.emit(f"Removed job: {job_id}"))
-        
-    def _add_current_job(self):
-        """Add current configuration as a new job - to be connected by parent"""
-        # This will be connected to a method in the parent that has access to current form data
-        pass
         
     def add_job_from_current(self, form_data, files: List[Path], folders: List[Path], 
                            output_directory: Path, template_type: str = "forensic"):
