@@ -241,10 +241,9 @@ class MainWindow(QMainWindow):
             perf_monitor
         )
         
-        # Connect signals
-        self.file_thread.progress.connect(self.update_progress)
-        self.file_thread.status.connect(self.log)
-        self.file_thread.finished.connect(self.on_operation_finished)
+        # Connect signals (nuclear migration: use unified signals)
+        self.file_thread.progress_update.connect(self.update_progress_with_status)
+        self.file_thread.result_ready.connect(self.on_operation_finished_result)
         
         # Disable UI and show progress
         self.process_btn.setEnabled(False)
@@ -256,6 +255,12 @@ class MainWindow(QMainWindow):
     def update_progress(self, value):
         """Update progress bar"""
         self.progress_bar.setValue(value)
+        
+    def update_progress_with_status(self, percentage, message):
+        """Update progress bar and log status (nuclear migration: unified signal handler)"""
+        self.progress_bar.setValue(percentage)
+        if message:
+            self.log(message)
         
     def on_operation_finished(self, success, message, results):
         """Handle operation completion"""
@@ -313,6 +318,37 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", message)
             
         self.log(message)
+    
+    def on_operation_finished_result(self, result):
+        """Handle operation completion using Result objects (nuclear migration)"""
+        from core.result_types import Result
+        
+        # Convert Result object to old format for compatibility with existing code
+        if result.success:
+            success = True
+            message = "Files copied successfully!"
+            
+            # Extract results from Result object
+            if hasattr(result, 'value') and result.value:
+                results = result.value
+            else:
+                results = {}
+                
+            # Add metadata to results if available
+            if hasattr(result, 'metadata') and result.metadata:
+                results.update(result.metadata)
+                
+        else:
+            success = False
+            # Get user-friendly message from error
+            if result.error and hasattr(result.error, 'user_message'):
+                message = result.error.user_message
+            else:
+                message = "Operation failed"
+            results = {}
+            
+        # Call the existing handler with converted data
+        self.on_operation_finished(success, message, results)
         
     def generate_reports(self):
         """Generate PDF reports and hash verification CSV based on user settings"""

@@ -386,6 +386,60 @@ class HashOperationResult(Result[Dict[str, Dict[str, Any]]]):
         )
 
 
+@dataclass
+class ArchiveOperationResult(Result[List[Path]]):
+    """
+    Archive operation results with compression information
+    
+    Used for ZIP creation and archive operations.
+    """
+    archives_created: int = 0
+    total_compressed_size: int = 0
+    original_size: int = 0
+    compression_level: int = 0
+    processing_time: float = 0.0
+    
+    @property
+    def compression_ratio(self) -> float:
+        """Calculate compression ratio as percentage"""
+        if self.original_size == 0:
+            return 0.0
+        return (self.total_compressed_size / self.original_size) * 100
+    
+    @classmethod
+    def create_successful(cls, created_archives: List[Path], 
+                         compression_level: int = 0, **kwargs) -> 'ArchiveOperationResult':
+        """Create successful archive operation result"""
+        
+        # Calculate archive statistics
+        total_compressed_size = 0
+        for archive_path in created_archives:
+            try:
+                if archive_path.exists():
+                    total_compressed_size += archive_path.stat().st_size
+            except:
+                pass  # Size calculation is optional
+        
+        return cls(
+            success=True,
+            value=created_archives,
+            archives_created=len(created_archives),
+            total_compressed_size=total_compressed_size,
+            compression_level=compression_level,
+            **kwargs
+        )
+    
+    @classmethod
+    def create_failed(cls, error, archives_created: int = 0, **kwargs) -> 'ArchiveOperationResult':
+        """Create failed archive operation result"""
+        return cls(
+            success=False,
+            error=error,
+            archives_created=archives_created,
+            **kwargs
+        )
+
+
 # Utility functions for common result operations
 
 def combine_results(results: List[Result[T]]) -> Result[List[T]]:
