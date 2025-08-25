@@ -227,6 +227,74 @@ class HashReportGenerator:
             logger.error(f"Failed to generate forensic-compatible CSV: {e}")
             return False
     
+    def generate_verification_csv_from_dict(self, 
+                                           verification_dict: Dict[str, Dict], 
+                                           output_path: Path, 
+                                           algorithm: str,
+                                           include_metadata: bool = True) -> bool:
+        """Generate CSV report for verification operation results from nuclear migration dictionary format
+        
+        Args:
+            verification_dict: Dictionary of verification results from nuclear migration
+            output_path: Path where CSV should be saved
+            algorithm: Hash algorithm used
+            include_metadata: Whether to include metadata header
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            with open(output_path, 'w', newline='', encoding='utf-8') as csvfile:
+                fieldnames = [
+                    'Source File Path',
+                    'Target File Path',
+                    f'Source Hash ({algorithm.upper()})',
+                    f'Target Hash ({algorithm.upper()})',
+                    'Verification Status',
+                    'Source Status',
+                    'Target Status',
+                    'Source Error',
+                    'Target Error'
+                ]
+                
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                
+                # Write metadata header if requested
+                if include_metadata:
+                    metadata_writer = csv.writer(csvfile)
+                    metadata_writer.writerow(['# Hash Verification Report Metadata'])
+                    metadata_writer.writerow([f'# Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'])
+                    metadata_writer.writerow([f'# Algorithm: {algorithm.upper()}'])
+                    metadata_writer.writerow([f'# Total Comparisons: {len(verification_dict)}'])
+                    matches = len([v for v in verification_dict.values() if v.get('match', False)])
+                    metadata_writer.writerow([f'# Matches: {matches}'])
+                    metadata_writer.writerow([f'# Mismatches: {len(verification_dict) - matches}'])
+                    metadata_writer.writerow([''])  # Empty line before data
+                
+                # Write header
+                writer.writeheader()
+                
+                # Write data rows
+                for verification_data in verification_dict.values():
+                    writer.writerow({
+                        'Source File Path': verification_data.get('source_path', ''),
+                        'Target File Path': verification_data.get('target_path', ''),
+                        f'Source Hash ({algorithm.upper()})': verification_data.get('source_hash', ''),
+                        f'Target Hash ({algorithm.upper()})': verification_data.get('target_hash', ''),
+                        'Verification Status': 'MATCH' if verification_data.get('match', False) else 'MISMATCH',
+                        'Source Status': 'SUCCESS' if verification_data.get('source_success', False) else 'FAILED',
+                        'Target Status': 'SUCCESS' if verification_data.get('target_success', False) else 'FAILED',
+                        'Source Error': verification_data.get('source_error', ''),
+                        'Target Error': verification_data.get('target_error', '')
+                    })
+            
+            logger.info(f"Generated verification CSV report: {output_path}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to generate verification CSV from dict: {e}")
+            return False
+
     def get_default_filename(self, operation_type: str, algorithm: str) -> str:
         """Get default filename for report
         

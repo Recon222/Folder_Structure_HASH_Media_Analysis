@@ -276,9 +276,12 @@ class HashingTab(QWidget):
             
             # Create and start worker
             worker = self.hash_controller.start_single_hash_operation(all_paths, algorithm)
-            worker.progress.connect(self.progress_bar.setValue)
-            worker.status.connect(self._log)
-            worker.finished.connect(self._on_single_hash_finished)
+            # Nuclear migration: Use unified signals
+            worker.progress_update.connect(lambda pct, msg: (
+                self.progress_bar.setValue(pct), 
+                self._log(msg) if not msg.startswith("Hashing") else None
+            ))
+            worker.result_ready.connect(self._on_single_hash_result)
             worker.start()
             
         except Exception as e:
@@ -315,9 +318,12 @@ class HashingTab(QWidget):
             
             # Create and start worker
             worker = self.hash_controller.start_verification_operation(source_paths, target_paths, algorithm)
-            worker.progress.connect(self.progress_bar.setValue)
-            worker.status.connect(self._log)
-            worker.finished.connect(self._on_verification_finished)
+            # Nuclear migration: Use unified signals
+            worker.progress_update.connect(lambda pct, msg: (
+                self.progress_bar.setValue(pct), 
+                self._log(msg) if not msg.startswith("Hashing") else None
+            ))
+            worker.result_ready.connect(self._on_verification_result)
             worker.start()
             
         except Exception as e:
@@ -377,6 +383,66 @@ class HashingTab(QWidget):
         else:
             self._log(f"Verification operation failed: {message}")
             QMessageBox.critical(self, "Operation Failed", f"Verification operation failed:\n{message}")
+            
+    def _on_single_hash_result(self, result):
+        """Handle single hash operation completion (nuclear migration)"""
+        from core.result_types import Result
+        
+        self._set_operation_active(False)
+        
+        if isinstance(result, Result):
+            if result.success:
+                self.current_single_results = result.value
+                self.export_single_csv_btn.setEnabled(True)
+                
+                # Log summary from HashOperationResult
+                if hasattr(result, 'files_hashed') and result.files_hashed > 0:
+                    self._log(f"Operation completed: {result.files_hashed} files processed")
+                    if hasattr(result, 'processing_time'):
+                        self._log(f"Processing time: {result.processing_time:.1f} seconds")
+                
+                message = "Single hash operation completed successfully!"
+                self._log(message)
+                QMessageBox.information(self, "Operation Complete", message)
+            else:
+                error_msg = result.error.user_message if result.error and hasattr(result.error, 'user_message') else "Hash operation failed"
+                self._log(f"Single hash operation failed: {error_msg}")
+                QMessageBox.critical(self, "Operation Failed", f"Hash operation failed:\n{error_msg}")
+        else:
+            # Fallback for unexpected result format
+            self._log("Single hash operation completed with unexpected result format")
+            QMessageBox.warning(self, "Operation Complete", "Hash operation completed but result format is unexpected")
+            
+    def _on_verification_result(self, result):
+        """Handle verification operation completion (nuclear migration)"""
+        from core.result_types import Result
+        
+        self._set_operation_active(False)
+        
+        if isinstance(result, Result):
+            if result.success:
+                self.current_verification_results = result.value
+                self.export_verification_csv_btn.setEnabled(True)
+                
+                # Log summary from HashOperationResult
+                if hasattr(result, 'files_hashed') and result.files_hashed > 0:
+                    self._log(f"Verification completed: {result.files_hashed} files processed")
+                    if hasattr(result, 'verification_failures') and result.verification_failures > 0:
+                        self._log(f"Mismatches: {result.verification_failures}")
+                    if hasattr(result, 'processing_time'):
+                        self._log(f"Processing time: {result.processing_time:.1f} seconds")
+                
+                message = "Verification operation completed successfully!"
+                self._log(message)
+                QMessageBox.information(self, "Verification Complete", message)
+            else:
+                error_msg = result.error.user_message if result.error and hasattr(result.error, 'user_message') else "Verification operation failed"
+                self._log(f"Verification operation failed: {error_msg}")
+                QMessageBox.critical(self, "Operation Failed", f"Verification operation failed:\n{error_msg}")
+        else:
+            # Fallback for unexpected result format
+            self._log("Verification operation completed with unexpected result format")
+            QMessageBox.warning(self, "Operation Complete", "Verification operation completed but result format is unexpected")
             
     def _export_single_hash_csv(self):
         """Export single hash results to CSV"""
@@ -438,8 +504,9 @@ class HashingTab(QWidget):
                 return
                 
             # Generate report
-            results = self.current_verification_results['verification_results']
-            success = self.report_generator.generate_verification_csv(
+            # With nuclear migration, verification results are in the result.value dict directly
+            results = self.current_verification_results
+            success = self.report_generator.generate_verification_csv_from_dict(
                 results, Path(filename), algorithm
             )
             
