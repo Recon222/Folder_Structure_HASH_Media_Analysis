@@ -67,7 +67,7 @@ class FilesPanel(QGroupBox):
         btn_layout = QHBoxLayout()
         
         # Button styling based on compact_buttons option
-        button_style = "QPushButton { padding: 4px 8px; }" if self.compact_buttons else ""
+        button_style = "QPushButton { padding: 6px 12px; min-width: 90px; }" if self.compact_buttons else ""
         
         self.add_files_btn = QPushButton("Add Files")
         if button_style:

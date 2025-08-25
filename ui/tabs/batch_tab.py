@@ -92,7 +92,7 @@ class BatchTab(QWidget):
                 background-color: #FF9800;
                 color: white;
                 font-weight: bold;
-                padding: 8px 16px;
+                padding: 8px 6px;
                 border: none;
                 border-radius: 4px;
             }
@@ -108,7 +108,7 @@ class BatchTab(QWidget):
                 background-color: #2196F3;
                 color: white;
                 font-weight: bold;
-                padding: 8px 16px;
+                padding: 8px 6px;
                 border: none;
                 border-radius: 4px;
             }
@@ -181,7 +181,7 @@ class BatchTab(QWidget):
                     background-color: #4CAF50;
                     color: white;
                     font-weight: bold;
-                    padding: 8px 16px;
+                    padding: 8px 6px;
                     border: none;
                     border-radius: 4px;
                 }
