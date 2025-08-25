@@ -236,29 +236,49 @@ class BatchProcessorThread(BaseWorkerThread):
         loop = QEventLoop()
         result_container = {'success': False, 'message': '', 'results': {}}
         
-        # Connect completion handler
-        def on_thread_finished(success: bool, message: str, results: Dict):
-            result_container.update({
-                'success': success,
-                'message': message, 
-                'results': results
-            })
+        # Connect completion handler (NUCLEAR MIGRATION: Use Result objects)
+        def on_thread_result(result):
+            """Handle nuclear migration Result object"""
+            from core.result_types import Result
+            
+            if isinstance(result, Result):
+                # Handle error message safely
+                if result.success:
+                    message = "Operation completed"
+                else:
+                    # Check if error has user_message attribute (FSAError object)
+                    if hasattr(result.error, 'user_message'):
+                        message = result.error.user_message
+                    elif hasattr(result.error, 'message'):
+                        message = result.error.message
+                    else:
+                        message = str(result.error) if result.error else "Operation failed"
+                
+                result_container.update({
+                    'success': result.success,
+                    'message': message,
+                    'results': result.value if result.value else {}
+                })
+            else:
+                # Fallback for unexpected result format
+                result_container.update({
+                    'success': False,
+                    'message': "Unexpected result format",
+                    'results': {}
+                })
             loop.quit()
         
-        # Connect progress forwarding - scale file progress to job level (0-80% of job)
-        def on_thread_progress(pct: int):
-            job_file_progress = int(pct * 0.8)
+        # Connect progress forwarding (NUCLEAR MIGRATION: Unified progress signal)
+        def on_thread_progress_update(percentage: int, status_message: str):
+            """Handle nuclear migration unified progress signal"""
+            # Scale file progress to job level (0-80% of job)
+            job_file_progress = int(percentage * 0.8)
             if self.current_job:
-                self.job_progress.emit(self.current_job.job_id, job_file_progress, f"Copying files... {pct}%")
-                
-        def on_thread_status(msg: str):
-            if self.current_job:
-                self.job_progress.emit(self.current_job.job_id, -1, msg)
+                self.job_progress.emit(self.current_job.job_id, job_file_progress, f"Copying files... {status_message}")
         
-        # Wire up signals
-        folder_thread.finished.connect(on_thread_finished)
-        folder_thread.progress.connect(on_thread_progress) 
-        folder_thread.status.connect(on_thread_status)
+        # Wire up NEW nuclear migration signals
+        folder_thread.result_ready.connect(on_thread_result)
+        folder_thread.progress_update.connect(on_thread_progress_update)
         
         # Handle cancellation and timeout
         def check_cancellation():
