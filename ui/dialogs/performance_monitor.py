@@ -14,13 +14,15 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel,
     QProgressBar, QTextEdit, QPushButton, QSplitter,
     QTabWidget, QWidget, QGridLayout, QDialogButtonBox,
-    QFileDialog, QMessageBox
+    QFileDialog
 )
 from PySide6.QtCore import Qt, QTimer, Signal, Slot, QThread
 from PySide6.QtGui import QPalette, QTextCursor, QFont
 
 from core.buffered_file_ops import PerformanceMetrics
 from core.settings_manager import SettingsManager
+from core.exceptions import UIError, ErrorSeverity
+from core.error_handler import handle_error
 
 
 class MetricsCollector(QThread):
@@ -378,8 +380,13 @@ class PerformanceMonitorDialog(QDialog):
     def generate_report(self):
         """Generate performance report"""
         if not self.current_metrics and not self.operation_history:
-            QMessageBox.information(self, "No Data", 
-                                  "No performance data available to generate report.")
+            error = UIError(
+                "No performance data available",
+                user_message="No performance data available to generate report.",
+                component="PerformanceMonitor",
+                severity=ErrorSeverity.INFO
+            )
+            handle_error(error, {'operation': 'report_generation_validation'})
             return
         
         # Ask user where to save report
@@ -398,11 +405,20 @@ class PerformanceMonitorDialog(QDialog):
         # Save report
         try:
             Path(file_path).write_text(report)
-            QMessageBox.information(self, "Report Saved", 
-                                  f"Performance report saved to:\n{file_path}")
+            success_error = UIError(
+                f"Performance report saved to {file_path}",
+                user_message=f"Performance report saved to:\n{file_path}",
+                component="PerformanceMonitor",
+                severity=ErrorSeverity.INFO
+            )
+            handle_error(success_error, {'operation': 'report_save_success', 'file_path': file_path})
         except Exception as e:
-            QMessageBox.critical(self, "Error", 
-                               f"Failed to save report:\n{str(e)}")
+            error = UIError(
+                f"Report save failed: {str(e)}",
+                user_message="Failed to save performance report. Please check folder permissions and try again.",
+                component="PerformanceMonitor"
+            )
+            handle_error(error, {'operation': 'report_save_error'})
     
     def _generate_report_content(self) -> str:
         """Generate detailed performance report content"""

@@ -10,13 +10,15 @@ from typing import List
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-    QSplitter, QGroupBox, QMessageBox, QFileDialog, QLabel,
+    QSplitter, QGroupBox, QFileDialog, QLabel,
     QComboBox
 )
 
 from core.models import FormData
 from ui.components import FormPanel, FilesPanel, LogConsole
 from ui.components.batch_queue_widget import BatchQueueWidget
+from core.exceptions import UIError, ErrorSeverity
+from core.error_handler import handle_error
 
 
 class BatchTab(QWidget):
@@ -217,27 +219,35 @@ class BatchTab(QWidget):
         # Validate form data
         errors = self.form_data.validate()
         if errors:
-            QMessageBox.warning(
-                self, "Validation Error", 
-                "Please fix the following errors before adding to queue:\n\n" + 
-                "\n".join(f"• {error}" for error in errors)
+            error = UIError(
+                f"Batch job validation failed: {', '.join(errors)}",
+                user_message="Please fix the following errors before adding to queue:\n\n" + "\n".join(f"• {error}" for error in errors),
+                component="BatchTab",
+                severity=ErrorSeverity.WARNING
             )
+            handle_error(error, {'operation': 'batch_job_validation', 'field_count': len(errors)})
             return
             
         # Validate files/folders
         if not self.files_panel.selected_files and not self.files_panel.selected_folders:
-            QMessageBox.warning(
-                self, "No Files Selected",
-                "Please select at least one file or folder to process."
+            error = UIError(
+                "No files selected for batch job",
+                user_message="Please select at least one file or folder to process.",
+                component="BatchTab",
+                severity=ErrorSeverity.WARNING
             )
+            handle_error(error, {'operation': 'batch_file_selection'})
             return
             
         # Check if output directory is set
         if not self.output_directory:
-            QMessageBox.warning(
-                self, "No Output Directory",
-                "Please set an output directory first using the 'Set Output Directory' button."
+            error = UIError(
+                "No output directory set for batch job",
+                user_message="Please set an output directory first using the 'Set Output Directory' button.",
+                component="BatchTab",
+                severity=ErrorSeverity.WARNING
             )
+            handle_error(error, {'operation': 'batch_output_directory'})
             return
             
         # Always use forensic mode
@@ -260,31 +270,37 @@ class BatchTab(QWidget):
         
     def _clear_form(self):
         """Clear the form and files"""
-        reply = QMessageBox.question(
-            self, "Clear Form",
-            "Clear all form data and selected files?",
-            QMessageBox.Yes | QMessageBox.No
-        )
+        # Nuclear migration: Convert to immediate action with success notification
+        # Clear form data using model method
+        self.form_data.clear()
         
-        if reply == QMessageBox.Yes:
-            # Clear form data using model method
-            self.form_data.clear()
+        # Refresh UI from cleared model
+        self.form_panel.load_from_data(self.form_data)
             
-            # Refresh UI from cleared model
-            self.form_panel.load_from_data(self.form_data)
-            
-            # Clear files
-            self.files_panel.clear()
-            
-            self.log_message.emit("Cleared form and file selection")
+        # Clear files
+        self.files_panel.clear()
+        
+        # Show success notification
+        success_error = UIError(
+            "Form and file selection cleared",
+            user_message="Form data and file selection have been cleared successfully.",
+            component="BatchTab",
+            severity=ErrorSeverity.INFO
+        )
+        handle_error(success_error, {'operation': 'clear_form'})
+        
+        self.log_message.emit("Cleared form and file selection")
             
     def _load_template(self):
         """Load a job template"""
         # TODO: Implement template loading functionality
-        QMessageBox.information(
-            self, "Load Template",
-            "Template loading functionality will be implemented in a future update."
+        error = UIError(
+            "Template loading not yet implemented",
+            user_message="Template loading functionality will be implemented in a future update.",
+            component="BatchTab",
+            severity=ErrorSeverity.INFO
         )
+        handle_error(error, {'operation': 'load_template_not_implemented'})
         
     def get_batch_queue_widget(self) -> BatchQueueWidget:
         """Get the batch queue widget"""

@@ -10,7 +10,7 @@ from typing import List, Optional, Dict, Any
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QSplitter,
-    QGroupBox, QComboBox, QLabel, QFileDialog, QMessageBox,
+    QGroupBox, QComboBox, QLabel, QFileDialog,
     QProgressBar, QFrame
 )
 
@@ -19,6 +19,8 @@ from core.settings_manager import settings
 from core.hash_reports import HashReportGenerator
 from core.logger import logger
 from ui.components import FilesPanel, LogConsole
+from core.exceptions import UIError, ErrorSeverity
+from core.error_handler import handle_error
 
 
 class HashingTab(QWidget):
@@ -264,7 +266,12 @@ class HashingTab(QWidget):
             all_paths = files + folders
             
             if not all_paths:
-                QMessageBox.warning(self, "No Files Selected", "Please select files or folders to hash.")
+                error = UIError(
+                    "No files selected for hash operation",
+                    user_message="Please select files or folders to hash before starting the operation.",
+                    component="HashingTab"
+                )
+                handle_error(error, {'operation': 'hash_file_selection'})
                 return
                 
             # Get algorithm
@@ -286,7 +293,12 @@ class HashingTab(QWidget):
             
         except Exception as e:
             self._log(f"Error starting single hash operation: {e}")
-            QMessageBox.critical(self, "Operation Error", f"Failed to start hash operation:\n{str(e)}")
+            error = UIError(
+                f"Hash operation startup failed: {str(e)}",
+                user_message="Failed to start hash operation. Please check the selected files and try again.",
+                component="HashingTab"
+            )
+            handle_error(error, {'operation': 'hash_start', 'algorithm': settings.hash_algorithm})
             self._set_operation_active(False)
             
     def _start_verification_operation(self):
@@ -301,11 +313,21 @@ class HashingTab(QWidget):
             target_paths = target_files + target_folders
             
             if not source_paths:
-                QMessageBox.warning(self, "No Source Files", "Please select source files or folders.")
+                error = UIError(
+                    "No source files selected for verification",
+                    user_message="Please select source files or folders for verification.",
+                    component="HashingTab"
+                )
+                handle_error(error, {'operation': 'verification_source_selection'})
                 return
                 
             if not target_paths:
-                QMessageBox.warning(self, "No Target Files", "Please select target files or folders.")
+                error = UIError(
+                    "No target files selected for verification",
+                    user_message="Please select target files or folders for verification.",
+                    component="HashingTab"
+                )
+                handle_error(error, {'operation': 'verification_target_selection'})
                 return
                 
             # Get algorithm
@@ -328,7 +350,12 @@ class HashingTab(QWidget):
             
         except Exception as e:
             self._log(f"Error starting verification operation: {e}")
-            QMessageBox.critical(self, "Operation Error", f"Failed to start verification operation:\n{str(e)}")
+            error = UIError(
+                f"Verification operation startup failed: {str(e)}",
+                user_message="Failed to start verification operation. Please check the selected files and try again.",
+                component="HashingTab"
+            )
+            handle_error(error, {'operation': 'verification_start', 'algorithm': settings.hash_algorithm})
             self._set_operation_active(False)
             
     def _on_single_hash_finished(self, success: bool, message: str, results: Optional[Dict]):
@@ -351,10 +378,21 @@ class HashingTab(QWidget):
                     self._log(f"Average speed: {summary['average_speed_mbps']:.1f} MB/s")
             
             self._log("Single hash operation completed successfully!")
-            QMessageBox.information(self, "Operation Complete", message)
+            success_error = UIError(
+                "Hash operation completed successfully",
+                user_message=message,
+                component="HashingTab",
+                severity=ErrorSeverity.INFO
+            )
+            handle_error(success_error, {'operation': 'hash_completion'})
         else:
             self._log(f"Single hash operation failed: {message}")
-            QMessageBox.critical(self, "Operation Failed", f"Hash operation failed:\n{message}")
+            error = UIError(
+                f"Hash operation failed: {message}",
+                user_message="Hash operation could not complete successfully. Please check the log for details.",
+                component="HashingTab"
+            )
+            handle_error(error, {'operation': 'hash_completion', 'severity': 'critical'})
             
     def _on_verification_finished(self, success: bool, message: str, results: Optional[Dict]):
         """Handle verification operation completion"""
@@ -379,10 +417,21 @@ class HashingTab(QWidget):
                     self._log(f"Average speed: {summary['average_speed_mbps']:.1f} MB/s")
                     
             self._log("Verification operation completed successfully!")
-            QMessageBox.information(self, "Verification Complete", message)
+            success_error = UIError(
+                "Verification operation completed successfully",
+                user_message=message,
+                component="HashingTab",
+                severity=ErrorSeverity.INFO
+            )
+            handle_error(success_error, {'operation': 'verification_completion'})
         else:
             self._log(f"Verification operation failed: {message}")
-            QMessageBox.critical(self, "Operation Failed", f"Verification operation failed:\n{message}")
+            error = UIError(
+                f"Verification operation failed: {message}",
+                user_message="Verification operation could not complete successfully. Please check the log for details.",
+                component="HashingTab"
+            )
+            handle_error(error, {'operation': 'verification_completion', 'severity': 'critical'})
             
     def _on_single_hash_result(self, result):
         """Handle single hash operation completion (nuclear migration)"""
@@ -403,15 +452,32 @@ class HashingTab(QWidget):
                 
                 message = "Single hash operation completed successfully!"
                 self._log(message)
-                QMessageBox.information(self, "Operation Complete", message)
+                success_error = UIError(
+                    "Hash operation completed successfully",
+                    user_message=message,
+                    component="HashingTab",
+                    severity=ErrorSeverity.INFO
+                )
+                handle_error(success_error, {'operation': 'hash_result_completion'})
             else:
                 error_msg = result.error.user_message if result.error and hasattr(result.error, 'user_message') else "Hash operation failed"
                 self._log(f"Single hash operation failed: {error_msg}")
-                QMessageBox.critical(self, "Operation Failed", f"Hash operation failed:\n{error_msg}")
+                error = UIError(
+                    f"Hash operation failed: {error_msg}",
+                    user_message="Hash operation encountered an error. Please check the log for details.",
+                    component="HashingTab"
+                )
+                handle_error(error, {'operation': 'hash_result_error'})
         else:
             # Fallback for unexpected result format
             self._log("Single hash operation completed with unexpected result format")
-            QMessageBox.warning(self, "Operation Complete", "Hash operation completed but result format is unexpected")
+            error = UIError(
+                "Hash operation completed with unexpected result format",
+                user_message="Hash operation completed but result format was unexpected. Results may not be available.",
+                component="HashingTab",
+                severity=ErrorSeverity.WARNING
+            )
+            handle_error(error, {'operation': 'hash_result_format'})
             
     def _on_verification_result(self, result):
         """Handle verification operation completion (nuclear migration)"""
@@ -434,20 +500,43 @@ class HashingTab(QWidget):
                 
                 message = "Verification operation completed successfully!"
                 self._log(message)
-                QMessageBox.information(self, "Verification Complete", message)
+                success_error = UIError(
+                    "Verification operation completed successfully",
+                    user_message=message,
+                    component="HashingTab",
+                    severity=ErrorSeverity.INFO
+                )
+                handle_error(success_error, {'operation': 'verification_completion'})
             else:
                 error_msg = result.error.user_message if result.error and hasattr(result.error, 'user_message') else "Verification operation failed"
                 self._log(f"Verification operation failed: {error_msg}")
-                QMessageBox.critical(self, "Operation Failed", f"Verification operation failed:\n{error_msg}")
+                error = UIError(
+                    f"Verification operation failed: {error_msg}",
+                    user_message="Verification operation encountered an error. Please check the log for details.",
+                    component="HashingTab"
+                )
+                handle_error(error, {'operation': 'verification_result_error'})
         else:
             # Fallback for unexpected result format
             self._log("Verification operation completed with unexpected result format")
-            QMessageBox.warning(self, "Operation Complete", "Verification operation completed but result format is unexpected")
+            error = UIError(
+                "Verification operation completed with unexpected result format",
+                user_message="Verification operation completed but result format was unexpected. Results may not be available.",
+                component="HashingTab",
+                severity=ErrorSeverity.WARNING
+            )
+            handle_error(error, {'operation': 'verification_result_format'})
             
     def _export_single_hash_csv(self):
         """Export single hash results to CSV"""
         if not self.current_single_results:
-            QMessageBox.warning(self, "No Results", "No hash results to export.")
+            error = UIError(
+                "No hash results available for export",
+                user_message="No hash results to export. Please run a hash operation first.",
+                component="HashingTab",
+                severity=ErrorSeverity.WARNING
+            )
+            handle_error(error, {'operation': 'export_validation'})
             return
             
         try:
@@ -473,19 +562,41 @@ class HashingTab(QWidget):
             
             if success:
                 self._log(f"Hash report exported to: {filename}")
-                QMessageBox.information(self, "Export Complete", f"Hash report saved to:\n{filename}")
+                success_error = UIError(
+                    f"Hash report exported successfully to {filename}",
+                    user_message=f"Hash report saved to:\n{filename}",
+                    component="HashingTab",
+                    severity=ErrorSeverity.INFO
+                )
+                handle_error(success_error, {'operation': 'hash_export_success', 'filename': filename})
             else:
                 self._log("Failed to export hash report")
-                QMessageBox.critical(self, "Export Failed", "Failed to export hash report.")
+                error = UIError(
+                    "Hash report export failed",
+                    user_message="Failed to export hash report. Please check folder permissions and try again.",
+                    component="HashingTab"
+                )
+                handle_error(error, {'operation': 'hash_export'})
                 
         except Exception as e:
             self._log(f"Error exporting hash report: {e}")
-            QMessageBox.critical(self, "Export Error", f"Error exporting report:\n{str(e)}")
+            error = UIError(
+                f"Hash report export error: {str(e)}",
+                user_message="Error occurred while exporting hash report. Please check permissions and try again.",
+                component="HashingTab"
+            )
+            handle_error(error, {'operation': 'hash_export_error'})
             
     def _export_verification_csv(self):
         """Export verification results to CSV"""
         if not self.current_verification_results:
-            QMessageBox.warning(self, "No Results", "No verification results to export.")
+            error = UIError(
+                "No verification results available for export",
+                user_message="No verification results to export. Please run a verification operation first.",
+                component="HashingTab",
+                severity=ErrorSeverity.WARNING
+            )
+            handle_error(error, {'operation': 'verification_export_validation'})
             return
             
         try:
@@ -512,14 +623,30 @@ class HashingTab(QWidget):
             
             if success:
                 self._log(f"Verification report exported to: {filename}")
-                QMessageBox.information(self, "Export Complete", f"Verification report saved to:\n{filename}")
+                success_error = UIError(
+                    f"Verification report exported successfully to {filename}",
+                    user_message=f"Verification report saved to:\n{filename}",
+                    component="HashingTab",
+                    severity=ErrorSeverity.INFO
+                )
+                handle_error(success_error, {'operation': 'verification_export_success', 'filename': filename})
             else:
                 self._log("Failed to export verification report")
-                QMessageBox.critical(self, "Export Failed", "Failed to export verification report.")
+                error = UIError(
+                    "Verification report export failed",
+                    user_message="Failed to export verification report. Please check folder permissions and try again.",
+                    component="HashingTab"
+                )
+                handle_error(error, {'operation': 'verification_export_failed'})
                 
         except Exception as e:
             self._log(f"Error exporting verification report: {e}")
-            QMessageBox.critical(self, "Export Error", f"Error exporting report:\n{str(e)}")
+            error = UIError(
+                f"Verification report export error: {str(e)}",
+                user_message="Error occurred while exporting verification report. Please check permissions and try again.",
+                component="HashingTab"
+            )
+            handle_error(error, {'operation': 'verification_export_error'})
             
     def _set_operation_active(self, active: bool):
         """Set operation active state and update UI"""

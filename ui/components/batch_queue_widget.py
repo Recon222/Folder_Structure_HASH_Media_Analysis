@@ -13,7 +13,7 @@ from PySide6.QtCore import Signal, Qt, QTimer
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
     QTableWidget, QTableWidgetItem, QPushButton, 
-    QProgressBar, QLabel, QMessageBox, QFileDialog,
+    QProgressBar, QLabel, QFileDialog,
     QHeaderView, QMenu, QSplitter, QTextEdit,
     QCheckBox, QComboBox
 )
@@ -23,6 +23,8 @@ from core.batch_queue import BatchQueue
 from core.models import BatchJob
 from core.workers.batch_processor import BatchProcessorThread
 from core.batch_recovery import BatchRecoveryManager
+from core.exceptions import UIError, ErrorSeverity
+from core.error_handler import handle_error
 
 
 class BatchQueueWidget(QWidget):
@@ -228,7 +230,13 @@ class BatchQueueWidget(QWidget):
             self.batch_queue.add_job(job)
             self.log_message.emit(f"Added job '{job.job_name}' to batch queue")
         except ValueError as e:
-            QMessageBox.warning(self, "Invalid Job", str(e))
+            error = UIError(
+                f"Invalid job: {str(e)}",
+                user_message=f"Cannot add job: {str(e)}",
+                component="BatchQueueWidget",
+                severity=ErrorSeverity.WARNING
+            )
+            handle_error(error, {'operation': 'add_job_validation'})
             
     def _remove_selected_jobs(self):
         """Remove selected jobs from queue"""
@@ -239,40 +247,54 @@ class BatchQueueWidget(QWidget):
         if not selected_rows:
             return
             
-        # Confirm deletion
+        # Nuclear migration: Convert to immediate action with warning notification
         count = len(selected_rows)
-        reply = QMessageBox.question(
-            self, "Remove Jobs",
-            f"Remove {count} job(s) from the queue?",
-            QMessageBox.Yes | QMessageBox.No
-        )
         
-        if reply == QMessageBox.Yes:
-            # Remove jobs (in reverse order to avoid index issues)
-            for row in sorted(selected_rows, reverse=True):
-                if row < len(self.batch_queue.jobs):
-                    job = self.batch_queue.jobs[row]
-                    self.batch_queue.remove_job(job.job_id)
+        # Remove jobs (in reverse order to avoid index issues)
+        for row in sorted(selected_rows, reverse=True):
+            if row < len(self.batch_queue.jobs):
+                job = self.batch_queue.jobs[row]
+                self.batch_queue.remove_job(job.job_id)
+        
+        # Show warning notification about the action taken
+        warning_error = UIError(
+            f"Removed {count} job(s) from queue",
+            user_message=f"Successfully removed {count} job(s) from the batch queue.",
+            component="BatchQueueWidget",
+            severity=ErrorSeverity.WARNING
+        )
+        handle_error(warning_error, {'operation': 'remove_jobs', 'count': count})
                     
     def _clear_queue(self):
         """Clear all jobs from queue"""
         if not self.batch_queue.jobs:
             return
-            
-        reply = QMessageBox.question(
-            self, "Clear Queue",
-            "Remove all jobs from the queue?",
-            QMessageBox.Yes | QMessageBox.No
-        )
         
-        if reply == QMessageBox.Yes:
-            self.batch_queue.clear_queue()
-            self.log_message.emit("Cleared batch queue")
+        # Nuclear migration: Convert to immediate action with warning notification
+        job_count = len(self.batch_queue.jobs)
+        self.batch_queue.clear_queue()
+        
+        # Show warning notification about the action taken
+        warning_error = UIError(
+            f"Cleared all {job_count} jobs from queue",
+            user_message=f"Successfully removed all {job_count} job(s) from the batch queue.",
+            component="BatchQueueWidget",
+            severity=ErrorSeverity.WARNING
+        )
+        handle_error(warning_error, {'operation': 'clear_queue', 'job_count': job_count})
+        
+        self.log_message.emit("Cleared batch queue")
             
     def _save_queue(self):
         """Save queue to file"""
         if not self.batch_queue.jobs:
-            QMessageBox.information(self, "Save Queue", "Queue is empty - nothing to save")
+            error = UIError(
+                "Queue is empty - nothing to save",
+                user_message="No jobs in queue to save.",
+                component="BatchQueueWidget",
+                severity=ErrorSeverity.INFO
+            )
+            handle_error(error, {'operation': 'save_queue_validation'})
             return
             
         file_path, _ = QFileDialog.getSaveFileName(
@@ -285,9 +307,20 @@ class BatchQueueWidget(QWidget):
             try:
                 self.batch_queue.save_to_file(Path(file_path))
                 self.log_message.emit(f"Saved batch queue to {file_path}")
-                QMessageBox.information(self, "Save Successful", f"Queue saved to:\n{file_path}")
+                success_error = UIError(
+                    f"Queue saved successfully to {file_path}",
+                    user_message=f"Queue saved to:\n{file_path}",
+                    component="BatchQueueWidget",
+                    severity=ErrorSeverity.INFO
+                )
+                handle_error(success_error, {'operation': 'save_queue_success', 'file_path': file_path})
             except Exception as e:
-                QMessageBox.critical(self, "Save Failed", f"Failed to save queue:\n{e}")
+                error = UIError(
+                    f"Queue save failed: {str(e)}",
+                    user_message="Failed to save queue. Please check folder permissions and try again.",
+                    component="BatchQueueWidget"
+                )
+                handle_error(error, {'operation': 'save_queue_error'})
                 
     def _load_queue(self):
         """Load queue from file"""
@@ -300,16 +333,32 @@ class BatchQueueWidget(QWidget):
             try:
                 self.batch_queue.load_from_file(Path(file_path))
                 self.log_message.emit(f"Loaded batch queue from {file_path}")
-                QMessageBox.information(self, "Load Successful", 
-                                      f"Loaded {len(self.batch_queue.jobs)} jobs from:\n{file_path}")
+                success_error = UIError(
+                    f"Queue loaded successfully: {len(self.batch_queue.jobs)} jobs from {file_path}",
+                    user_message=f"Loaded {len(self.batch_queue.jobs)} job(s) from:\n{file_path}",
+                    component="BatchQueueWidget",
+                    severity=ErrorSeverity.INFO
+                )
+                handle_error(success_error, {'operation': 'load_queue_success', 'job_count': len(self.batch_queue.jobs)})
             except Exception as e:
-                QMessageBox.critical(self, "Load Failed", f"Failed to load queue:\n{e}")
+                error = UIError(
+                    f"Queue load failed: {str(e)}",
+                    user_message="Failed to load queue file. Please check the file format and try again.",
+                    component="BatchQueueWidget"
+                )
+                handle_error(error, {'operation': 'load_queue_error'})
                 
     def _start_processing(self):
         """Start batch processing"""
         pending_jobs = self.batch_queue.get_pending_jobs()
         if not pending_jobs:
-            QMessageBox.information(self, "No Jobs", "No pending jobs to process")
+            error = UIError(
+                "No pending jobs to process",
+                user_message="No jobs in queue to process. Add some jobs first.",
+                component="BatchQueueWidget",
+                severity=ErrorSeverity.WARNING
+            )
+            handle_error(error, {'operation': 'process_validation'})
             return
             
         # Handle ZIP prompt before starting batch processing
@@ -326,13 +375,15 @@ class BatchQueueWidget(QWidget):
         validation = self.batch_queue.validate_all_jobs()
         if validation['invalid_jobs']:
             invalid_count = len(validation['invalid_jobs'])
-            reply = QMessageBox.question(
-                self, "Invalid Jobs Found",
-                f"{invalid_count} job(s) have validation errors. Continue with valid jobs only?",
-                QMessageBox.Yes | QMessageBox.No
+            
+            # Nuclear migration: Auto-proceed with valid jobs and show warning notification
+            warning_error = UIError(
+                f"Found {invalid_count} invalid job(s) - proceeding with valid jobs only",
+                user_message=f"Found {invalid_count} job(s) with validation errors. Processing will continue with valid jobs only. Check the log for details.",
+                component="BatchQueueWidget",
+                severity=ErrorSeverity.WARNING
             )
-            if reply == QMessageBox.No:
-                return
+            handle_error(warning_error, {'operation': 'batch_validation', 'invalid_count': invalid_count, 'valid_count': len(validation['valid_jobs'])})
                 
         # Create and start processor thread
         self.processor_thread = BatchProcessorThread(self.batch_queue, self.main_window)
@@ -364,15 +415,19 @@ class BatchQueueWidget(QWidget):
         if not self.processor_thread:
             return
             
-        reply = QMessageBox.question(
-            self, "Cancel Processing",
-            "Cancel batch processing? Current job will be marked as failed.",
-            QMessageBox.Yes | QMessageBox.No
-        )
+        # Nuclear migration: Convert to immediate action with warning notification
+        self.processor_thread.cancel()
         
-        if reply == QMessageBox.Yes:
-            self.processor_thread.cancel()
-            self.log_message.emit("Cancelled batch processing")
+        # Show warning notification about the cancellation
+        warning_error = UIError(
+            "Batch processing cancelled",
+            user_message="Batch processing has been cancelled. Current job will be marked as failed.",
+            component="BatchQueueWidget",
+            severity=ErrorSeverity.WARNING
+        )
+        handle_error(warning_error, {'operation': 'cancel_processing'})
+        
+        self.log_message.emit("Cancelled batch processing")
             
     def _connect_processor_signals(self):
         """Connect processor thread signals"""
@@ -433,7 +488,13 @@ class BatchQueueWidget(QWidget):
         message += f"Successful: {successful}\n"
         message += f"Failed: {failed}"
         
-        QMessageBox.information(self, "Batch Complete", message)
+        success_error = UIError(
+            message,
+            user_message=message,
+            component="BatchQueueWidget",
+            severity=ErrorSeverity.INFO
+        )
+        handle_error(success_error, {'operation': 'batch_completion', 'total': total, 'successful': successful, 'failed': failed})
         self.log_message.emit(f"Batch processing completed: {successful}/{total} successful")
         self.queue_status_changed.emit("Ready")
         
@@ -486,7 +547,13 @@ class BatchQueueWidget(QWidget):
     def _edit_selected_job(self):
         """Edit selected job"""
         # TODO: Implement job editing dialog
-        QMessageBox.information(self, "Edit Job", "Job editing not yet implemented")
+        error = UIError(
+            "Job editing not yet implemented",
+            user_message="Job editing feature is not yet available.",
+            component="BatchQueueWidget",
+            severity=ErrorSeverity.INFO
+        )
+        handle_error(error, {'operation': 'edit_job_not_implemented'})
         
     def _duplicate_selected_job(self):
         """Duplicate selected job"""
@@ -527,7 +594,13 @@ class BatchQueueWidget(QWidget):
             if job.error_message:
                 details += f"Error: {job.error_message}\n"
                 
-            QMessageBox.information(self, "Job Details", details)
+            success_error = UIError(
+                "Job details requested",
+                user_message=details,
+                component="BatchQueueWidget",
+                severity=ErrorSeverity.INFO
+            )
+            handle_error(success_error, {'operation': 'job_details_display'})
             
     def _refresh_table(self):
         """Refresh the queue table"""

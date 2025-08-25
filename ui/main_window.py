@@ -13,7 +13,7 @@ from PySide6.QtCore import Qt, QDateTime, QTimer
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QMainWindow, QTabWidget, QVBoxLayout, QWidget,
-    QProgressBar, QStatusBar, QFileDialog, QMessageBox,
+    QProgressBar, QStatusBar, QFileDialog,
     QSplitter, QHBoxLayout, QDialog, QDialogButtonBox,
     QGroupBox, QComboBox, QCheckBox, QPushButton, QLabel
 )
@@ -27,6 +27,8 @@ from core.workers import FolderStructureThread
 from core.workers.zip_operations import ZipOperationThread
 from ui.components import FormPanel, FilesPanel, LogConsole
 from ui.components.error_notification_system import ErrorNotificationManager
+from core.exceptions import UIError, ErrorSeverity
+from core.error_handler import handle_error
 from ui.styles import CarolinaBlueTheme
 from ui.dialogs import ZipSettingsDialog, AboutDialog, UserSettingsDialog
 from ui.dialogs.zip_prompt import ZipPromptDialog
@@ -215,7 +217,12 @@ class MainWindow(QMainWindow):
         # Validate form
         errors = self.form_data.validate()
         if errors:
-            QMessageBox.warning(self, "Validation Error", "\n".join(errors))
+            error = UIError(
+                f"Form validation failed: {', '.join(errors)}", 
+                user_message=f"Please correct the following errors:\n\n• " + "\n• ".join(errors),
+                component="MainWindow"
+            )
+            handle_error(error, {'operation': 'form_validation', 'field_count': len(errors)})
             return
             
         # Get files
@@ -226,7 +233,12 @@ class MainWindow(QMainWindow):
         logger.debug(f"Retrieved folders: {folders}")
         
         if not files and not folders:
-            QMessageBox.warning(self, "No Files", "Please select files or folders to process")
+            error = UIError(
+                "No files selected for processing",
+                user_message="Please select files or folders to process before starting the operation.",
+                component="MainWindow"
+            )
+            handle_error(error, {'operation': 'file_selection_validation'})
             return
             
         # Handle ZIP prompt BEFORE starting any operations
@@ -340,9 +352,25 @@ class MainWindow(QMainWindow):
                 self.log("Generating documentation...")
                 self.generate_reports()
             
-            QMessageBox.information(self, "Success", completion_message)
+            # Nuclear migration: Convert success dialog to non-blocking notification  
+            success_error = UIError(
+                f"Forensic processing completed successfully",
+                user_message=completion_message,
+                component="MainWindow",
+                severity=ErrorSeverity.INFO
+            )
+            handle_error(success_error, {
+                'operation': 'forensic_completion', 
+                'files_processed': performance_stats.get('files_processed', 0) if performance_stats else 0,
+                'performance_included': bool(performance_stats)
+            })
         else:
-            QMessageBox.critical(self, "Error", message)
+            error = UIError(
+                f"Operation failed: {message}",
+                user_message=f"The operation could not be completed:\n\n{message}",
+                component="MainWindow"
+            )
+            handle_error(error, {'operation': 'forensic_file_processing', 'severity': 'critical'})
             
         self.log(message)
     
@@ -438,7 +466,12 @@ class MainWindow(QMainWindow):
                                   
                                   
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to generate reports: {str(e)}")
+            error = UIError(
+                f"Report generation failed: {str(e)}",
+                user_message="Failed to generate reports. Please check permissions and try again.",
+                component="MainWindow"
+            )
+            handle_error(error, {'operation': 'report_generation', 'severity': 'critical'})
             
     def create_zip_archives(self, base_path: Path):
         """Create ZIP archives using ZipController"""
@@ -468,7 +501,12 @@ class MainWindow(QMainWindow):
             
         except Exception as e:
             self.progress_bar.setVisible(False)
-            QMessageBox.critical(self, "ZIP Error", f"Failed to start ZIP: {str(e)}")
+            error = UIError(
+                f"ZIP creation failed to start: {str(e)}",
+                user_message="Failed to start ZIP archive creation. Please check available disk space and try again.",
+                component="MainWindow"
+            )
+            handle_error(error, {'operation': 'zip_start', 'severity': 'critical'})
     
     def on_zip_finished_result(self, result):
         """Handle ZIP operation completion with Result object (nuclear migration)"""
@@ -540,12 +578,18 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'output_directory'):
             message_parts.append(f"\nOutput location:\n{self.output_directory}")
         
-        # Show the single completion dialog
-        QMessageBox.information(
-            self,
-            "Process Complete",
-            "\n".join(message_parts)
+        # Nuclear migration: Convert completion dialog to non-blocking notification
+        success_error = UIError(
+            "Processing completed successfully",
+            user_message="\\n".join(message_parts),
+            component="MainWindow",
+            severity=ErrorSeverity.INFO
         )
+        handle_error(success_error, {
+            'operation': 'process_completion',
+            'report_count': report_count if hasattr(self, 'report_count') else 0,
+            'zip_count': len(self.zip_archives_created) if hasattr(self, 'zip_archives_created') and self.zip_archives_created else 0
+        })
         
         # Clean up temporary attributes
         if hasattr(self, 'zip_archives_created'):
@@ -585,7 +629,12 @@ class MainWindow(QMainWindow):
                     self.form_panel.load_from_data(self.form_data)
                 self.log(f"Loaded data from {Path(file).name}")
             except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to load JSON: {str(e)}")
+                error = UIError(
+                    f"JSON loading failed: {str(e)}",
+                    user_message="Failed to load JSON file. Please check the file format and try again.",
+                    component="MainWindow"
+                )
+                handle_error(error, {'operation': 'json_load', 'file_path': file})
                 
     def save_json(self):
         """Save form data to JSON"""
@@ -596,7 +645,12 @@ class MainWindow(QMainWindow):
                     json.dump(self.form_data.to_dict(), f, indent=2)
                 self.log(f"Saved data to {Path(file).name}")
             except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to save JSON: {str(e)}")
+                error = UIError(
+                    f"JSON saving failed: {str(e)}",
+                    user_message="Failed to save JSON file. Please check folder permissions and try again.",
+                    component="MainWindow"
+                )
+                handle_error(error, {'operation': 'json_save', 'file_path': file})
                 
     def show_user_settings(self):
         """Show user settings dialog"""
@@ -672,28 +726,18 @@ class MainWindow(QMainWindow):
                 if current_op:
                     threads_to_stop.append(('Hash operations', current_op))
         
-        # If there are active operations, ask user for confirmation
+        # If there are active operations, show warning and proceed with graceful shutdown
         if threads_to_stop:
-            # Check if user wants confirmation (from settings)
-            if self.settings.get('CONFIRM_EXIT', True):
-                thread_names = [name for name, _ in threads_to_stop]
-                message = (
-                    f"The following operations are still running:\n"
-                    f"• {chr(10).join('• ' + name for name in thread_names)}\n\n"
-                    f"Do you want to cancel them and exit?"
-                )
-                
-                reply = QMessageBox.question(
-                    self,
-                    "Active Operations",
-                    message,
-                    QMessageBox.Yes | QMessageBox.No,
-                    QMessageBox.No  # Default to No for safety
-                )
-                
-                if reply == QMessageBox.No:
-                    event.ignore()
-                    return
+            thread_names = [name for name, _ in threads_to_stop]
+            
+            # Nuclear migration: Auto-proceed with graceful shutdown and show warning
+            warning_error = UIError(
+                f"Closing application with {len(threads_to_stop)} active operation(s)",
+                user_message=f"The following operations will be cancelled:\n\n• " + "\n• ".join(thread_names) + "\n\nShutting down gracefully...",
+                component="MainWindow",
+                severity=ErrorSeverity.WARNING
+            )
+            handle_error(warning_error, {'operation': 'app_exit_with_active_threads', 'thread_count': len(threads_to_stop)})
             
             # User confirmed or confirmation disabled - proceed with cleanup
             logger.info(f"Shutting down with {len(threads_to_stop)} active threads")

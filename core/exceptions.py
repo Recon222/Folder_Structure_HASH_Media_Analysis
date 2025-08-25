@@ -320,14 +320,18 @@ class UIError(FSAError):
         Args:
             message: Technical error message
             component: UI component that caused the error
-            **kwargs: Additional FSAError arguments
+            **kwargs: Additional FSAError arguments (including severity)
         """
         context = kwargs.get('context', {})
         if component:
             context['ui_component'] = component
         kwargs['context'] = context
         
-        super().__init__(message, severity=ErrorSeverity.WARNING, **kwargs)
+        # Default to WARNING severity if not specified
+        if 'severity' not in kwargs:
+            kwargs['severity'] = ErrorSeverity.WARNING
+        
+        super().__init__(message, **kwargs)
     
     def _generate_user_message(self) -> str:
         return "Interface error occurred. Please try the operation again."
