@@ -218,14 +218,20 @@ class ForensicPathBuilder:
         location_part = sanitizer.sanitize_component(location_part, platform_type)
         
         # Helper function to convert to military date format
-        def to_military_format(qdt):
-            """Convert QDateTime to military format: DDMMMYY_HHMM"""
-            if not qdt:
+        def to_military_format(dt):
+            """Convert datetime or QDateTime to military format: DDMMMYY_HHMM"""
+            if not dt:
                 return ""
             months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN',
                      'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC']
-            month_idx = qdt.date().month() - 1
-            return f"{qdt.date().day()}{months[month_idx]}{qdt.toString('yy')}_{qdt.toString('HHmm')}"
+            
+            # Handle both QDateTime and regular datetime objects
+            if hasattr(dt, 'toString'):  # QDateTime
+                month_idx = dt.date().month() - 1
+                return f"{dt.date().day()}{months[month_idx]}{dt.toString('yy')}_{dt.toString('HHmm')}"
+            else:  # Regular datetime
+                month_idx = dt.month - 1
+                return f"{dt.day}{months[month_idx]}{dt.strftime('%y')}_{dt.strftime('%H%M')}"
         
         # Build date range component
         if hasattr(form_data, 'video_start_datetime') and form_data.video_start_datetime:

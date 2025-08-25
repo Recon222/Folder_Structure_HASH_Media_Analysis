@@ -5,10 +5,9 @@ Folder controller - handles folder structure operations
 """
 
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
 from core.models import FormData
-from core.templates import FolderTemplate, FolderBuilder
 from core.path_utils import ForensicPathBuilder
 
 
@@ -30,8 +29,3 @@ class FolderController:
         if not base_path:
             base_path = Path.cwd()
         return ForensicPathBuilder.create_forensic_structure(base_path, form_data)
-            
-    @staticmethod
-    def get_preset_templates() -> List[FolderTemplate]:
-        """Get available preset templates"""
-        return FolderBuilder.get_preset_templates()

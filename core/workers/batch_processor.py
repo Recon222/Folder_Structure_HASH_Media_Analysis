@@ -13,7 +13,6 @@ from PySide6.QtCore import QThread, Signal, QEventLoop, QTimer
 
 from ..batch_queue import BatchQueue
 from ..models import BatchJob
-from ..templates import FolderBuilder
 from .folder_operations import FolderStructureThread
 from ..path_utils import ForensicPathBuilder
 from ..settings_manager import settings

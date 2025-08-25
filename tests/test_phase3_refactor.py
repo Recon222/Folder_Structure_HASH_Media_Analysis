@@ -11,7 +11,6 @@ from pathlib import Path
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from core.templates import FolderTemplate, FolderBuilder
 from core.path_utils import ForensicPathBuilder, PathSanitizer
 from core.models import FormData
 from controllers.file_controller import FileController
@@ -20,19 +19,17 @@ from datetime import datetime
 from PySide6.QtCore import QDateTime
 
 
-def test_sanitize_path_part():
-    """Test that _sanitize_path_part is now a static method"""
-    print("Testing _sanitize_path_part as static method...")
+def test_templates_system_removed():
+    """Test that templates system is no longer available"""
+    print("Testing templates system removal...")
     
-    # Test direct static call
-    result = FolderTemplate._sanitize_path_part("test<>invalid:chars")
-    assert result == "test__invalid_chars", f"Expected 'test__invalid_chars', got '{result}'"
-    
-    # Test with spaces and dots
-    result = FolderTemplate._sanitize_path_part("  test.  ")
-    assert result == "test", f"Expected 'test', got '{result}'"
-    
-    print("[OK] _sanitize_path_part works as static method")
+    try:
+        from core.templates import FolderTemplate
+        assert False, "Templates system should be removed"
+    except ImportError:
+        print("[OK] Templates system successfully removed")
+    except ModuleNotFoundError:
+        print("[OK] Templates system successfully removed")
 
 
 def test_forensic_path_builder():
@@ -127,7 +124,7 @@ def main():
     print("="*60)
     
     try:
-        test_sanitize_path_part()
+        test_templates_system_removed()
         test_forensic_path_builder()
         test_controller_consolidation()
         test_path_sanitizer()
