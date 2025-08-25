@@ -72,17 +72,12 @@ class ReportController:
         if self.zip_controller:
             return self.zip_controller.get_zip_settings()
         
-        # Fallback to legacy settings for backward compatibility
-        settings = ZipSettings()
-        settings.compression_level = self.settings.get(
-            'ZIP_COMPRESSION_LEVEL', 
-            zipfile.ZIP_STORED
+        # If no zip_controller, ZIP creation should be disabled
+        # This prevents duplicate ZIP creation from legacy code paths
+        raise RuntimeError(
+            "ZIP creation requires zip_controller. "
+            "Use zip_controller.create_zip_thread() instead of report_controller.create_zip_archives()"
         )
-        # Legacy fallback - assume root level if no controller
-        settings.create_at_root = True
-        settings.create_at_location = False
-        settings.create_at_datetime = False
-        return settings
         
     def create_zip_archives(
         self,

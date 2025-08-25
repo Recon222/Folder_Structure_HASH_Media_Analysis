@@ -431,10 +431,9 @@ class MainWindow(QMainWindow):
                 self.form_data
             )
             
-            # Connect signals
-            self.zip_thread.progress.connect(self.progress_bar.setValue)
-            self.zip_thread.status.connect(self.log)
-            self.zip_thread.finished.connect(self.on_zip_finished)
+            # Connect signals (nuclear migration: use unified signals)
+            self.zip_thread.progress_update.connect(self.update_progress_with_status)
+            self.zip_thread.result_ready.connect(self.on_zip_finished_result)
             
             # Show progress and start
             self.progress_bar.setVisible(True)
@@ -444,6 +443,32 @@ class MainWindow(QMainWindow):
             self.progress_bar.setVisible(False)
             QMessageBox.critical(self, "ZIP Error", f"Failed to start ZIP: {str(e)}")
     
+    def on_zip_finished_result(self, result):
+        """Handle ZIP operation completion with Result object (nuclear migration)"""
+        from core.result_types import Result
+        
+        self.progress_bar.setVisible(False)
+        
+        if isinstance(result, Result):
+            if result.success:
+                # Extract archives from ArchiveOperationResult
+                created_archives = result.value if result.value else []
+                self.log(f"Created {len(created_archives)} ZIP archive(s)")
+                # Store ZIP results for final summary
+                self.zip_archives_created = created_archives
+                # Show final completion message that includes everything
+                self.show_final_completion_message()
+            else:
+                # Handle error result
+                error_msg = result.error.user_message if result.error else "ZIP creation failed"
+                self.log(f"ZIP creation failed: {error_msg}")
+                # Still show completion message for consistency
+                self.show_final_completion_message()
+        else:
+            # Fallback for unexpected result types
+            self.log("ZIP operation completed with unknown result format")
+            self.show_final_completion_message()
+
     def on_zip_finished(self, success: bool, message: str, created_archives: List[Path]):
         """Handle ZIP operation completion"""
         self.progress_bar.setVisible(False)

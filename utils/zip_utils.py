@@ -74,7 +74,7 @@ class ZipUtility:
                         
                     # Calculate relative path
                     if source_path.is_dir():
-                        arcname = file.relative_to(source_path.parent)
+                        arcname = file.relative_to(source_path)
                     else:
                         arcname = file.name
                         
