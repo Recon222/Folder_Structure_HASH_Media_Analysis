@@ -19,6 +19,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from core.settings_manager import SettingsManager
 from core.logger import logger
+from core.result_types import Result, FileOperationResult
+from core.exceptions import FileOperationError, HashVerificationError
 
 # Try to import hashwise for accelerated parallel hashing
 try:
@@ -77,16 +79,19 @@ class BufferedFileOperations:
     LARGE_FILE_THRESHOLD = 100_000_000    # 100MB - use large buffers
     
     def __init__(self, progress_callback: Optional[Callable[[int, str], None]] = None,
-                 metrics_callback: Optional[Callable[[PerformanceMetrics], None]] = None):
+                 metrics_callback: Optional[Callable[[PerformanceMetrics], None]] = None,
+                 cancelled_check: Optional[Callable[[], bool]] = None):
         """
         Initialize with optional callbacks
         
         Args:
             progress_callback: Function that receives (progress_pct, status_message)
             metrics_callback: Function that receives PerformanceMetrics updates
+            cancelled_check: Function that returns True if operation should be cancelled
         """
         self.progress_callback = progress_callback
         self.metrics_callback = metrics_callback
+        self.cancelled_check = cancelled_check
         self.cancelled = False
         self.cancel_event = Event()
         self.settings = SettingsManager()
@@ -94,7 +99,7 @@ class BufferedFileOperations:
         
     def copy_file_buffered(self, source: Path, dest: Path, 
                           buffer_size: Optional[int] = None,
-                          calculate_hash: bool = True) -> Dict:
+                          calculate_hash: bool = True) -> Result[Dict]:
         """
         Copy a single file with intelligent buffering based on file size
         
@@ -105,8 +110,23 @@ class BufferedFileOperations:
             calculate_hash: Whether to calculate SHA-256 hash
             
         Returns:
-            Dict with copy results and metrics
+            Result[Dict] with copy results and metrics, or error information
         """
+        # Input validation
+        if not source or not source.exists():
+            error = FileOperationError(
+                f"Source file does not exist: {source}",
+                user_message="Source file not found. Please check the file path."
+            )
+            return Result.error(error)
+            
+        if not dest:
+            error = FileOperationError(
+                "Destination path not provided",
+                user_message="Destination path is required for file copy operation."
+            )
+            return Result.error(error)
+        
         # Get buffer size from settings (convert from KB to bytes)
         if buffer_size is None:
             buffer_size_kb = self.settings.copy_buffer_size  # Already clamped 8KB-10MB
@@ -117,7 +137,14 @@ class BufferedFileOperations:
         
         logger.info(f"[BUFFERED OPS] Copying {source.name} with buffer size {buffer_size/1024:.0f}KB")
         
-        file_size = source.stat().st_size
+        try:
+            file_size = source.stat().st_size
+        except OSError as e:
+            error = FileOperationError(
+                f"Cannot access source file {source}: {e}",
+                user_message="Cannot access source file. Please check file permissions."
+            )
+            return Result.error(error)
         result = {
             'source_path': str(source),
             'dest_path': str(dest),
@@ -167,7 +194,19 @@ class BufferedFileOperations:
             if calculate_hash:
                 dest_hash = self._calculate_hash_streaming(dest, buffer_size)
                 result['dest_hash'] = dest_hash
-                result['verified'] = source_hash == dest_hash
+                hash_match = source_hash == dest_hash
+                result['verified'] = hash_match
+                
+                # Handle hash verification failure
+                if not hash_match:
+                    error = HashVerificationError(
+                        f"Hash verification failed for {source}: source={source_hash}, dest={dest_hash}",
+                        user_message="File integrity check failed. The copied file may be corrupted.",
+                        file_path=str(dest),
+                        expected_hash=source_hash,
+                        actual_hash=dest_hash
+                    )
+                    return Result.error(error)
             else:
                 result['verified'] = True
             
@@ -189,14 +228,31 @@ class BufferedFileOperations:
             # Note: We don't update files_processed here since this is for a single file
             # The calling code should handle file counting
             
-            return result
+            return Result.success(result)
+            
+        except PermissionError as e:
+            error = FileOperationError(
+                f"Permission denied copying {source} to {dest}: {e}",
+                user_message="Cannot copy file due to permission restrictions. Please check folder permissions."
+            )
+            self.metrics.errors.append(f"{source.name}: Permission denied")
+            return Result.error(error)
+            
+        except OSError as e:
+            error = FileOperationError(
+                f"File system error copying {source} to {dest}: {e}",
+                user_message="File copy failed due to a file system error. Please check available disk space."
+            )
+            self.metrics.errors.append(f"{source.name}: {str(e)}")
+            return Result.error(error)
             
         except Exception as e:
-            result['error'] = str(e)
-            result['success'] = False
-            logger.error(f"Buffered copy failed for {source}: {e}")
+            error = FileOperationError(
+                f"Unexpected error copying {source} to {dest}: {e}",
+                user_message="An unexpected error occurred during file copying."
+            )
             self.metrics.errors.append(f"{source.name}: {str(e)}")
-            return result
+            return Result.error(error)
     
     def _stream_copy(self, source: Path, dest: Path, buffer_size: int, total_size: int) -> int:
         """
@@ -282,14 +338,14 @@ class BufferedFileOperations:
                     break
                 hash_obj.update(chunk)
                 
-                # Check cancellation
-                if self.cancelled:
+                # Check cancellation (support both internal flag and external check)
+                if self.cancelled or (self.cancelled_check and self.cancelled_check()):
                     raise InterruptedError("Hash calculation cancelled")
         
         return hash_obj.hexdigest()
     
     def copy_files(self, files: List[Path], destination: Path,
-                   calculate_hash: bool = True) -> Dict[str, Dict]:
+                   calculate_hash: bool = True) -> FileOperationResult:
         """
         Copy multiple files with buffering and detailed metrics
         
@@ -299,44 +355,95 @@ class BufferedFileOperations:
             calculate_hash: Whether to calculate hashes
             
         Returns:
-            Dict with results and performance metrics
+            FileOperationResult with results and performance metrics
         """
+        # Input validation
+        if not files:
+            error = FileOperationError(
+                "No files provided for copy operation",
+                user_message="Please select files to copy."
+            )
+            return FileOperationResult.error(error)
+            
+        if not destination:
+            error = FileOperationError(
+                "Destination path not provided",
+                user_message="Destination directory is required for file copy operation."
+            )
+            return FileOperationResult.error(error)
+        
         # Initialize metrics
+        try:
+            total_size = sum(f.stat().st_size for f in files if f.exists())
+        except OSError as e:
+            error = FileOperationError(
+                f"Cannot access file size information: {e}",
+                user_message="Cannot access some files. Please check file permissions."
+            )
+            return FileOperationResult.error(error)
+            
         self.metrics = PerformanceMetrics(
             start_time=time.time(),
             total_files=len(files),
-            total_bytes=sum(f.stat().st_size for f in files if f.exists()),
+            total_bytes=total_size,
             buffer_size_used=self.settings.copy_buffer_size * 1024,
             operation_type="buffered"
         )
         
         results = {}
-        destination.mkdir(parents=True, exist_ok=True)
+        
+        # Create destination directory
+        try:
+            destination.mkdir(parents=True, exist_ok=True)
+        except PermissionError as e:
+            error = FileOperationError(
+                f"Cannot create destination directory {destination}: {e}",
+                user_message="Cannot create destination directory. Please check folder permissions."
+            )
+            return FileOperationResult.error(error)
         
         for idx, file in enumerate(files):
-            if self.cancelled:
+            if self.cancelled or (self.cancelled_check and self.cancelled_check()):
                 break
             
             if not file.exists():
+                # Track skipped files
+                results[file.name] = {
+                    'success': False,
+                    'error': f"File does not exist: {file}",
+                    'source_path': str(file),
+                    'skipped': True
+                }
                 continue
             
             # Copy with buffering
             dest_file = destination / file.name
-            result = self.copy_file_buffered(
+            copy_result = self.copy_file_buffered(
                 file, 
                 dest_file,
                 calculate_hash=calculate_hash
             )
             
-            # Store result
-            results[file.name] = result
-            
-            # Update metrics - only increment on success
-            if result.get('success'):
+            # Handle Result object from copy_file_buffered
+            if copy_result.success:
+                # Store the successful result data
+                result_data = copy_result.value
+                result_data['success'] = True
+                results[file.name] = result_data
+                
+                # Update metrics
                 self.metrics.files_processed += 1
-                # Also accumulate the bytes from this file
-                if 'bytes_copied' in result:
-                    self.metrics.bytes_copied += result['bytes_copied']
+                if 'bytes_copied' in result_data:
+                    self.metrics.bytes_copied += result_data['bytes_copied']
+            else:
+                # Store error result
+                results[file.name] = {
+                    'success': False,
+                    'error': str(copy_result.error),
+                    'source_path': str(file),
+                    'dest_path': str(dest_file)
+                }
+                self.metrics.errors.append(f"{file.name}: {copy_result.error}")
             
             # Overall progress
             overall_progress = int((self.metrics.bytes_copied / self.metrics.total_bytes * 100)) \
@@ -371,7 +478,12 @@ class BufferedFileOperations:
             f"{self.metrics.average_speed_mbps:.1f} MB/s avg"
         )
         
-        return results
+        # Create FileOperationResult
+        return FileOperationResult.create(
+            results,
+            files_processed=self.metrics.files_processed,
+            bytes_processed=self.metrics.bytes_copied
+        )
     
     def _report_progress(self, percentage: int, message: str):
         """Report progress if callback is available"""

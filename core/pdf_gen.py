@@ -257,6 +257,14 @@ class PDFGenerator:
                 writer.writeheader()
                 
                 for filename, data in file_results.items():
+                    # Skip non-dict entries (like _performance_stats or other metadata)
+                    if not isinstance(data, dict):
+                        continue
+                        
+                    # Skip entries that don't have file data
+                    if 'source_path' not in data and 'dest_path' not in data:
+                        continue
+                        
                     writer.writerow({
                         'Filename': filename,
                         'Source Path': data.get('source_path', ''),

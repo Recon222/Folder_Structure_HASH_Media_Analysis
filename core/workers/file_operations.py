@@ -88,7 +88,7 @@ class FileOperationThread(FileWorkerThread):
             # Execute file copying operation
             self.emit_progress(10, "Starting file copy operation...")
             
-            raw_results = self.file_ops.copy_files(
+            file_op_result = self.file_ops.copy_files(
                 self.files,
                 self.destination, 
                 self.calculate_hash
@@ -97,8 +97,13 @@ class FileOperationThread(FileWorkerThread):
             # Check for cancellation after operation
             self.check_cancellation()
             
-            # Process and validate results
-            return self._process_file_results(raw_results)
+            # Handle FileOperationResult from copy_files
+            if not file_op_result.success:
+                # Return the error result directly
+                return file_op_result
+            
+            # Process and validate results (raw_results is now file_op_result.value)
+            return self._process_file_results(file_op_result.value, file_op_result)
             
         except FileOperationError as e:
             # Already an FSAError - just handle it
@@ -161,12 +166,13 @@ class FileOperationThread(FileWorkerThread):
             })
             return Result.error(error)
     
-    def _process_file_results(self, raw_results: dict) -> FileOperationResult:
+    def _process_file_results(self, raw_results: dict, base_result: FileOperationResult) -> FileOperationResult:
         """
         Process raw file operation results and handle hash verification
         
         Args:
-            raw_results: Raw results from BufferedFileOperations
+            raw_results: Raw results dictionary from FileOperationResult.value
+            base_result: Base FileOperationResult with metrics and performance data
             
         Returns:
             FileOperationResult with processed data and validation
@@ -214,23 +220,21 @@ class FileOperationThread(FileWorkerThread):
                     'successful_files': successful_files
                 })
                 
+                # Return error result with preserved base metrics
                 return FileOperationResult(
                     success=False,
                     error=error,
                     value=raw_results,
-                    files_processed=successful_files,
-                    bytes_processed=total_bytes,
-                    performance_metrics=raw_results.get('_performance_stats')
+                    files_processed=base_result.files_processed,
+                    bytes_processed=base_result.bytes_processed,
+                    performance_metrics=base_result.performance_metrics
                 )
             
             # Create successful result
-            self.emit_progress(100, f"Successfully copied {successful_files} files")
+            self.emit_progress(100, f"Successfully copied {base_result.files_processed} files")
             
-            result = FileOperationResult.create(
-                raw_results,
-                files_processed=successful_files,
-                bytes_processed=total_bytes
-            )
+            # Return the base_result since it already has all the correct information
+            result = base_result
             
             # Add operation metadata
             result.add_metadata('calculate_hash', self.calculate_hash)

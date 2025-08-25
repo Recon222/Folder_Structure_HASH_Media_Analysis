@@ -353,17 +353,33 @@ class FolderStructureThread(FileWorkerThread):
                             calculate_hash=self.calculate_hash
                         )
                         
-                        # Store results
-                        results[str(relative_path)] = {
-                            'source_path': str(source_file),
-                            'dest_path': str(dest_file),
-                            'source_hash': copy_result.get('source_hash', ''),
-                            'dest_hash': copy_result.get('dest_hash', ''),
-                            'verified': copy_result.get('verified', True)
-                        }
-                        
-                        if copy_result.get('success'):
+                        # Handle Result object from copy_file_buffered
+                        if copy_result.success:
+                            # Store successful results
+                            copy_data = copy_result.value
+                            results[str(relative_path)] = {
+                                'source_path': str(source_file),
+                                'dest_path': str(dest_file),
+                                'source_hash': copy_data.get('source_hash', ''),
+                                'dest_hash': copy_data.get('dest_hash', ''),
+                                'verified': copy_data.get('verified', True),
+                                'success': True
+                            }
                             files_processed += 1
+                        else:
+                            # Store error results
+                            results[str(relative_path)] = {
+                                'source_path': str(source_file),
+                                'dest_path': str(dest_file),
+                                'source_hash': '',
+                                'dest_hash': '',
+                                'verified': False,
+                                'success': False,
+                                'error': str(copy_result.error)
+                            }
+                            # Log error but continue processing other files
+                            error_details.append(f"{relative_path}: {copy_result.error}")
+                            logger.warning(f"File copy failed for {relative_path}: {copy_result.error}")
                         
                         # Update progress
                         file_progress = int((files_processed / len(total_files)) * 60)  # 60% for files
