@@ -31,6 +31,7 @@ from core.exceptions import UIError, ErrorSeverity
 from core.error_handler import handle_error
 from ui.styles import CarolinaBlueTheme
 from ui.dialogs import ZipSettingsDialog, AboutDialog, UserSettingsDialog
+from ui.dialogs.success_dialog import SuccessDialog
 from ui.dialogs.zip_prompt import ZipPromptDialog
 from ui.tabs import ForensicTab, HashingTab
 from ui.tabs.batch_tab import BatchTab
@@ -352,18 +353,13 @@ class MainWindow(QMainWindow):
                 self.log("Generating documentation...")
                 self.generate_reports()
             
-            # Nuclear migration: Convert success dialog to non-blocking notification  
-            success_error = UIError(
-                f"Forensic processing completed successfully",
-                user_message=completion_message,
-                component="MainWindow",
-                severity=ErrorSeverity.INFO
+            # Show modal success dialog for forensic completion
+            SuccessDialog.show_forensic_success(
+                "Forensic Processing Complete!",
+                completion_message,
+                "",  # No additional details needed - already in completion_message
+                self
             )
-            handle_error(success_error, {
-                'operation': 'forensic_completion', 
-                'files_processed': performance_stats.get('files_processed', 0) if performance_stats else 0,
-                'performance_included': bool(performance_stats)
-            })
         else:
             error = UIError(
                 f"Operation failed: {message}",
@@ -376,7 +372,7 @@ class MainWindow(QMainWindow):
     
     def on_operation_finished_result(self, result):
         """Handle operation completion using Result objects (nuclear migration)"""
-        from core.result_types import Result
+        from core.result_types import Result, FileOperationResult
         
         # Convert Result object to old format for compatibility with existing code
         if result.success:
@@ -392,6 +388,19 @@ class MainWindow(QMainWindow):
             # Add metadata to results if available
             if hasattr(result, 'metadata') and result.metadata:
                 results.update(result.metadata)
+                
+            # IMPORTANT: Reconstruct _performance_stats for FileOperationResult
+            if isinstance(result, FileOperationResult):
+                performance_stats = {
+                    'files_processed': result.files_processed,
+                    'bytes_processed': result.bytes_processed,
+                    'total_time_seconds': result.duration_seconds,
+                    'average_speed_mbps': result.average_speed_mbps,
+                    'total_size_mb': result.bytes_processed / (1024 * 1024) if result.bytes_processed else 0,
+                    'peak_speed_mbps': result.average_speed_mbps,  # Fallback to average if peak not available
+                    'mode': 'Balanced'  # Default mode
+                }
+                results['_performance_stats'] = performance_stats
                 
         else:
             success = False
@@ -574,22 +583,18 @@ class MainWindow(QMainWindow):
             zip_count = len(self.zip_archives_created)
             message_parts.append(f"✓ Created {zip_count} ZIP archive(s)")
         
-        # Add output location
+        # Extract output location for details section
+        output_location = ""
         if hasattr(self, 'output_directory'):
-            message_parts.append(f"\nOutput location:\n{self.output_directory}")
+            output_location = self.output_directory
         
-        # Nuclear migration: Convert completion dialog to non-blocking notification
-        success_error = UIError(
-            "Processing completed successfully",
-            user_message="\\n".join(message_parts),
-            component="MainWindow",
-            severity=ErrorSeverity.INFO
+        # Show modal success dialog for final completion
+        SuccessDialog.show_forensic_success(
+            "Operation Complete!",
+            "\n".join(message_parts),
+            output_location,  # Show output location in details section
+            self
         )
-        handle_error(success_error, {
-            'operation': 'process_completion',
-            'report_count': report_count if hasattr(self, 'report_count') else 0,
-            'zip_count': len(self.zip_archives_created) if hasattr(self, 'zip_archives_created') and self.zip_archives_created else 0
-        })
         
         # Clean up temporary attributes
         if hasattr(self, 'zip_archives_created'):

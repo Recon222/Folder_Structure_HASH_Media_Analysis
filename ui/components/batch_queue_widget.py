@@ -25,6 +25,7 @@ from core.workers.batch_processor import BatchProcessorThread
 from core.batch_recovery import BatchRecoveryManager
 from core.exceptions import UIError, ErrorSeverity
 from core.error_handler import handle_error
+from ui.dialogs.success_dialog import SuccessDialog
 
 
 class BatchQueueWidget(QWidget):
@@ -482,19 +483,24 @@ class BatchQueueWidget(QWidget):
         self.current_job_progress.setVisible(False)
         self.overall_progress.setVisible(False)
         
-        # Show completion message
-        message = f"Batch processing completed!\n\n"
-        message += f"Total jobs: {total}\n"
-        message += f"Successful: {successful}\n"
-        message += f"Failed: {failed}"
+        # Show completion message with SuccessDialog
+        message = f"Batch Processing Complete!\n\n"
+        message += f"✓ Total jobs: {total}\n"
+        message += f"✓ Successful: {successful}\n"
+        if failed > 0:
+            message += f"✗ Failed: {failed}"
         
-        success_error = UIError(
+        # Add success rate for better user feedback
+        success_rate = (successful / total * 100) if total > 0 else 0
+        message += f"\n\n📊 Success Rate: {success_rate:.1f}%"
+        
+        # Show modal success dialog for batch completion
+        SuccessDialog.show_batch_success(
+            "Batch Processing Complete!",
             message,
-            user_message=message,
-            component="BatchQueueWidget",
-            severity=ErrorSeverity.INFO
+            "",  # No additional details needed for batch
+            self.main_window if hasattr(self, 'main_window') and self.main_window else None
         )
-        handle_error(success_error, {'operation': 'batch_completion', 'total': total, 'successful': successful, 'failed': failed})
         self.log_message.emit(f"Batch processing completed: {successful}/{total} successful")
         self.queue_status_changed.emit("Ready")
         
