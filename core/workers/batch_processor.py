@@ -493,18 +493,24 @@ class BatchProcessorThread(BaseWorkerThread):
             # Generate time offset report if enabled and offset exists
             if settings.generate_time_offset_pdf and job.form_data.time_offset:
                 time_offset_path = reports_dir / f"{job.form_data.occurrence_number}_TimeOffset.pdf"
-                # Correct API: generate_time_offset_report(form_data, output_path)
-                if pdf_gen.generate_time_offset_report(job.form_data, time_offset_path):
-                    generated_reports['time_offset'] = time_offset_path
-                    logger.info(f"Generated time offset report: {time_offset_path}")
+                # Nuclear migration: handle Result objects
+                result = pdf_gen.generate_time_offset_report(job.form_data, time_offset_path)
+                if result.success:
+                    generated_reports['time_offset'] = result.value
+                    logger.info(f"Generated time offset report: {result.value}")
+                else:
+                    logger.warning(f"Failed to generate time offset report: {result.error.user_message if result.error else 'Unknown error'}")
                 
             # Generate upload log if enabled
             if settings.generate_upload_log_pdf:
                 upload_log_path = reports_dir / f"{job.form_data.occurrence_number}_UploadLog.pdf"
-                # Correct API: generate_technician_log(form_data, output_path)
-                if pdf_gen.generate_technician_log(job.form_data, upload_log_path):
-                    generated_reports['upload_log'] = upload_log_path
-                    logger.info(f"Generated upload log: {upload_log_path}")
+                # Nuclear migration: handle Result objects
+                result = pdf_gen.generate_technician_log(job.form_data, upload_log_path)
+                if result.success:
+                    generated_reports['upload_log'] = result.value
+                    logger.info(f"Generated upload log: {result.value}")
+                else:
+                    logger.warning(f"Failed to generate upload log: {result.error.user_message if result.error else 'Unknown error'}")
             
             # Generate hash CSV if enabled and we have hash results
             if settings.generate_hash_csv and file_results:
@@ -517,10 +523,13 @@ class BatchProcessorThread(BaseWorkerThread):
                 
                 if has_hashes:
                     hash_csv_path = reports_dir / f"{job.form_data.occurrence_number}_Hashes.csv"
-                    # Correct API: generate_hash_verification_csv(file_results, output_path)
-                    if pdf_gen.generate_hash_verification_csv(file_results, hash_csv_path):
-                        generated_reports['hash_csv'] = hash_csv_path
-                        logger.info(f"Generated hash CSV: {hash_csv_path}")
+                    # Nuclear migration: handle Result objects
+                    result = pdf_gen.generate_hash_verification_csv(file_results, hash_csv_path)
+                    if result.success:
+                        generated_reports['hash_csv'] = result.value
+                        logger.info(f"Generated hash CSV: {result.value}")
+                    else:
+                        logger.warning(f"Failed to generate hash CSV: {result.error.user_message if result.error else 'Unknown error'}")
                 
             return generated_reports
             

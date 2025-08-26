@@ -346,20 +346,33 @@ class MainWindow(QMainWindow):
                 
                 completion_message += stats_text
             
+            # Store file operation performance for final success dialog
+            self.file_operation_performance = completion_message
+            
             # Auto-generate reports based on user settings
             if self.settings.get('generate_time_offset_pdf', True) or \
                self.settings.get('generate_upload_log_pdf', True) or \
                self.settings.get('calculate_hashes', True):
                 self.log("Generating documentation...")
                 self.generate_reports()
-            
-            # Show modal success dialog for forensic completion
-            SuccessDialog.show_forensic_success(
-                "Forensic Processing Complete!",
-                completion_message,
-                "",  # No additional details needed - already in completion_message
-                self
-            )
+            else:
+                # No reports to generate, go directly to final completion
+                if hasattr(self, 'zip_controller') and self.zip_controller:
+                    try:
+                        if self.zip_controller.should_create_zip():
+                            # ZIP will handle final completion
+                            file_dest_path = Path(list(self.file_operation_results.values())[0]['dest_path'])
+                            original_output_dir = file_dest_path.parent
+                            self.create_zip_archives(original_output_dir)
+                        else:
+                            # No ZIP creation, show final completion now
+                            self.show_final_completion_message()
+                    except ValueError:
+                        # ZIP configuration error, show completion without ZIP
+                        self.show_final_completion_message()
+                else:
+                    # No ZIP controller, show final completion
+                    self.show_final_completion_message()
         else:
             error = UIError(
                 f"Operation failed: {message}",
@@ -449,14 +462,28 @@ class MainWindow(QMainWindow):
                 generate_hash_csv=self.settings.get('calculate_hashes', True)
             )
             
-            # Log generated reports
+            # Log generated reports and handle Result objects
+            successful_reports = {}
             if generated:
-                for report_type, path in generated.items():
-                    self.log(f"Generated: {path.name}")
-                self.log(f"Documentation saved to: {reports_output_dir}")
+                from core.result_types import ReportGenerationResult
+                for report_type, result in generated.items():
+                    if isinstance(result, ReportGenerationResult):
+                        if result.success:
+                            self.log(f"Generated: {result.value.name}")
+                            successful_reports[report_type] = result
+                        else:
+                            # Error is already logged by handle_error in PDF generation
+                            self.log(f"Failed to generate {report_type}: {result.error.user_message if result.error else 'Unknown error'}")
+                    else:
+                        # Fallback for unexpected result types
+                        self.log(f"Generated: {result}")
+                        successful_reports[report_type] = result
+                        
+                if successful_reports:
+                    self.log(f"Documentation saved to: {reports_output_dir}")
                 
             # Store report results for final summary
-            self.reports_generated = generated
+            self.reports_generated = successful_reports
             self.reports_output_dir = reports_output_dir
             
             # Handle ZIP creation (prompt already resolved at start of process)
@@ -564,35 +591,71 @@ class MainWindow(QMainWindow):
     
     def show_final_completion_message(self):
         """Show a single final completion message with all results"""
-        # Build summary message
+        # Build comprehensive success message
         message_parts = ["Operation Complete!\n"]
         
-        # Add file copy summary
+        # Add file copy summary with performance data
         if hasattr(self, 'file_operation_results') and self.file_operation_results:
             file_count = len([r for r in self.file_operation_results.values() 
                             if isinstance(r, dict) and 'verified' in r])
-            message_parts.append(f"✓ Copied {file_count} files")
+            
+            # Include performance stats if available
+            if hasattr(self, 'file_operation_performance') and self.file_operation_performance:
+                message_parts.append(f"✓ Copied {file_count} files")
+                message_parts.append(f"{self.file_operation_performance}")
+            else:
+                message_parts.append(f"✓ Copied {file_count} files")
         
-        # Add report summary
+        # Add detailed report summary with file sizes
         if hasattr(self, 'reports_generated') and self.reports_generated:
-            report_count = len(self.reports_generated)
-            message_parts.append(f"✓ Generated {report_count} reports")
+            from core.result_types import ReportGenerationResult
+            successful_reports = []
+            
+            for report_type, result in self.reports_generated.items():
+                if isinstance(result, ReportGenerationResult) and result.success:
+                    # Get file size in KB
+                    file_size_kb = result.file_size_bytes / 1024 if result.file_size_bytes > 0 else 0
+                    report_name = self._get_report_display_name(report_type)
+                    if file_size_kb > 0:
+                        successful_reports.append(f"  • {report_name} ({file_size_kb:.0f} KB)")
+                    else:
+                        successful_reports.append(f"  • {report_name}")
+                elif hasattr(result, 'name'):  # Fallback for Path objects
+                    report_name = self._get_report_display_name(report_type)
+                    successful_reports.append(f"  • {report_name}")
+            
+            if successful_reports:
+                message_parts.append(f"✓ Generated {len(successful_reports)} reports")
+                message_parts.extend(successful_reports)
         
-        # Add ZIP summary
+        # Add ZIP summary with file sizes
         if hasattr(self, 'zip_archives_created') and self.zip_archives_created:
             zip_count = len(self.zip_archives_created)
-            message_parts.append(f"✓ Created {zip_count} ZIP archive(s)")
+            total_zip_size = 0
+            
+            try:
+                for zip_path in self.zip_archives_created:
+                    if hasattr(zip_path, 'stat') and zip_path.exists():
+                        total_zip_size += zip_path.stat().st_size
+                
+                if total_zip_size > 0:
+                    zip_size_mb = total_zip_size / (1024 * 1024)
+                    message_parts.append(f"✓ Created {zip_count} ZIP archive(s) ({zip_size_mb:.1f} MB)")
+                else:
+                    message_parts.append(f"✓ Created {zip_count} ZIP archive(s)")
+            except:
+                message_parts.append(f"✓ Created {zip_count} ZIP archive(s)")
         
         # Extract output location for details section
         output_location = ""
         if hasattr(self, 'output_directory'):
-            output_location = self.output_directory
+            output_location = str(self.output_directory)
         
         # Show modal success dialog for final completion
         SuccessDialog.show_forensic_success(
             "Operation Complete!",
             "\n".join(message_parts),
-            output_location,  # Show output location in details section
+            f"📁 Output: {output_location}" if output_location else "",
             self
         )
         
@@ -603,6 +666,17 @@ class MainWindow(QMainWindow):
             delattr(self, 'reports_generated')
         if hasattr(self, 'reports_output_dir'):
             delattr(self, 'reports_output_dir')
+        if hasattr(self, 'file_operation_performance'):
+            delattr(self, 'file_operation_performance')
+        
+    def _get_report_display_name(self, report_type: str) -> str:
+        """Get user-friendly report display name"""
+        display_names = {
+            'time_offset': 'Time Offset Report',
+            'upload_log': 'Technician Log', 
+            'hash_csv': 'Hash Verification CSV'
+        }
+        return display_names.get(report_type, report_type.replace('_', ' ').title())
             
     def log(self, message):
         """Add message to log console"""

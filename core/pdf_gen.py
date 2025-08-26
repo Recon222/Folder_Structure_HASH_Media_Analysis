@@ -21,6 +21,9 @@ except ImportError:
 
 from .models import FormData
 from .settings_manager import settings
+from .result_types import ReportGenerationResult
+from .exceptions import ReportGenerationError
+from .error_handler import handle_error
 
 
 class PDFGenerator:
@@ -58,7 +61,7 @@ class PDFGenerator:
             spaceAfter=12
         ))
         
-    def generate_time_offset_report(self, form_data: FormData, output_path: Path) -> bool:
+    def generate_time_offset_report(self, form_data: FormData, output_path: Path) -> ReportGenerationResult:
         """
         Generate time offset report PDF
         
@@ -67,7 +70,7 @@ class PDFGenerator:
             output_path: Where to save the PDF
             
         Returns:
-            True if successful
+            ReportGenerationResult with path to generated PDF
         """
         try:
             doc = SimpleDocTemplate(str(output_path), pagesize=letter)
@@ -165,13 +168,31 @@ class PDFGenerator:
             
             # Build PDF
             doc.build(story)
-            return True
+            return ReportGenerationResult.create_successful(
+                output_path, 
+                report_type="time_offset"
+            )
             
+        except PermissionError as e:
+            error = ReportGenerationError(
+                f"Cannot write to {output_path}: {e}",
+                report_type="time_offset",
+                output_path=str(output_path),
+                user_message="Cannot create Time Offset Report. Please check folder permissions."
+            )
+            handle_error(error, {'output_path': str(output_path), 'report_type': 'time_offset'})
+            return ReportGenerationResult.error(error)
         except Exception as e:
-            print(f"Error generating time offset PDF: {e}")
-            return False
+            error = ReportGenerationError(
+                f"Failed to generate time offset report: {e}",
+                report_type="time_offset",
+                output_path=str(output_path),
+                user_message="Time Offset Report generation failed due to an unexpected error."
+            )
+            handle_error(error, {'output_path': str(output_path), 'report_type': 'time_offset', 'severity': 'critical'})
+            return ReportGenerationResult.error(error)
             
-    def generate_technician_log(self, form_data: FormData, output_path: Path) -> bool:
+    def generate_technician_log(self, form_data: FormData, output_path: Path) -> ReportGenerationResult:
         """
         Generate technician log PDF
         
@@ -180,7 +201,7 @@ class PDFGenerator:
             output_path: Where to save the PDF
             
         Returns:
-            True if successful
+            ReportGenerationResult with path to generated PDF
         """
         try:
             doc = SimpleDocTemplate(str(output_path), pagesize=letter)
@@ -229,14 +250,32 @@ class PDFGenerator:
             
             # Build PDF
             doc.build(story)
-            return True
+            return ReportGenerationResult.create_successful(
+                output_path,
+                report_type="technician_log"
+            )
             
+        except PermissionError as e:
+            error = ReportGenerationError(
+                f"Cannot write to {output_path}: {e}",
+                report_type="technician_log",
+                output_path=str(output_path),
+                user_message="Cannot create Technician Log. Please check folder permissions."
+            )
+            handle_error(error, {'output_path': str(output_path), 'report_type': 'technician_log'})
+            return ReportGenerationResult.error(error)
         except Exception as e:
-            print(f"Error generating technician log PDF: {e}")
-            return False
+            error = ReportGenerationError(
+                f"Failed to generate technician log: {e}",
+                report_type="technician_log",
+                output_path=str(output_path),
+                user_message="Technician Log generation failed due to an unexpected error."
+            )
+            handle_error(error, {'output_path': str(output_path), 'report_type': 'technician_log', 'severity': 'critical'})
+            return ReportGenerationResult.error(error)
             
     def generate_hash_verification_csv(self, file_results: Dict[str, Dict[str, str]], 
-                                     output_path: Path) -> bool:
+                                     output_path: Path) -> ReportGenerationResult:
         """
         Generate CSV file with hash verification results
         
@@ -245,7 +284,7 @@ class PDFGenerator:
             output_path: Where to save the CSV
             
         Returns:
-            True if successful
+            ReportGenerationResult with path to generated CSV
         """
         try:
             with open(output_path, 'w', newline='') as csvfile:
@@ -274,8 +313,26 @@ class PDFGenerator:
                         'Verification Status': 'PASSED' if data.get('verified', False) else 'FAILED'
                     })
                     
-            return True
+            return ReportGenerationResult.create_successful(
+                output_path,
+                report_type="hash_verification_csv"
+            )
             
+        except PermissionError as e:
+            error = ReportGenerationError(
+                f"Cannot write to {output_path}: {e}",
+                report_type="hash_verification_csv",
+                output_path=str(output_path),
+                user_message="Cannot create Hash Verification CSV. Please check folder permissions."
+            )
+            handle_error(error, {'output_path': str(output_path), 'report_type': 'hash_verification_csv'})
+            return ReportGenerationResult.error(error)
         except Exception as e:
-            print(f"Error generating hash verification CSV: {e}")
-            return False
+            error = ReportGenerationError(
+                f"Failed to generate hash verification CSV: {e}",
+                report_type="hash_verification_csv",
+                output_path=str(output_path),
+                user_message="Hash Verification CSV generation failed due to an unexpected error."
+            )
+            handle_error(error, {'output_path': str(output_path), 'report_type': 'hash_verification_csv', 'severity': 'critical'})
+            return ReportGenerationResult.error(error)

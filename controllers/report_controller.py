@@ -12,6 +12,7 @@ from PySide6.QtCore import QSettings
 
 from core.models import FormData
 from core.pdf_gen import PDFGenerator
+from core.result_types import ReportGenerationResult
 from utils.zip_utils import ZipUtility, ZipSettings
 
 
@@ -30,8 +31,8 @@ class ReportController:
         generate_time_offset: bool = True,
         generate_upload_log: bool = True,
         generate_hash_csv: bool = True
-    ) -> Dict[str, Path]:
-        """Generate reports based on user settings and return paths"""
+    ) -> Dict[str, ReportGenerationResult]:
+        """Generate reports based on user settings and return Result objects"""
         generated_reports = {}
         
         try:
@@ -42,14 +43,14 @@ class ReportController:
         # Generate time offset report if enabled and offset exists
         if generate_time_offset and form_data.time_offset != 0:
             time_report_path = output_dir / "Time_Offset_Report.pdf"
-            if pdf_gen.generate_time_offset_report(form_data, time_report_path):
-                generated_reports['time_offset'] = time_report_path
+            result = pdf_gen.generate_time_offset_report(form_data, time_report_path)
+            generated_reports['time_offset'] = result
                 
         # Generate upload log if enabled
         if generate_upload_log:
             upload_log_path = output_dir / "Upload_Log.pdf"
-            if pdf_gen.generate_technician_log(form_data, upload_log_path):
-                generated_reports['upload_log'] = upload_log_path
+            result = pdf_gen.generate_technician_log(form_data, upload_log_path)
+            generated_reports['upload_log'] = result
             
         # Generate hash verification CSV if enabled and hashing was done
         if generate_hash_csv:
@@ -62,8 +63,8 @@ class ReportController:
             
             if has_hashes:
                 hash_csv_path = output_dir / "Hash_Verification.csv"
-                if pdf_gen.generate_hash_verification_csv(file_results, hash_csv_path):
-                    generated_reports['hash_csv'] = hash_csv_path
+                result = pdf_gen.generate_hash_verification_csv(file_results, hash_csv_path)
+                generated_reports['hash_csv'] = result
             
         return generated_reports
         
