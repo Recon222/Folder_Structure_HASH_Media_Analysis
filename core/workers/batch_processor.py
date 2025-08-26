@@ -10,6 +10,7 @@ import copy
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any
+from collections import defaultdict
 
 from PySide6.QtCore import Signal, QEventLoop, QTimer
 
@@ -86,6 +87,18 @@ class BatchProcessorThread(BaseWorkerThread):
             failed = 0
             job_results = []
             
+            # Enhanced data collection for rich success messages
+            batch_start_time = datetime.now()
+            total_files_processed = 0
+            total_bytes_processed = 0
+            speed_samples = []  # [(speed_mbps, job_name), ...]
+            report_counts = defaultdict(int)  # {"time_offset": 4, "technician_log": 3}
+            total_report_size = 0
+            zip_archive_count = 0
+            total_zip_size = 0
+            failed_job_details = []
+            output_directories = []
+            
             if total_jobs == 0:
                 # Empty queue - emit successful empty result
                 self.queue_completed.emit(0, 0, 0)
@@ -131,6 +144,59 @@ class BatchProcessorThread(BaseWorkerThread):
                     if job_result.success:
                         job.status = "completed"
                         successful += 1
+                        
+                        # Extract and aggregate data from successful job
+                        if job_result.value and isinstance(job_result.value, dict):
+                            job_data = job_result.value
+                            
+                            # Aggregate file processing data
+                            if 'file_summary' in job_data:
+                                file_summary = job_data['file_summary']
+                                total_files_processed += file_summary.get('files_processed', 0)
+                                total_bytes_processed += file_summary.get('total_size', 0)
+                            
+                            # Collect speed data from metadata
+                            if job_result.metadata and 'files_processed' in job_result.metadata:
+                                # Calculate speed if we have timing data
+                                if hasattr(job, 'start_time') and hasattr(job, 'end_time') and job.start_time and job.end_time:
+                                    duration_seconds = (job.end_time - job.start_time).total_seconds()
+                                    if duration_seconds > 0 and 'total_size' in job_data.get('file_summary', {}):
+                                        size_mb = job_data['file_summary']['total_size'] / (1024 * 1024)
+                                        speed_mbps = size_mb / duration_seconds
+                                        speed_samples.append((speed_mbps, job.job_name))
+                            
+                            # Aggregate report data
+                            if 'report_results' in job_data and job_data['report_results']:
+                                for report_type, report_path in job_data['report_results'].items():
+                                    report_counts[report_type] += 1
+                                    # Try to get file size
+                                    try:
+                                        if isinstance(report_path, (str, Path)):
+                                            report_file = Path(report_path)
+                                            if report_file.exists():
+                                                total_report_size += report_file.stat().st_size
+                                    except:
+                                        pass  # Size unavailable, continue
+                            
+                            # Aggregate ZIP data
+                            if 'zip_results' in job_data and job_data['zip_results']:
+                                zip_data = job_data['zip_results']
+                                if 'created_archives' in zip_data and zip_data['created_archives']:
+                                    zip_archive_count += len(zip_data['created_archives'])
+                                    # Calculate total ZIP size
+                                    for archive_path in zip_data['created_archives']:
+                                        try:
+                                            if Path(archive_path).exists():
+                                                total_zip_size += Path(archive_path).stat().st_size
+                                        except:
+                                            pass  # Size unavailable, continue
+                            
+                            # Collect output directories
+                            if 'output_path' in job_data:
+                                output_dir = Path(job_data['output_path'])
+                                if output_dir not in output_directories:
+                                    output_directories.append(output_dir)
+                        
                         job_results.append({
                             'success': True,
                             'job_id': job.job_id,
@@ -144,6 +210,10 @@ class BatchProcessorThread(BaseWorkerThread):
                         job.status = "failed"
                         job.error_message = job_result.error.user_message if job_result.error else "Unknown error"
                         failed += 1
+                        
+                        # Collect failed job details for rich error reporting
+                        failed_job_details.append(f"Job '{job.job_name}' failed - {job.error_message}")
+                        
                         job_results.append({
                             'success': False,
                             'job_id': job.job_id,
@@ -160,6 +230,10 @@ class BatchProcessorThread(BaseWorkerThread):
                     job.error_message = str(e)
                     job.end_time = datetime.now()
                     failed += 1
+                    
+                    # Collect failed job details for rich error reporting
+                    failed_job_details.append(f"Job '{job.job_name}' failed - Unexpected error: {e}")
+                    
                     job_results.append({
                         'success': False,
                         'job_id': job.job_id,
@@ -182,6 +256,47 @@ class BatchProcessorThread(BaseWorkerThread):
             # Emit final completion signals
             self.queue_completed.emit(total_jobs, successful, failed)
             
+            # Calculate aggregate metrics
+            batch_end_time = datetime.now()
+            total_processing_time = (batch_end_time - batch_start_time).total_seconds()
+            
+            # Calculate aggregate and peak speeds
+            aggregate_speed = 0
+            peak_speed = 0
+            peak_speed_job = ""
+            if speed_samples:
+                # Aggregate speed: total size / total time
+                if total_processing_time > 0:
+                    total_size_mb = total_bytes_processed / (1024 * 1024)
+                    aggregate_speed = total_size_mb / total_processing_time
+                
+                # Peak speed: maximum from individual jobs
+                peak_speed, peak_speed_job = max(speed_samples, key=lambda x: x[0])
+            
+            # Create enhanced batch data
+            from core.services.success_message_data import EnhancedBatchOperationData
+            enhanced_batch_data = EnhancedBatchOperationData(
+                total_jobs=total_jobs,
+                successful_jobs=successful,
+                failed_jobs=failed,
+                processing_time_seconds=total_processing_time,
+                total_files_processed=total_files_processed,
+                total_bytes_processed=total_bytes_processed,
+                aggregate_speed_mbps=aggregate_speed,
+                peak_speed_mbps=peak_speed,
+                peak_speed_job_name=peak_speed_job,
+                total_reports_generated=sum(report_counts.values()),
+                report_breakdown=dict(report_counts),
+                total_report_size_bytes=total_report_size,
+                total_zip_archives=zip_archive_count,
+                total_zip_size_bytes=total_zip_size,
+                job_results=job_results,
+                failed_job_summaries=failed_job_details,
+                batch_output_directories=output_directories,
+                batch_start_time=batch_start_time,
+                batch_end_time=batch_end_time
+            )
+            
             # Create final BatchOperationResult and emit via unified result_ready signal
             batch_result = BatchOperationResult.create(
                 job_results,
@@ -190,7 +305,8 @@ class BatchProcessorThread(BaseWorkerThread):
                     'successful_jobs': successful,
                     'failed_jobs': failed,
                     'success_rate': (successful / total_jobs * 100) if total_jobs > 0 else 100.0,
-                    'operation_name': self.operation_name
+                    'operation_name': self.operation_name,
+                    'enhanced_batch_data': enhanced_batch_data  # Include enhanced data for rich success messages
                 }
             )
             

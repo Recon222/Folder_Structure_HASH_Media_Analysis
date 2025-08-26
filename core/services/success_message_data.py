@@ -10,6 +10,7 @@ between business logic and UI components, maintaining clean separation of concer
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Any
 from pathlib import Path
+from datetime import datetime
 
 
 @dataclass
@@ -153,3 +154,66 @@ class BatchOperationData:
     def is_complete_success(self) -> bool:
         """Check if all jobs completed successfully."""
         return self.failed_jobs == 0 and self.successful_jobs == self.total_jobs
+
+
+@dataclass
+class EnhancedBatchOperationData:
+    """Enhanced data structure for rich batch processing success messages."""
+    
+    # Job Summary (inherited from BatchOperationData)
+    total_jobs: int
+    successful_jobs: int
+    failed_jobs: int
+    processing_time_seconds: float = 0
+    
+    # Aggregate File Processing Data
+    total_files_processed: int = 0
+    total_bytes_processed: int = 0
+    aggregate_speed_mbps: float = 0
+    peak_speed_mbps: float = 0
+    peak_speed_job_name: str = ""
+    
+    # Aggregate Report Data
+    total_reports_generated: int = 0
+    report_breakdown: Dict[str, int] = field(default_factory=dict)  # {"time_offset": 4, "technician_log": 3}
+    total_report_size_bytes: int = 0
+    
+    # Aggregate ZIP Data
+    total_zip_archives: int = 0
+    total_zip_size_bytes: int = 0
+    
+    # Job-Level Details
+    job_results: List[Dict[str, Any]] = field(default_factory=list)
+    failed_job_summaries: List[str] = field(default_factory=list)
+    
+    # Output Information
+    batch_output_directories: List[Path] = field(default_factory=list)
+    batch_start_time: Optional[datetime] = None
+    batch_end_time: Optional[datetime] = None
+    
+    def get_success_rate(self) -> float:
+        """Calculate batch processing success rate."""
+        if self.total_jobs == 0:
+            return 0.0
+        return (self.successful_jobs / self.total_jobs) * 100
+    
+    @property
+    def is_complete_success(self) -> bool:
+        """Check if all jobs completed successfully."""
+        return self.failed_jobs == 0 and self.successful_jobs == self.total_jobs
+    
+    def get_total_size_gb(self) -> float:
+        """Get total size processed in GB."""
+        return self.total_bytes_processed / (1024**3) if self.total_bytes_processed > 0 else 0.0
+    
+    def get_total_zip_size_gb(self) -> float:
+        """Get total ZIP size in GB."""
+        return self.total_zip_size_bytes / (1024**3) if self.total_zip_size_bytes > 0 else 0.0
+    
+    def get_total_report_size_mb(self) -> float:
+        """Get total report size in MB."""
+        return self.total_report_size_bytes / (1024**2) if self.total_report_size_bytes > 0 else 0.0
+    
+    def get_processing_time_minutes(self) -> float:
+        """Get processing time in minutes."""
+        return self.processing_time_seconds / 60 if self.processing_time_seconds > 0 else 0.0

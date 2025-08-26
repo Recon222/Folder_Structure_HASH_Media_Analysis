@@ -363,6 +363,7 @@ class FolderStructureThread(FileWorkerThread):
                                 'source_hash': copy_data.get('source_hash', ''),
                                 'dest_hash': copy_data.get('dest_hash', ''),
                                 'verified': copy_data.get('verified', True),
+                                'size': copy_data.get('size', 0),  # ✅ ADD: Preserve file size for batch aggregation
                                 'success': True
                             }
                             files_processed += 1

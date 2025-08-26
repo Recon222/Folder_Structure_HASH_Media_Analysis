@@ -483,6 +483,9 @@ class BatchQueueWidget(QWidget):
         self.processor_thread.queue_progress.connect(self._on_queue_progress)
         self.processor_thread.queue_completed.connect(self._on_queue_completed)
         
+        # NEW: Connect unified result signal for enhanced success messages
+        self.processor_thread.result_ready.connect(self._on_batch_result_ready)
+        
     def _on_job_started(self, job_id: str, job_name: str):
         """Handle job started signal"""
         self.current_job_label.setText(f"Processing: {job_name}")
@@ -525,7 +528,16 @@ class BatchQueueWidget(QWidget):
         self.current_job_progress.setVisible(False)
         self.overall_progress.setVisible(False)
         
-        # Show completion message with SuccessDialog
+        # Check if enhanced success message was already shown
+        if hasattr(self, '_enhanced_success_shown') and self._enhanced_success_shown:
+            # Enhanced message already handled by _on_batch_result_ready
+            self.log_message.emit(f"Batch processing completed: {successful}/{total} successful (enhanced message shown)")
+            self.queue_status_changed.emit("Ready")
+            # Clean up flag for next batch
+            delattr(self, '_enhanced_success_shown')
+            return
+        
+        # Show completion message with SuccessDialog (LEGACY FALLBACK)
         message = f"Batch Processing Complete!\n\n"
         message += f"✓ Total jobs: {total}\n"
         message += f"✓ Successful: {successful}\n"
@@ -537,14 +549,92 @@ class BatchQueueWidget(QWidget):
         message += f"\n\n📊 Success Rate: {success_rate:.1f}%"
         
         # Show modal success dialog for batch completion
+        # NOTE: This is the legacy fallback - enhanced message is preferred
         SuccessDialog.show_batch_success(
             "Batch Processing Complete!",
             message,
             "",  # No additional details needed for batch
             self.main_window if hasattr(self, 'main_window') and self.main_window else None
         )
-        self.log_message.emit(f"Batch processing completed: {successful}/{total} successful")
+        self.log_message.emit(f"Batch processing completed: {successful}/{total} successful (legacy fallback)")
         self.queue_status_changed.emit("Ready")
+        
+    def _on_batch_result_ready(self, result):
+        """Handle batch result with enhanced success message support (NEW)"""
+        from core.result_types import Result
+        from core.services.success_message_builder import SuccessMessageBuilder
+        from core.services.success_message_data import EnhancedBatchOperationData
+        
+        try:
+            if not isinstance(result, Result):
+                # Fallback to legacy handler if result format is unexpected
+                return
+                
+            if result.success:
+                # Check if we have enhanced batch data in metadata
+                if (result.metadata and 
+                    'enhanced_batch_data' in result.metadata and 
+                    isinstance(result.metadata['enhanced_batch_data'], EnhancedBatchOperationData)):
+                    
+                    # Use enhanced success message
+                    enhanced_data = result.metadata['enhanced_batch_data']
+                    message_builder = SuccessMessageBuilder()
+                    message_data = message_builder.build_enhanced_batch_success_message(enhanced_data)
+                    
+                    # Show enhanced success dialog
+                    SuccessDialog.show_success_message(
+                        message_data, 
+                        self.main_window if hasattr(self, 'main_window') and self.main_window else None
+                    )
+                    
+                    self.log_message.emit(
+                        f"Enhanced batch processing completed: {enhanced_data.successful_jobs}/"
+                        f"{enhanced_data.total_jobs} successful, "
+                        f"{enhanced_data.total_files_processed} files processed"
+                    )
+                    
+                    # Prevent legacy success dialog from showing by setting a flag
+                    self._enhanced_success_shown = True
+                    
+                else:
+                    # Fall back to basic batch data if available
+                    if result.metadata:
+                        total_jobs = result.metadata.get('total_jobs', 0)
+                        successful_jobs = result.metadata.get('successful_jobs', 0) 
+                        failed_jobs = result.metadata.get('failed_jobs', 0)
+                        
+                        from core.services.success_message_data import BatchOperationData
+                        basic_data = BatchOperationData(
+                            total_jobs=total_jobs,
+                            successful_jobs=successful_jobs,
+                            failed_jobs=failed_jobs,
+                            processing_time_seconds=0  # Not available in basic metadata
+                        )
+                        
+                        message_builder = SuccessMessageBuilder()
+                        message_data = message_builder.build_batch_success_message(basic_data)
+                        
+                        SuccessDialog.show_success_message(
+                            message_data,
+                            self.main_window if hasattr(self, 'main_window') and self.main_window else None
+                        )
+                        
+                        self._enhanced_success_shown = True
+                    
+            else:
+                # Handle batch processing errors
+                error_msg = result.error.user_message if result.error else "Batch processing failed"
+                self.log_message.emit(f"Batch processing failed: {error_msg}")
+                
+                # Show error via error notification system instead of success dialog
+                if result.error:
+                    from core.error_handler import handle_error
+                    handle_error(result.error, {'component': 'batch_queue_widget', 'operation': 'batch_processing'})
+                    
+        except Exception as e:
+            # If anything goes wrong with enhanced processing, log and continue
+            self.log_message.emit(f"Enhanced batch success processing failed: {e}")
+            # Let legacy handler take over
         
     def _update_ui_for_processing_state(self):
         """Update UI elements based on processing state"""

@@ -15,7 +15,8 @@ from core.result_types import (
     Result, FileOperationResult, ReportGenerationResult, ArchiveOperationResult
 )
 from core.services.success_message_data import (
-    SuccessMessageData, QueueOperationData, HashOperationData, BatchOperationData
+    SuccessMessageData, QueueOperationData, HashOperationData, BatchOperationData,
+    EnhancedBatchOperationData
 )
 
 
@@ -223,6 +224,119 @@ class SuccessMessageBuilder:
             output_location=str(hash_data.csv_file_path) if hash_data.csv_file_path else None,
             celebration_emoji="🔒",
             raw_data={'hash_data': hash_data}
+        )
+    
+    def build_enhanced_batch_success_message(
+        self,
+        enhanced_batch_data: EnhancedBatchOperationData
+    ) -> SuccessMessageData:
+        """
+        Build comprehensive batch success message with aggregate data.
+        
+        Args:
+            enhanced_batch_data: Enhanced batch operation results with aggregate metrics
+            
+        Returns:
+            SuccessMessageData for rich batch completion display
+        """
+        summary_lines = []
+        
+        # Job summary with rich context
+        if enhanced_batch_data.failed_jobs > 0:
+            summary_lines.append(f"✓ Completed {enhanced_batch_data.successful_jobs}/{enhanced_batch_data.total_jobs} jobs")
+            summary_lines.append(f"⚠️ {enhanced_batch_data.failed_jobs} job(s) failed")
+        else:
+            summary_lines.append(f"✓ All {enhanced_batch_data.total_jobs} jobs completed successfully")
+        
+        # Aggregate performance summary (if we have file processing data)
+        if enhanced_batch_data.total_files_processed > 0:
+            summary_lines.append("")  # Spacing
+            summary_lines.append("📊 Aggregate Performance Summary:")
+            summary_lines.append(f"Files: {enhanced_batch_data.total_files_processed} total files processed")
+            
+            total_gb = enhanced_batch_data.get_total_size_gb()
+            if total_gb >= 1.0:
+                summary_lines.append(f"Size: {total_gb:.1f} GB across all jobs")
+            else:
+                total_mb = enhanced_batch_data.total_bytes_processed / (1024**2)
+                summary_lines.append(f"Size: {total_mb:.1f} MB across all jobs")
+            
+            processing_minutes = enhanced_batch_data.get_processing_time_minutes()
+            if processing_minutes >= 1.0:
+                summary_lines.append(f"Time: {processing_minutes:.1f} minutes total processing")
+            else:
+                summary_lines.append(f"Time: {enhanced_batch_data.processing_time_seconds:.1f} seconds total processing")
+            
+            if enhanced_batch_data.aggregate_speed_mbps > 0:
+                summary_lines.append(f"Average Speed: {enhanced_batch_data.aggregate_speed_mbps:.1f} MB/s overall")
+            
+            if enhanced_batch_data.peak_speed_mbps > 0 and enhanced_batch_data.peak_speed_job_name:
+                summary_lines.append(f"Peak Speed: {enhanced_batch_data.peak_speed_mbps:.1f} MB/s ({enhanced_batch_data.peak_speed_job_name})")
+        
+        # Aggregate report summary
+        if enhanced_batch_data.total_reports_generated > 0:
+            summary_lines.append("")  # Spacing
+            summary_lines.append(f"✓ Generated {enhanced_batch_data.total_reports_generated} reports across all jobs")
+            
+            for report_type, count in enhanced_batch_data.report_breakdown.items():
+                display_name = self._get_report_display_name(report_type)
+                summary_lines.append(f"  • {count} {display_name}{'s' if count > 1 else ''}")
+            
+            if enhanced_batch_data.total_report_size_bytes > 0:
+                total_report_mb = enhanced_batch_data.get_total_report_size_mb()
+                summary_lines.append(f"  • Total report size: {total_report_mb:.1f} MB")
+        
+        # ZIP summary
+        if enhanced_batch_data.total_zip_archives > 0:
+            total_zip_gb = enhanced_batch_data.get_total_zip_size_gb()
+            if total_zip_gb >= 1.0:
+                summary_lines.append(f"✓ Created {enhanced_batch_data.total_zip_archives} ZIP archives ({total_zip_gb:.1f} GB total)")
+            else:
+                total_zip_mb = enhanced_batch_data.total_zip_size_bytes / (1024**2)
+                summary_lines.append(f"✓ Created {enhanced_batch_data.total_zip_archives} ZIP archives ({total_zip_mb:.1f} MB total)")
+        
+        # Success rate and failed job details
+        success_rate = enhanced_batch_data.get_success_rate()
+        summary_lines.append("")  # Spacing
+        summary_lines.append(f"📊 Success Rate: {success_rate:.1f}%")
+        
+        # Show failed job names if any
+        if enhanced_batch_data.failed_job_summaries:
+            summary_lines.append("")  # Spacing
+            for failure in enhanced_batch_data.failed_job_summaries[:3]:  # Limit to first 3
+                summary_lines.append(f"⚠️ {failure}")
+            if len(enhanced_batch_data.failed_job_summaries) > 3:
+                remaining = len(enhanced_batch_data.failed_job_summaries) - 3
+                summary_lines.append(f"⚠️ ...and {remaining} more failure{'s' if remaining > 1 else ''}")
+        
+        # Choose appropriate professional emoji and title
+        if success_rate == 100:
+            emoji = "✅"
+            title = "Batch Processing Complete!"
+        elif success_rate >= 90:
+            emoji = "⚠️"
+            title = "Batch Processing Complete with Minor Issues"
+        elif success_rate >= 70:
+            emoji = "⚠️"
+            title = "Batch Processing Complete with Some Issues"
+        else:
+            emoji = "❌"
+            title = "Batch Processing Complete with Significant Issues"
+        
+        # Output location
+        output_location = None
+        if enhanced_batch_data.batch_output_directories:
+            if len(enhanced_batch_data.batch_output_directories) == 1:
+                output_location = str(enhanced_batch_data.batch_output_directories[0])
+            else:
+                output_location = f"Multiple locations ({len(enhanced_batch_data.batch_output_directories)} jobs)"
+        
+        return SuccessMessageData(
+            title=title,
+            summary_lines=summary_lines,
+            output_location=output_location,
+            celebration_emoji=emoji,
+            raw_data={'enhanced_batch_data': enhanced_batch_data}
         )
     
     # Private helper methods
