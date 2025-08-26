@@ -223,9 +223,79 @@ class SuccessDialog(QDialog):
         return self.exec()
         
     @staticmethod
+    def show_success_message(message_data, parent=None):
+        """
+        NEW: Display success message using SuccessMessageData object.
+        
+        Args:
+            message_data: SuccessMessageData object with all message information
+            parent: Parent widget
+            
+        Returns:
+            QDialog result (accepted/rejected)
+        """
+        from core.services.success_message_data import SuccessMessageData
+        
+        if not isinstance(message_data, SuccessMessageData):
+            raise ValueError("message_data must be a SuccessMessageData object")
+        
+        dialog = SuccessDialog(
+            title=message_data.title,
+            message=message_data.to_display_message(),
+            details=message_data.output_location or "",
+            parent=parent
+        )
+        
+        # Update dialog icon with custom emoji if provided
+        if message_data.celebration_emoji != "✅":
+            # Find and update the icon label
+            for widget in dialog.findChildren(QLabel):
+                if widget.text() == "✅":
+                    widget.setText(message_data.celebration_emoji)
+                    break
+        
+        return dialog.show_success()
+    
+    @staticmethod
+    def show_forensic_success_v2(
+        file_result,
+        report_results=None, 
+        zip_result=None,
+        parent=None
+    ):
+        """
+        NEW: Show forensic success using native Result objects (no conversions).
+        
+        Args:
+            file_result: FileOperationResult object
+            report_results: Dict of ReportGenerationResult objects
+            zip_result: ArchiveOperationResult object  
+            parent: Parent widget
+            
+        Returns:
+            QDialog result (accepted/rejected)
+        """
+        from core.services.success_message_builder import SuccessMessageBuilder
+        from core.result_types import FileOperationResult
+        
+        if not isinstance(file_result, FileOperationResult):
+            raise ValueError("file_result must be a FileOperationResult object")
+        
+        # Use business logic service to build message
+        message_builder = SuccessMessageBuilder()
+        message_data = message_builder.build_forensic_success_message(
+            file_result, report_results, zip_result
+        )
+        
+        return SuccessDialog.show_success_message(message_data, parent)
+
+    # Legacy methods - kept for backward compatibility during transition
+    @staticmethod
     def show_forensic_success(title: str, message: str, details: str = "", parent=None):
         """
-        Static method to show forensic success dialog.
+        LEGACY: Static method to show forensic success dialog (string-based).
+        
+        DEPRECATED: Use show_success() with SuccessMessageData or show_forensic_success_v2() instead.
         
         Args:
             title: Dialog title
@@ -242,7 +312,9 @@ class SuccessDialog(QDialog):
     @staticmethod 
     def show_batch_success(title: str, message: str, details: str = "", parent=None):
         """
-        Static method to show batch processing success dialog.
+        LEGACY: Static method to show batch processing success dialog (string-based).
+        
+        DEPRECATED: Use show_success() with SuccessMessageData instead.
         
         Args:
             title: Dialog title  

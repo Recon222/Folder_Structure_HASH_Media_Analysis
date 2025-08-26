@@ -384,15 +384,19 @@ class MainWindow(QMainWindow):
         self.log(message)
     
     def on_operation_finished_result(self, result):
-        """Handle operation completion using Result objects (nuclear migration)"""
+        """Handle operation completion using Result objects (NEW: no conversions)"""
         from core.result_types import Result, FileOperationResult
         
-        # Convert Result object to old format for compatibility with existing code
         if result.success:
+            # ✅ NEW: Store Result object directly for new architecture
+            self.file_operation_result = result
+            
+            # ✅ COMPATIBILITY: Still call legacy handler for existing integrations
+            # This ensures existing PDF generation and ZIP creation still work
             success = True
             message = "Files copied successfully!"
             
-            # Extract results from Result object
+            # Extract results from Result object for legacy code
             if hasattr(result, 'value') and result.value:
                 results = result.value
             else:
@@ -402,18 +406,25 @@ class MainWindow(QMainWindow):
             if hasattr(result, 'metadata') and result.metadata:
                 results.update(result.metadata)
                 
-            # IMPORTANT: Reconstruct _performance_stats for FileOperationResult
-            if isinstance(result, FileOperationResult):
-                performance_stats = {
-                    'files_processed': result.files_processed,
-                    'bytes_processed': result.bytes_processed,
-                    'total_time_seconds': result.duration_seconds,
-                    'average_speed_mbps': result.average_speed_mbps,
-                    'total_size_mb': result.bytes_processed / (1024 * 1024) if result.bytes_processed else 0,
-                    'peak_speed_mbps': result.average_speed_mbps,  # Fallback to average if peak not available
-                    'mode': 'Balanced'  # Default mode
-                }
-                results['_performance_stats'] = performance_stats
+            # Store performance data as string for legacy compatibility
+            if isinstance(result, FileOperationResult) and result.has_performance_data():
+                perf_lines = [
+                    f"Files: {result.files_processed}",
+                    f"Size: {result.bytes_processed / (1024 * 1024):.1f} MB",
+                    f"Time: {result.duration_seconds:.1f} seconds",
+                    f"Average Speed: {result.average_speed_mbps:.1f} MB/s"
+                ]
+                
+                # Add peak speed if available  
+                if hasattr(result, 'peak_speed_mbps') and result.peak_speed_mbps:
+                    perf_lines.append(f"Peak Speed: {result.peak_speed_mbps:.1f} MB/s")
+                
+                # Add mode if available
+                if hasattr(result, 'optimization_mode'):
+                    perf_lines.append(f"Mode: {result.optimization_mode}")
+                
+                performance_string = "📊 Performance Summary:\n" + "\n".join(perf_lines)
+                self.file_operation_performance = performance_string
                 
         else:
             success = False
@@ -590,8 +601,108 @@ class MainWindow(QMainWindow):
                 self.show_final_completion_message()
     
     def show_final_completion_message(self):
-        """Show a single final completion message with all results"""
-        # Build comprehensive success message
+        """Show a single final completion message with all results using new architecture"""
+        try:
+            # ✅ NEW: Use business logic service instead of UI doing data aggregation
+            from core.services.success_message_builder import SuccessMessageBuilder
+            from ui.dialogs.success_dialog import SuccessDialog
+            
+            # Collect operation results (if available)
+            file_result = getattr(self, 'file_operation_result', None)
+            report_results = getattr(self, 'reports_generated', None)
+            zip_result = getattr(self, 'zip_operation_result', None)
+            
+            # If we have native Result objects, use the new v2 method
+            if file_result and hasattr(file_result, 'success'):
+                SuccessDialog.show_forensic_success_v2(
+                    file_result, report_results, zip_result, self
+                )
+            else:
+                # ✅ FALLBACK: Use business logic service to build from legacy data
+                message_builder = SuccessMessageBuilder()
+                
+                # Reconstruct file result data from legacy attributes
+                file_result_data = self._reconstruct_file_result_data()
+                report_results_data = getattr(self, 'reports_generated', {})
+                zip_result_data = self._reconstruct_zip_result_data()
+                
+                # Build message using service
+                message_data = message_builder.build_forensic_success_message(
+                    file_result_data, report_results_data, zip_result_data
+                )
+                
+                # Show using new dialog method
+                SuccessDialog.show_success_message(message_data, self)
+                
+        except Exception as e:
+            # ✅ GRACEFUL FALLBACK: If new system fails, use legacy approach
+            self.log(f"Warning: New success system failed ({str(e)}), using legacy approach")
+            self._show_legacy_completion_message()
+        
+        # Clean up temporary attributes
+        self._cleanup_operation_attributes()
+    
+    def _reconstruct_file_result_data(self):
+        """Reconstruct file result data from legacy attributes for migration"""
+        from core.result_types import FileOperationResult
+        
+        # Try to create a FileOperationResult-like object from legacy data
+        if hasattr(self, 'file_operation_results') and self.file_operation_results:
+            file_count = len([r for r in self.file_operation_results.values() 
+                            if isinstance(r, dict) and 'verified' in r])
+            
+            # Extract performance data if available
+            perf_data = getattr(self, 'file_operation_performance', {})
+            
+            # Create a minimal FileOperationResult for compatibility
+            result = FileOperationResult()
+            result.success = True
+            result.files_processed = file_count
+            result.value = self.file_operation_results
+            
+            # Add performance data if available
+            if isinstance(perf_data, dict):
+                result.bytes_processed = perf_data.get('bytes_processed', 0)
+                result.duration_seconds = perf_data.get('total_time_seconds', 0)
+                result.average_speed_mbps = perf_data.get('average_speed_mbps', 0)
+            elif isinstance(perf_data, str):
+                # Legacy: performance data as string
+                result._legacy_performance_string = perf_data
+            
+            # Add output directory
+            if hasattr(self, 'output_directory'):
+                result.output_directory = self.output_directory
+                
+            return result
+            
+        return None
+    
+    def _reconstruct_zip_result_data(self):
+        """Reconstruct ZIP result data from legacy attributes"""
+        from core.result_types import ArchiveOperationResult
+        
+        if hasattr(self, 'zip_archives_created') and self.zip_archives_created:
+            result = ArchiveOperationResult()
+            result.success = True
+            result.archives_created = self.zip_archives_created
+            
+            # Calculate total size
+            total_size = 0
+            try:
+                for zip_path in self.zip_archives_created:
+                    if hasattr(zip_path, 'stat') and zip_path.exists():
+                        total_size += zip_path.stat().st_size
+                result.total_compressed_size = total_size
+            except:
+                pass
+                
+            return result
+            
+        return None
+    
+    def _show_legacy_completion_message(self):
+        """Legacy completion message method as fallback"""
+        # Build comprehensive success message (original logic)
         message_parts = ["Operation Complete!\n"]
         
         # Add file copy summary with performance data
@@ -651,23 +762,28 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'output_directory'):
             output_location = str(self.output_directory)
         
-        # Show modal success dialog for final completion
+        # Show modal success dialog for final completion (legacy method)
         SuccessDialog.show_forensic_success(
             "Operation Complete!",
             "\n".join(message_parts),
             f"📁 Output: {output_location}" if output_location else "",
             self
         )
+    
+    def _cleanup_operation_attributes(self):
+        """Clean up temporary operation attributes after success display"""
+        attrs_to_clean = [
+            'zip_archives_created',
+            'reports_generated', 
+            'reports_output_dir',
+            'file_operation_performance',
+            'file_operation_result',
+            'zip_operation_result'
+        ]
         
-        # Clean up temporary attributes
-        if hasattr(self, 'zip_archives_created'):
-            delattr(self, 'zip_archives_created')
-        if hasattr(self, 'reports_generated'):
-            delattr(self, 'reports_generated')
-        if hasattr(self, 'reports_output_dir'):
-            delattr(self, 'reports_output_dir')
-        if hasattr(self, 'file_operation_performance'):
-            delattr(self, 'file_operation_performance')
+        for attr in attrs_to_clean:
+            if hasattr(self, attr):
+                delattr(self, attr)
         
     def _get_report_display_name(self, report_type: str) -> str:
         """Get user-friendly report display name"""

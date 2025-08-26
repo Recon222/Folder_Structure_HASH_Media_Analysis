@@ -7,6 +7,7 @@ Batch queue widget for managing batch processing jobs
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
+import time
 import uuid
 
 from PySide6.QtCore import Signal, Qt, QTimer
@@ -306,15 +307,32 @@ class BatchQueueWidget(QWidget):
         
         if file_path:
             try:
+                start_time = time.time()
                 self.batch_queue.save_to_file(Path(file_path))
+                duration = time.time() - start_time
+                
                 self.log_message.emit(f"Saved batch queue to {file_path}")
-                success_error = UIError(
-                    f"Queue saved successfully to {file_path}",
-                    user_message=f"Queue saved to:\n{file_path}",
-                    component="BatchQueueWidget",
-                    severity=ErrorSeverity.INFO
+                
+                # ✅ NEW: Use proper success dialog instead of abusing error system
+                from core.services.success_message_builder import SuccessMessageBuilder
+                from core.services.success_message_data import QueueOperationData
+                from ui.dialogs.success_dialog import SuccessDialog
+                
+                # Create operation data
+                queue_data = QueueOperationData(
+                    operation_type='save',
+                    file_path=Path(file_path),
+                    job_count=len(self.batch_queue.jobs),
+                    file_size_bytes=Path(file_path).stat().st_size if Path(file_path).exists() else 0,
+                    duration_seconds=duration
                 )
-                handle_error(success_error, {'operation': 'save_queue_success', 'file_path': file_path})
+                
+                # Build success message
+                message_builder = SuccessMessageBuilder()
+                message_data = message_builder.build_queue_save_success_message(queue_data)
+                
+                # Show proper success dialog
+                SuccessDialog.show_success_message(message_data, self)
             except Exception as e:
                 error = UIError(
                     f"Queue save failed: {str(e)}",
@@ -332,15 +350,39 @@ class BatchQueueWidget(QWidget):
         
         if file_path:
             try:
+                original_count = len(self.batch_queue.jobs)
+                start_time = time.time()
                 self.batch_queue.load_from_file(Path(file_path))
+                duration = time.time() - start_time
+                new_count = len(self.batch_queue.jobs)
+                loaded_jobs = new_count - original_count  # Calculate actual loaded
+                
                 self.log_message.emit(f"Loaded batch queue from {file_path}")
-                success_error = UIError(
-                    f"Queue loaded successfully: {len(self.batch_queue.jobs)} jobs from {file_path}",
-                    user_message=f"Loaded {len(self.batch_queue.jobs)} job(s) from:\n{file_path}",
-                    component="BatchQueueWidget",
-                    severity=ErrorSeverity.INFO
+                
+                # ✅ NEW: Use proper success dialog instead of abusing error system
+                from core.services.success_message_builder import SuccessMessageBuilder
+                from core.services.success_message_data import QueueOperationData
+                from ui.dialogs.success_dialog import SuccessDialog
+                
+                # Create operation data
+                queue_data = QueueOperationData(
+                    operation_type='load',
+                    file_path=Path(file_path),
+                    job_count=loaded_jobs,
+                    file_size_bytes=Path(file_path).stat().st_size if Path(file_path).exists() else 0,
+                    duration_seconds=duration,
+                    duplicate_jobs_skipped=max(0, (original_count + loaded_jobs) - new_count)
                 )
-                handle_error(success_error, {'operation': 'load_queue_success', 'job_count': len(self.batch_queue.jobs)})
+                
+                # Build success message
+                message_builder = SuccessMessageBuilder()
+                message_data = message_builder.build_queue_load_success_message(queue_data)
+                
+                # Show proper success dialog
+                SuccessDialog.show_success_message(message_data, self)
+                
+                # Update UI to show new jobs
+                self._refresh_table()
             except Exception as e:
                 error = UIError(
                     f"Queue load failed: {str(e)}",
