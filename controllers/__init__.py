@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Business logic controllers
+Enterprise controller layer with service-oriented architecture
 """
 
-from .file_controller import FileController
+# Service-oriented controllers
+from .base_controller import BaseController
+from .workflow_controller import WorkflowController
 from .report_controller import ReportController
-from .folder_controller import FolderController
 from .hash_controller import HashController
+from .zip_controller import ZipController
 
-__all__ = ['FileController', 'ReportController', 'FolderController', 'HashController']
+__all__ = [
+    'BaseController', 'WorkflowController', 'ReportController', 
+    'HashController', 'ZipController'
+]

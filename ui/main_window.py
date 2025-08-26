@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QGroupBox, QComboBox, QCheckBox, QPushButton, QLabel
 )
 
-from controllers import FileController, ReportController, FolderController
+from controllers import WorkflowController, ReportController, HashController
 from controllers.zip_controller import ZipController
 from core.models import FormData
 from core.settings_manager import settings
@@ -52,11 +52,19 @@ class MainWindow(QMainWindow):
         self.output_directory = None
         self.last_output_directory = None
         
+        # Configure services first (includes success message service integration)
+        from core.services import configure_services
+        
         # Initialize controllers
-        self.file_controller = FileController()
-        self.folder_controller = FolderController()
         self.zip_controller = ZipController(self.settings)
-        self.report_controller = ReportController(self.settings, self.zip_controller)
+        
+        # Configure services with dependencies
+        configure_services(self.zip_controller)
+        
+        # Initialize new service-oriented controllers
+        self.workflow_controller = WorkflowController()
+        self.report_controller = ReportController(self.zip_controller)
+        self.hash_controller = HashController()
         
         # Initialize error notification system
         self.error_notification_manager = None  # Will be created after UI setup
@@ -100,8 +108,8 @@ class MainWindow(QMainWindow):
         self.batch_tab.log_message.connect(self.log)
         self.tabs.addTab(self.batch_tab, "Batch Processing")
         
-        # Hashing tab
-        self.hashing_tab = HashingTab()
+        # Hashing tab with enhanced controller
+        self.hashing_tab = HashingTab(self.hash_controller)
         self.hashing_tab.log_message.connect(self.log)
         self.tabs.addTab(self.hashing_tab, "Hashing")
         
@@ -271,15 +279,28 @@ class MainWindow(QMainWindow):
         # Get performance monitor if it exists
         perf_monitor = getattr(self, 'performance_monitor', None) if hasattr(self, 'performance_monitor') else None
         
-        # Start file operation
-        self.file_thread = self.file_controller.process_forensic_files(
-            self.form_data,
-            files,
-            folders,
-            self.output_directory,
-            calculate_hash,
-            perf_monitor
+        # Start file operation using new WorkflowController
+        workflow_result = self.workflow_controller.process_forensic_workflow(
+            form_data=self.form_data,
+            files=files,
+            folders=folders,
+            output_directory=self.output_directory,
+            calculate_hash=calculate_hash,
+            performance_monitor=perf_monitor
         )
+        
+        if not workflow_result.success:
+            # Handle workflow setup error
+            error = UIError(
+                f"Workflow setup failed: {workflow_result.error.message}",
+                user_message=workflow_result.error.user_message,
+                component="MainWindow"
+            )
+            handle_error(error, {'operation': 'workflow_setup'})
+            return
+        
+        # Extract thread from successful result
+        self.file_thread = workflow_result.value
         
         # Connect signals (nuclear migration: use unified signals)
         self.file_thread.progress_update.connect(self.update_progress_with_status)
@@ -384,12 +405,15 @@ class MainWindow(QMainWindow):
         self.log(message)
     
     def on_operation_finished_result(self, result):
-        """Handle operation completion using Result objects (NEW: no conversions)"""
+        """Handle operation completion using Result objects with WorkflowController integration"""
         from core.result_types import Result, FileOperationResult
         
         if result.success:
             # ✅ NEW: Store Result object directly for new architecture
             self.file_operation_result = result
+            
+            # ✅ NEW: Also store in workflow controller for success message integration
+            self.workflow_controller.store_operation_results(file_result=result)
             
             # ✅ COMPATIBILITY: Still call legacy handler for existing integrations
             # This ensures existing PDF generation and ZIP creation still work
@@ -406,8 +430,15 @@ class MainWindow(QMainWindow):
             if hasattr(result, 'metadata') and result.metadata:
                 results.update(result.metadata)
                 
+            # Ensure results has the expected structure for generate_reports()
+            # If results is empty or missing expected keys, we can't generate reports
+            if not results or not any('dest_path' in str(v) for v in results.values() if isinstance(v, dict)):
+                self.log("Warning: Cannot generate reports - missing destination path information")
+                # Skip report generation and proceed to ZIP or completion
+                results = {}
+                
             # Store performance data as string for legacy compatibility
-            if isinstance(result, FileOperationResult) and result.has_performance_data():
+            if isinstance(result, FileOperationResult) and result.files_processed > 0:
                 perf_lines = [
                     f"Files: {result.files_processed}",
                     f"Size: {result.bytes_processed / (1024 * 1024):.1f} MB",
@@ -441,8 +472,23 @@ class MainWindow(QMainWindow):
     def generate_reports(self):
         """Generate PDF reports and hash verification CSV based on user settings"""
         try:
-            # Get the output directory structure
-            file_dest_path = Path(list(self.file_operation_results.values())[0]['dest_path'])
+            # Check if we have valid file operation results
+            if not self.file_operation_results:
+                self.log("Cannot generate reports - no file operation results available")
+                self.show_final_completion_message()
+                return
+                
+            # Find a result entry with dest_path
+            file_dest_path = None
+            for result_value in self.file_operation_results.values():
+                if isinstance(result_value, dict) and 'dest_path' in result_value:
+                    file_dest_path = Path(result_value['dest_path'])
+                    break
+                    
+            if not file_dest_path:
+                self.log("Cannot generate reports - no destination path found in results")
+                self.show_final_completion_message()
+                return
             
             # Navigate to root folder (occurrence number level)
             # Current structure might be: output_base/OccurrenceNumber/Business @ Address/DateTime/
@@ -568,12 +614,16 @@ class MainWindow(QMainWindow):
                 self.log(f"Created {len(created_archives)} ZIP archive(s)")
                 # Store ZIP results for final summary
                 self.zip_archives_created = created_archives
+                # ✅ NEW: Store Result object for success message integration
+                self.zip_operation_result = result
                 # Show final completion message that includes everything
                 self.show_final_completion_message()
             else:
                 # Handle error result
                 error_msg = result.error.user_message if result.error else "ZIP creation failed"
                 self.log(f"ZIP creation failed: {error_msg}")
+                # ✅ NEW: Store failed Result object for success message integration
+                self.zip_operation_result = result
                 # Still show completion message for consistency
                 self.show_final_completion_message()
         else:
@@ -601,10 +651,9 @@ class MainWindow(QMainWindow):
                 self.show_final_completion_message()
     
     def show_final_completion_message(self):
-        """Show a single final completion message with all results using new architecture"""
+        """Show a single final completion message with all results using service-integrated architecture"""
         try:
-            # ✅ NEW: Use business logic service instead of UI doing data aggregation
-            from core.services.success_message_builder import SuccessMessageBuilder
+            # ✅ NEW: Use WorkflowController's success message integration
             from ui.dialogs.success_dialog import SuccessDialog
             
             # Collect operation results (if available)
@@ -612,13 +661,25 @@ class MainWindow(QMainWindow):
             report_results = getattr(self, 'reports_generated', None)
             zip_result = getattr(self, 'zip_operation_result', None)
             
-            # If we have native Result objects, use the new v2 method
-            if file_result and hasattr(file_result, 'success'):
-                SuccessDialog.show_forensic_success_v2(
-                    file_result, report_results, zip_result, self
-                )
-            else:
-                # ✅ FALLBACK: Use business logic service to build from legacy data
+            # Store results in workflow controller for success message building
+            self.workflow_controller.store_operation_results(
+                file_result=file_result,
+                report_results=report_results,
+                zip_result=zip_result
+            )
+            
+            # Use workflow controller's service-integrated success message building
+            success_data = self.workflow_controller.build_success_message()
+            SuccessDialog.show_success_message(success_data, self)
+            
+            # Clear stored results to prevent memory leaks
+            self.workflow_controller.clear_stored_results()
+            
+        except Exception as e:
+            logger.error(f"Success message integration failed: {e}")
+            # ✅ FALLBACK: Use legacy business logic service directly
+            try:
+                from core.services.success_message_builder import SuccessMessageBuilder
                 message_builder = SuccessMessageBuilder()
                 
                 # Reconstruct file result data from legacy attributes
@@ -634,10 +695,10 @@ class MainWindow(QMainWindow):
                 # Show using new dialog method
                 SuccessDialog.show_success_message(message_data, self)
                 
-        except Exception as e:
-            # ✅ GRACEFUL FALLBACK: If new system fails, use legacy approach
-            self.log(f"Warning: New success system failed ({str(e)}), using legacy approach")
-            self._show_legacy_completion_message()
+            except Exception as fallback_error:
+                # ✅ GRACEFUL FALLBACK: If new system fails completely, use legacy approach
+                self.log(f"Warning: New success system failed ({str(fallback_error)}), using legacy approach")
+                self._show_legacy_completion_message()
         
         # Clean up temporary attributes
         self._cleanup_operation_attributes()

@@ -30,7 +30,7 @@ from .folder_operations import FolderStructureThread
 from ..path_utils import ForensicPathBuilder
 from ..settings_manager import settings
 from ..logger import logger
-from controllers.file_controller import FileController
+from controllers.workflow_controller import WorkflowController
 
 
 class BatchProcessorThread(BaseWorkerThread):
@@ -468,16 +468,36 @@ class BatchProcessorThread(BaseWorkerThread):
                 self.handle_error(error, {'job_id': job.job_id, 'validation': 'empty_selection'})
                 return Result.error(error)
                 
-            # Use proven FileController pipeline instead of broken inline implementation
-            file_controller = FileController()
-            folder_thread = file_controller.process_forensic_files(
-                job.form_data,
-                job.files,
-                job.folders, 
-                Path(job.output_directory),
+            # Use proven WorkflowController pipeline with service integration
+            workflow_controller = WorkflowController()
+            workflow_result = workflow_controller.process_forensic_workflow(
+                form_data=job.form_data,
+                files=job.files,
+                folders=job.folders, 
+                output_directory=Path(job.output_directory),
                 calculate_hash=settings.calculate_hashes,
                 performance_monitor=None  # Simplified for batch mode
             )
+            
+            # Check workflow setup result
+            if not workflow_result.success:
+                # WorkflowController setup failed
+                error = FileOperationError(
+                    f"Workflow setup failed for job {job.job_id}: {workflow_result.error.message}",
+                    user_message="Failed to setup file processing workflow. Please check form data and file paths.",
+                    context={
+                        'job_id': job.job_id,
+                        'job_name': job.job_name,
+                        'files_count': len(job.files),
+                        'folders_count': len(job.folders),
+                        'output_directory': job.output_directory
+                    }
+                )
+                self.handle_error(error, {'stage': 'workflow_setup', 'job_id': job.job_id})
+                return Result.error(error)
+            
+            # Extract thread from successful workflow result
+            folder_thread = workflow_result.value
             
             # Execute synchronously within batch thread using proven forensic pipeline
             success, message, results = self._execute_folder_thread_sync(folder_thread)

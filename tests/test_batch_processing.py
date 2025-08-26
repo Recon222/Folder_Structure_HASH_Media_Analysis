@@ -105,8 +105,8 @@ class TestBatchProcessing:
         queue.remove_job(batch_job.job_id)
         assert len(queue.jobs) == 0
     
-    def test_batch_processor_file_controller_integration(self, batch_job, temp_dirs):
-        """Test the FileController integration in batch processing (simplified)"""
+    def test_batch_processor_workflow_controller_integration(self, batch_job, temp_dirs):
+        """Test the WorkflowController integration in batch processing (updated architecture)"""
         src_dir, dst_dir = temp_dirs
         
         # Update batch job with proper paths
@@ -123,16 +123,22 @@ class TestBatchProcessing:
             def __init__(self):
                 self.zip_controller = MockZipController()
         
-        # Test that the batch processor can create a FileController
-        from controllers.file_controller import FileController
-        file_controller = FileController()
+        # Test that the batch processor can create a WorkflowController (updated for new architecture)
+        # NOTE: FileController has been replaced with WorkflowController in service-oriented architecture
+        from controllers.workflow_controller import WorkflowController
+        from core.services import configure_services
         
-        # Test that FileController can create a proper thread
-        folder_thread = file_controller.process_forensic_files(
-            batch_job.form_data,
-            batch_job.files,
-            batch_job.folders,
-            Path(batch_job.output_directory),
+        # Configure services for testing
+        configure_services()
+        
+        workflow_controller = WorkflowController()
+        
+        # Test that WorkflowController can create a proper workflow result
+        workflow_result = workflow_controller.process_forensic_workflow(
+            form_data=batch_job.form_data,
+            files=batch_job.files,
+            folders=batch_job.folders,
+            output_directory=Path(batch_job.output_directory),
             calculate_hash=False  # Disable hashing for faster test
         )
         
@@ -291,19 +297,20 @@ class TestBatchProcessing:
         processor.cancelled = True
         assert processor.cancelled is True
         
-        # Test that FileController creates cancellable threads
-        from controllers.file_controller import FileController
-        file_controller = FileController()
-        folder_thread = file_controller.process_forensic_files(
-            batch_job.form_data,
-            batch_job.files,
-            batch_job.folders,
-            Path(batch_job.output_directory),
+        # Test that WorkflowController creates cancellable threads (updated architecture)
+        workflow_controller = WorkflowController()
+        workflow_result = workflow_controller.process_forensic_workflow(
+            form_data=batch_job.form_data,
+            files=batch_job.files,
+            folders=batch_job.folders,
+            output_directory=Path(batch_job.output_directory),
             calculate_hash=False
         )
         
-        # Test that the thread has a cancellation mechanism
-        assert hasattr(folder_thread, 'cancelled')
+        # Test that the workflow result is successful and contains a cancellable thread
+        assert workflow_result.success, "Workflow should succeed"
+        folder_thread = workflow_result.value
+        assert hasattr(folder_thread, 'cancelled'), "Thread should have cancellation mechanism"
         folder_thread.cancelled = True
         assert folder_thread.cancelled is True
         

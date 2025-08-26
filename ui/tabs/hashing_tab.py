@@ -30,12 +30,12 @@ class HashingTab(QWidget):
     log_message = Signal(str)
     status_message = Signal(str)
     
-    def __init__(self, parent=None):
-        """Initialize hashing tab"""
+    def __init__(self, hash_controller: Optional[HashController] = None, parent=None):
+        """Initialize hashing tab with enhanced controller integration"""
         super().__init__(parent)
         
         # Controllers and utilities
-        self.hash_controller = HashController()
+        self.hash_controller = hash_controller or HashController()
         self.report_generator = HashReportGenerator()
         
         # Current operation results

@@ -51,7 +51,7 @@ class SuccessMessageBuilder:
         summary_lines.append(f"✓ Copied {file_result.files_processed} files")
         
         # Performance summary
-        if file_result.has_performance_data():
+        if file_result.files_processed > 0 and file_result.duration_seconds > 0:
             perf_summary = self._build_performance_summary(file_result)
             summary_lines.append(perf_summary)
         
@@ -343,7 +343,7 @@ class SuccessMessageBuilder:
     
     def _build_performance_summary(self, file_result: FileOperationResult) -> str:
         """Build performance summary from file operation result."""
-        if not file_result.has_performance_data():
+        if not (file_result.files_processed > 0 and file_result.duration_seconds > 0):
             return ""
         
         lines = [
@@ -415,7 +415,7 @@ class SuccessMessageBuilder:
     
     def _extract_performance_dict(self, file_result: FileOperationResult) -> Dict[str, any]:
         """Extract performance data as dictionary for compatibility."""
-        if not file_result.has_performance_data():
+        if not (file_result.files_processed > 0 and file_result.duration_seconds > 0):
             return {}
         
         return {
