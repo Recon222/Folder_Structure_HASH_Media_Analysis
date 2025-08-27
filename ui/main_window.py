@@ -1075,10 +1075,36 @@ class MainWindow(QMainWindow):
     def showEvent(self, event):
         """Handle window show to ensure notifications are positioned correctly"""
         super().showEvent(event)
+        
+        # Center window on first show
+        if not hasattr(self, '_window_centered'):
+            self._center_on_screen()
+            self._window_centered = True
+            
         if hasattr(self, 'error_notification_manager') and self.error_notification_manager:
             self.error_notification_manager._update_position()
     
     
+    def _center_on_screen(self):
+        """Center the main window on the primary screen"""
+        from PySide6.QtWidgets import QApplication
+        
+        try:
+            # Center on primary screen (no parent for MainWindow)
+            screen = QApplication.primaryScreen()
+            screen_geometry = screen.availableGeometry()
+            screen_center = screen_geometry.center()
+            
+            # Calculate position to center this window using SuccessDialog pattern
+            window_rect = self.geometry()
+            new_x = screen_center.x() - window_rect.width() // 2
+            new_y = screen_center.y() - window_rect.height() // 2
+            
+            self.move(new_x, new_y)
+        except Exception as e:
+            # Log warning but don't fail application startup
+            logger.warning(f"Failed to center window on screen: {e}")
+
     def _test_error_notification(self, severity: str):
         """
         Test error notification system with different severity levels
