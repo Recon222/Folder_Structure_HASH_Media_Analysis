@@ -380,3 +380,8 @@ class UserSettingsDialog(QDialog):
         # Single setting controls both hash calculation and CSV generation
         self.settings.set('calculate_hashes', self.generate_hash_csv_check.isChecked())
         self.settings.set('generate_hash_csv', self.generate_hash_csv_check.isChecked())
+    
+    def accept(self):
+        """Override accept to save settings before closing"""
+        self.save_settings()
+        super().accept()
