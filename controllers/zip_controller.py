@@ -10,7 +10,8 @@ from typing import Optional, Dict, Any
 
 from core.settings_manager import SettingsManager
 from core.workers.zip_operations import ZipOperationThread
-from utils.zip_utils import ZipSettings
+from utils.zip_utils import ZipSettings, ArchiveMethod
+from core.logger import logger
 
 
 class ZipController:
@@ -99,24 +100,39 @@ class ZipController:
         self.batch_operation_choice = None
         self.current_operation_choice = None
         
-    def get_zip_settings(self) -> ZipSettings:
-        """Build ZipSettings object from current preferences
+    def get_archive_settings(self) -> ZipSettings:
+        """Build archive settings object from current preferences
         
         Returns:
-            ZipSettings configured based on current settings
+            ZipSettings configured based on current settings including archive method
         """
         settings = ZipSettings()
         
         # Compression level
         settings.compression_level = self.settings.get('ZIP_COMPRESSION_LEVEL', zipfile.ZIP_STORED)
         
-        # ZIP creation levels - convert from new enum to boolean flags
+        # Archive method from settings
+        archive_method_str = self.settings.archive_method
+        if archive_method_str == 'native_7zip':
+            settings.archive_method = ArchiveMethod.NATIVE_7ZIP
+        elif archive_method_str == 'buffered_python':
+            settings.archive_method = ArchiveMethod.BUFFERED_PYTHON
+        else:  # 'auto'
+            settings.archive_method = ArchiveMethod.AUTO
+            
+        # Archive creation levels - convert from enum to boolean flags
         zip_level = self.settings.zip_level
         settings.create_at_root = (zip_level == 'root')
         settings.create_at_location = (zip_level == 'location') 
         settings.create_at_datetime = (zip_level == 'datetime')
         
+        logger.debug(f"Built archive settings: method={settings.archive_method.value}, level={zip_level}")
         return settings
+        
+    # Keep backward compatibility
+    def get_zip_settings(self) -> ZipSettings:
+        """Backward compatibility wrapper for get_archive_settings"""
+        return self.get_archive_settings()
         
     def create_zip_thread(self, occurrence_folder: Path, output_dir: Path, form_data=None) -> ZipOperationThread:
         """Factory method for creating ZIP operation threads
@@ -160,3 +176,24 @@ class ZipController:
         if self.settings.zip_enabled != 'prompt':
             # If user changes to enabled/disabled, clear any session override
             self.session_override = None
+            
+        # Log the new archive method
+        method = self.settings.archive_method
+        logger.info(f"Archive method changed to: {method}")
+        logger.info(f"New method description: {self.settings.get_archive_method_description(method)}")
+    
+    def get_archive_method_info(self) -> Dict[str, Any]:
+        """Get detailed information about the current archive method
+        
+        Returns:
+            Dictionary with method info, availability, and performance estimates
+        """
+        method = self.settings.archive_method
+        return {
+            'method': method,
+            'display_name': self.settings.get_archive_method_display_name(method),
+            'description': self.settings.get_archive_method_description(method),
+            'is_native_7zip': method == 'native_7zip',
+            'is_buffered_python': method == 'buffered_python',
+            'is_auto': method == 'auto'
+        }

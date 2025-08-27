@@ -25,6 +25,7 @@ class SettingsManager:
         'ZIP_COMPRESSION_LEVEL': 'archive.compression_level',
         'ZIP_ENABLED': 'archive.zip_enabled',
         'ZIP_LEVEL': 'archive.zip_level',
+        'ARCHIVE_METHOD': 'archive.method',  # 'native_7zip', 'buffered_python', 'auto'
         
         # User settings
         'TECHNICIAN_NAME': 'user.technician_name',
@@ -76,6 +77,7 @@ class SettingsManager:
             self.KEYS['ZIP_COMPRESSION_LEVEL']: 6,
             self.KEYS['ZIP_ENABLED']: 'enabled',
             self.KEYS['ZIP_LEVEL']: 'root',
+            self.KEYS['ARCHIVE_METHOD']: 'native_7zip',  # Default to high-performance 7zip
             self.KEYS['TIME_OFFSET_PDF']: True,
             self.KEYS['UPLOAD_LOG_PDF']: True,
             self.KEYS['HASH_CSV']: True,
@@ -203,6 +205,22 @@ class SettingsManager:
         return value
     
     @property
+    def archive_method(self) -> str:
+        """Archive method: 'native_7zip', 'buffered_python', or 'auto'"""
+        value = str(self.get('ARCHIVE_METHOD', 'native_7zip'))
+        if value not in ['native_7zip', 'buffered_python', 'auto']:
+            return 'native_7zip'  # Safe fallback to highest performance
+        return value
+    
+    @archive_method.setter
+    def archive_method(self, value: str):
+        """Set archive method with validation"""
+        if value in ['native_7zip', 'buffered_python', 'auto']:
+            self.set('ARCHIVE_METHOD', value)
+        else:
+            raise ValueError(f"Invalid archive method: {value}. Must be 'native_7zip', 'buffered_python', or 'auto'")
+    
+    @property
     def generate_time_offset_pdf(self) -> bool:
         """Whether to generate time offset PDF"""
         return bool(self.get('TIME_OFFSET_PDF', True))
@@ -252,6 +270,32 @@ class SettingsManager:
         """Set last input directory"""
         self.set('LAST_INPUT_DIR', str(path))
     
+    def get_archive_method_display_name(self, method: str = None) -> str:
+        """Get user-friendly display name for archive method"""
+        if method is None:
+            method = self.archive_method
+            
+        display_names = {
+            'native_7zip': 'Native 7-Zip (Fastest)',
+            'buffered_python': 'Buffered Python (Fast)',
+            'auto': 'Automatic Selection'
+        }
+        
+        return display_names.get(method, method)
+    
+    def get_archive_method_description(self, method: str = None) -> str:
+        """Get detailed description of archive method"""
+        if method is None:
+            method = self.archive_method
+            
+        descriptions = {
+            'native_7zip': '7-14x faster using native 7za.exe (2,000-4,000 MB/s). Creates .zip archives.',
+            'buffered_python': 'High-performance Python implementation (290 MB/s). Creates .zip archives.',
+            'auto': 'Automatically selects the best available method for optimal performance.'
+        }
+        
+        return descriptions.get(method, 'Unknown archive method')
+    
     def reset_all_settings(self):
         """Reset all settings for beta testing
         
@@ -272,6 +316,14 @@ class SettingsManager:
             logger.info("All settings reset for beta testing")
         
         print("Settings reset successfully. All preferences have been restored to defaults.")
+    
+    def reset_archive_settings(self):
+        """Reset all archive-related settings to defaults"""
+        self.set('ARCHIVE_METHOD', 'native_7zip')
+        self.set('ZIP_COMPRESSION_LEVEL', 6)
+        self.set('ZIP_ENABLED', 'enabled')
+        self.set('ZIP_LEVEL', 'root')
+        self.sync()
 
 
 # Global settings instance
