@@ -29,8 +29,8 @@ class ZipSettingsDialog(QDialog):
         
         self.setWindowTitle("Archive Settings")
         self.setModal(True)
-        self.setMinimumWidth(500)
-        self.setFixedHeight(550)  # Increased height for archive method section
+        self.setMinimumWidth(550)  # Increased width to accommodate performance text
+        self.setFixedHeight(580)  # Increased height for better spacing in archive method section
         
         # Create UI
         self._create_ui()
@@ -45,7 +45,7 @@ class ZipSettingsDialog(QDialog):
         
         # Archive Method group (highest priority - at top)
         method_group = QGroupBox("Archive Method")
-        method_layout = QVBoxLayout()
+        method_layout = QVBoxLayout()  # No custom spacing - match other sections
         
         self.archive_method_group = QButtonGroup()
         self.archive_method_group.setExclusive(True)

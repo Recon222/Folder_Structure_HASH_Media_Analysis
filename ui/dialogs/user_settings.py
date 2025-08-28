@@ -64,31 +64,6 @@ class UserSettingsDialog(QDialog):
         tab = QWidget()
         layout = QVBoxLayout()
         
-        # Performance group
-        perf_group = QGroupBox("Performance")
-        perf_layout = QVBoxLayout()
-        
-        # Buffer size setting
-        buffer_layout = QHBoxLayout()
-        buffer_label = QLabel("File copy buffer size (KB):")
-        buffer_layout.addWidget(buffer_label)
-        
-        self.buffer_spin = QSpinBox()
-        self.buffer_spin.setMinimum(64)
-        self.buffer_spin.setMaximum(8192)
-        self.buffer_spin.setSingleStep(64)
-        self.buffer_spin.setSuffix(" KB")
-        self.buffer_spin.setToolTip(
-            "Larger buffer sizes may improve performance for large files.\n"
-            "Default: 1024 KB"
-        )
-        buffer_layout.addWidget(self.buffer_spin)
-        buffer_layout.addStretch()
-        
-        perf_layout.addLayout(buffer_layout)
-        
-        perf_group.setLayout(perf_layout)
-        layout.addWidget(perf_group)
         
         # UI Behavior group
         ui_group = QGroupBox("User Interface")
@@ -316,10 +291,6 @@ class UserSettingsDialog(QDialog):
         
     def _load_settings(self):
         """Load current settings into the dialog"""
-        # General tab - Performance (legacy)
-        self.buffer_spin.setValue(
-            self.settings.get('copy_buffer_size', 1024)
-        )
         
         # Performance tab settings
         # (Buffered operations are now always enabled)
@@ -357,8 +328,6 @@ class UserSettingsDialog(QDialog):
         
     def save_settings(self):
         """Save settings when dialog is accepted"""
-        # General tab - Performance (legacy)
-        self.settings.set('copy_buffer_size', self.buffer_spin.value())
         
         # Performance tab settings
         # Buffered operations are now always enabled (no setting needed)
