@@ -56,6 +56,36 @@ class IPathService(ABC):
     def build_archive_name(self, form_data: FormData) -> Result[str]:
         """Build archive name using current template"""
         pass
+    
+    @abstractmethod
+    def import_template(self, file_path: Path) -> Result[Dict[str, Any]]:
+        """Import template from JSON file"""
+        pass
+        
+    @abstractmethod
+    def export_template(self, template_id: str, file_path: Path) -> Result[None]:
+        """Export template to JSON file"""
+        pass
+        
+    @abstractmethod
+    def get_template_info(self, template_id: str) -> Result[Dict[str, Any]]:
+        """Get detailed template information"""
+        pass
+        
+    @abstractmethod
+    def validate_template_file(self, file_path: Path) -> Result[List[Dict[str, Any]]]:
+        """Validate template file and return validation issues"""
+        pass
+        
+    @abstractmethod
+    def delete_user_template(self, template_id: str) -> Result[None]:
+        """Delete user-imported template"""
+        pass
+        
+    @abstractmethod
+    def get_template_sources(self) -> List[Dict[str, str]]:
+        """Get available templates grouped by source"""
+        pass
 
 class IFileOperationService(ABC):
     """Interface for file operation services"""

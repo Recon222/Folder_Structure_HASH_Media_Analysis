@@ -1,0 +1,66 @@
+{
+  "version": "1.0.0",
+  "templates": {
+    "advanced_features_demo": {
+      "templateName": "Advanced Features Demo",
+      "templateDescription": "Demonstrates advanced template features including conditional patterns, multiple date formats, prefixes/suffixes, and complex archive naming. Use as a reference for creating sophisticated templates.",
+      "structure": {
+        "levels": [
+          {
+            "pattern": "{occurrence_number}",
+            "prefix": "CASE_",
+            "suffix": "_EVIDENCE",
+            "fallback": "UNKNOWN_CASE_EVIDENCE"
+          },
+          {
+            "pattern": "{business_name}@{location_address}",
+            "conditionals": {
+              "business_only": "BUSINESS_{business_name}",
+              "location_only": "LOCATION_{location_address}",
+              "neither": "NO_BUSINESS_OR_LOCATION"
+            },
+            "fallback": "UNKNOWN_BUSINESS_LOCATION"
+          },
+          {
+            "pattern": "VIDEO_{video_start_datetime}_TO_{video_end_datetime}",
+            "dateFormat": "military",
+            "fallback": "EXTRACTED_ON_{current_datetime}"
+          },
+          {
+            "pattern": "TECH_{technician_name}_BADGE_{badge_number}",
+            "fallback": "UNKNOWN_TECHNICIAN"
+          }
+        ]
+      },
+      "documentsPlacement": "datetime",
+      "archiveNaming": {
+        "pattern": "{occurrence_number}_{business_name}_{year}_COMPLETE_EVIDENCE_PACKAGE.zip",
+        "fallbackPattern": "{occurrence_number}_{year}_EVIDENCE.zip"
+      },
+      "metadata": {
+        "author": "Template System Developer",
+        "agency": "Advanced Features Demo",
+        "version": "1.2.0",
+        "created": "2025-08-28T10:00:00Z",
+        "modified": "2025-08-28T12:00:00Z",
+        "tags": ["advanced", "demo", "features", "reference", "complex"]
+      }
+    },
+    "minimal_example": {
+      "templateName": "Minimal Example",
+      "templateDescription": "The absolute minimum required for a valid template. Shows the bare essentials needed.",
+      "structure": {
+        "levels": [
+          {
+            "pattern": "{occurrence_number}"
+          }
+        ]
+      },
+      "metadata": {
+        "author": "Template System",
+        "version": "1.0.0",
+        "tags": ["minimal", "basic", "simple"]
+      }
+    }
+  }
+}

@@ -8,9 +8,10 @@ import json
 
 from .interfaces import IPathService
 from .base_service import BaseService
+from .template_management_service import TemplateManagementService, TemplateSource
 from ..models import FormData
 from ..result_types import Result
-from ..exceptions import FileOperationError, ErrorSeverity
+from ..exceptions import FileOperationError, TemplateValidationError, ErrorSeverity
 from ..path_utils import ForensicPathBuilder, PathSanitizer
 from ..template_path_builder import TemplatePathBuilder
 
@@ -22,6 +23,10 @@ class PathService(BaseService, IPathService):
         self._path_sanitizer = PathSanitizer()
         self._templates: Dict[str, Dict] = {}
         self._current_template_id: str = "default_forensic"
+        
+        # Initialize template management service
+        self._template_manager = TemplateManagementService()
+        
         self._load_templates()
     
     def build_forensic_path(self, form_data: FormData, base_path: Path) -> Result[Path]:
@@ -103,16 +108,24 @@ class PathService(BaseService, IPathService):
             return Result.error(error)
     
     def _load_templates(self):
-        """Load templates from simple JSON file"""
-        template_file = Path("templates/folder_templates.json")
-        if template_file.exists():
-            try:
-                with open(template_file) as f:
-                    templates_data = json.load(f)
-                    self._templates = templates_data.get("templates", {})
-                    self._log_operation("templates_loaded", f"Loaded {len(self._templates)} templates")
-            except Exception as e:
-                self._log_operation("template_load_failed", str(e), "error")
+        """Load templates from all sources using template management service"""
+        try:
+            # Load all templates through template management service
+            all_templates_result = self._template_manager.get_all_templates()
+            if all_templates_result.success:
+                self._templates = {}
+                for template_info in all_templates_result.value:
+                    self._templates[template_info.template_id] = template_info.template_data
+                
+                self._log_operation("templates_loaded", 
+                                  f"Loaded {len(self._templates)} templates from all sources")
+            else:
+                self._log_operation("template_load_failed", str(all_templates_result.error), "error")
+                self._templates = {}
+                
+        except Exception as e:
+            self._log_operation("template_load_failed", str(e), "error")
+            self._templates = {}
         
         # Ensure default template exists
         if "default_forensic" not in self._templates:
@@ -250,3 +263,141 @@ class PathService(BaseService, IPathService):
             )
             self._handle_error(error, {'method': 'build_archive_name'})
             return Result.error(error)
+    
+    def import_template(self, file_path: Path) -> Result[Dict[str, Any]]:
+        """Import template from JSON file"""
+        try:
+            import_result = self._template_manager.import_template(file_path)
+            if import_result.success:
+                # Reload templates to include newly imported ones
+                self._load_templates()
+                self._log_operation("template_imported", f"Template imported from {file_path}")
+            
+            return import_result
+            
+        except Exception as e:
+            error = TemplateValidationError(
+                f"Template import failed: {e}",
+                user_message="Failed to import template file."
+            )
+            self._handle_error(error, {'method': 'import_template', 'file_path': str(file_path)})
+            return Result.error(error)
+    
+    def export_template(self, template_id: str, file_path: Path) -> Result[None]:
+        """Export template to JSON file"""
+        try:
+            export_result = self._template_manager.export_template(template_id, file_path)
+            if export_result.success:
+                self._log_operation("template_exported", f"Template {template_id} exported to {file_path}")
+            
+            return export_result
+            
+        except Exception as e:
+            error = TemplateValidationError(
+                f"Template export failed: {e}",
+                template_id=template_id,
+                user_message=f"Failed to export template '{template_id}'."
+            )
+            self._handle_error(error, {'method': 'export_template', 'template_id': template_id})
+            return Result.error(error)
+    
+    def get_template_info(self, template_id: str) -> Result[Dict[str, Any]]:
+        """Get detailed template information"""
+        try:
+            all_templates_result = self._template_manager.get_all_templates()
+            if not all_templates_result.success:
+                return Result.error(all_templates_result.error)
+            
+            for template_info in all_templates_result.value:
+                if template_info.template_id == template_id:
+                    return Result.success(template_info.to_dict())
+            
+            error = TemplateValidationError(
+                f"Template {template_id} not found",
+                template_id=template_id,
+                user_message=f"Template '{template_id}' could not be found."
+            )
+            return Result.error(error)
+            
+        except Exception as e:
+            error = TemplateValidationError(
+                f"Failed to get template info: {e}",
+                template_id=template_id,
+                user_message=f"Failed to retrieve information for template '{template_id}'."
+            )
+            self._handle_error(error, {'method': 'get_template_info', 'template_id': template_id})
+            return Result.error(error)
+    
+    def validate_template_file(self, file_path: Path) -> Result[List[Dict[str, Any]]]:
+        """Validate template file and return validation issues"""
+        try:
+            validation_result = self._template_manager.validator.validate_template_file(file_path)
+            if validation_result.success:
+                issues = [issue.to_dict() for issue in validation_result.value]
+                return Result.success(issues)
+            else:
+                return Result.error(validation_result.error)
+                
+        except Exception as e:
+            error = TemplateValidationError(
+                f"Template file validation failed: {e}",
+                user_message="Failed to validate template file."
+            )
+            self._handle_error(error, {'method': 'validate_template_file', 'file_path': str(file_path)})
+            return Result.error(error)
+    
+    def delete_user_template(self, template_id: str) -> Result[None]:
+        """Delete user-imported template"""
+        try:
+            delete_result = self._template_manager.delete_user_template(template_id)
+            if delete_result.success:
+                # Reload templates to reflect deletion
+                self._load_templates()
+                # Update current template if deleted template was active
+                if self._current_template_id == template_id:
+                    self._current_template_id = "default_forensic"
+                self._log_operation("template_deleted", f"Template {template_id} deleted")
+            
+            return delete_result
+            
+        except Exception as e:
+            error = TemplateValidationError(
+                f"Template deletion failed: {e}",
+                template_id=template_id,
+                user_message=f"Failed to delete template '{template_id}'."
+            )
+            self._handle_error(error, {'method': 'delete_user_template', 'template_id': template_id})
+            return Result.error(error)
+    
+    def get_template_sources(self) -> List[Dict[str, str]]:
+        """Get available templates grouped by source"""
+        try:
+            all_templates_result = self._template_manager.get_all_templates()
+            if not all_templates_result.success:
+                return []
+            
+            sources = {}
+            for template_info in all_templates_result.value:
+                source = template_info.source
+                if source not in sources:
+                    sources[source] = []
+                
+                sources[source].append({
+                    "id": template_info.template_id,
+                    "name": template_info.name,
+                    "description": template_info.description
+                })
+            
+            # Convert to list format
+            result = []
+            for source_name, templates in sources.items():
+                result.append({
+                    "source": source_name,
+                    "templates": templates
+                })
+            
+            return result
+            
+        except Exception as e:
+            self._log_operation("get_template_sources_failed", str(e), "warning")
+            return []

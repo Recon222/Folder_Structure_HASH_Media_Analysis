@@ -335,3 +335,47 @@ class UIError(FSAError):
     
     def _generate_user_message(self) -> str:
         return "Interface error occurred. Please try the operation again."
+
+
+class TemplateValidationError(FSAError):
+    """Template validation and import errors"""
+    
+    def __init__(self, message: str, template_id: Optional[str] = None, 
+                 validation_issues: Optional[list] = None, **kwargs):
+        """
+        Initialize template validation error
+        
+        Args:
+            message: Technical error message
+            template_id: ID of template that failed validation
+            validation_issues: List of validation issues found
+            **kwargs: Additional FSAError arguments
+        """
+        self.template_id = template_id
+        self.validation_issues = validation_issues or []
+        
+        context = kwargs.get('context', {})
+        if template_id:
+            context['template_id'] = template_id
+        if validation_issues:
+            context['validation_issues'] = validation_issues
+            context['issue_count'] = len(validation_issues)
+        kwargs['context'] = context
+        
+        # Default to ERROR severity for template validation
+        if 'severity' not in kwargs:
+            kwargs['severity'] = ErrorSeverity.ERROR
+        
+        super().__init__(message, **kwargs)
+    
+    def _generate_user_message(self) -> str:
+        if self.validation_issues:
+            issue_count = len(self.validation_issues)
+            if issue_count == 1:
+                return "Template validation failed with 1 issue. Please check the template format."
+            else:
+                return f"Template validation failed with {issue_count} issues. Please check the template format."
+        elif self.template_id:
+            return f"Template '{self.template_id}' validation failed. Please check the template format."
+        else:
+            return "Template validation failed. Please check the template format and try again."

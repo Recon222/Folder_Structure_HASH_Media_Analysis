@@ -1,0 +1,43 @@
+{
+  "version": "1.0.0",
+  "templates": {
+    "simple_agency": {
+      "templateName": "Simple Agency Structure",
+      "templateDescription": "A straightforward three-level folder structure suitable for small to medium agencies. Easy to understand and implement with minimal complexity.",
+      "structure": {
+        "levels": [
+          {
+            "pattern": "CASE_{occurrence_number}",
+            "fallback": "CASE_UNKNOWN"
+          },
+          {
+            "pattern": "{business_name}_{location_address}",
+            "conditionals": {
+              "business_only": "{business_name}",
+              "location_only": "{location_address}",
+              "neither": "NO_BUSINESS_LOCATION"
+            },
+            "fallback": "UNKNOWN_LOCATION"
+          },
+          {
+            "pattern": "{video_start_datetime}",
+            "dateFormat": "military",
+            "fallback": "{current_datetime}"
+          }
+        ]
+      },
+      "documentsPlacement": "location",
+      "archiveNaming": {
+        "pattern": "{occurrence_number}_{business_name}_Archive.zip",
+        "fallbackPattern": "{occurrence_number}_Archive.zip"
+      },
+      "metadata": {
+        "author": "Template System",
+        "agency": "Generic Agency",
+        "version": "1.0.0",
+        "created": "2025-08-28T10:00:00Z",
+        "tags": ["simple", "generic", "basic", "agency"]
+      }
+    }
+  }
+}

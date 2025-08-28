@@ -182,6 +182,31 @@ class MainWindow(QMainWindow):
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
         
+        # Templates menu
+        templates_menu = menubar.addMenu("Templates")
+        
+        import_template_action = QAction("Import Template...", self)
+        import_template_action.setShortcut("Ctrl+Shift+I")
+        import_template_action.triggered.connect(self._import_template)
+        templates_menu.addAction(import_template_action)
+        
+        export_template_action = QAction("Export Current Template...", self)
+        export_template_action.triggered.connect(self._export_current_template)
+        templates_menu.addAction(export_template_action)
+        
+        templates_menu.addSeparator()
+        
+        manage_templates_action = QAction("Manage Templates...", self)
+        manage_templates_action.setShortcut("Ctrl+Shift+M")
+        manage_templates_action.triggered.connect(self._manage_templates)
+        templates_menu.addAction(manage_templates_action)
+        
+        templates_menu.addSeparator()
+        
+        template_docs_action = QAction("Template Documentation", self)
+        template_docs_action.triggered.connect(self._show_template_documentation)
+        templates_menu.addAction(template_docs_action)
+
         # Settings menu
         settings_menu = menubar.addMenu("Settings")
         
@@ -1027,6 +1052,107 @@ class MainWindow(QMainWindow):
         """Show about dialog"""
         dialog = AboutDialog(self)
         dialog.exec()
+    
+    def _import_template(self):
+        """Import template via main menu"""
+        try:
+            from ui.dialogs.template_import_dialog import show_template_import_dialog
+            if show_template_import_dialog(self):
+                # Refresh forensic tab template selector after successful import
+                if hasattr(self, 'forensic_tab') and hasattr(self.forensic_tab, 'template_selector'):
+                    self.forensic_tab.template_selector._load_templates()
+                logger.info("Template imported successfully via main menu")
+        except Exception as e:
+            logger.error(f"Template import error from main menu: {e}")
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.critical(self, "Import Error", f"Failed to import template:\n\n{e}")
+    
+    def _export_current_template(self):
+        """Export current template via main menu"""
+        try:
+            # Get current template from forensic tab selector
+            if hasattr(self, 'forensic_tab') and hasattr(self.forensic_tab, 'template_selector'):
+                self.forensic_tab.template_selector._export_current_template()
+            else:
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.information(self, "Export Template", "Please select a template in the Forensic tab first.")
+        except Exception as e:
+            logger.error(f"Template export error from main menu: {e}")
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.critical(self, "Export Error", f"Failed to export template:\n\n{e}")
+    
+    def _manage_templates(self):
+        """Manage templates via main menu"""
+        try:
+            from ui.dialogs.template_management_dialog import TemplateManagementDialog
+            dialog = TemplateManagementDialog(self)
+            dialog.templates_changed.connect(self._on_templates_changed)
+            dialog.exec()
+        except ImportError:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.information(
+                self, 
+                "Coming Soon", 
+                "Advanced template management features are coming in a future update.\n\n"
+                "Current available options:\n"
+                "• Import Template (Ctrl+Shift+I)\n"
+                "• Export Template\n"
+                "• Template selector in Forensic tab"
+            )
+        except Exception as e:
+            logger.error(f"Template management error from main menu: {e}")
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.critical(self, "Management Error", f"Failed to open template management:\n\n{e}")
+    
+    def _show_template_documentation(self):
+        """Show template documentation"""
+        from PySide6.QtWidgets import QMessageBox
+        from PySide6.QtCore import Qt
+        
+        doc_text = """
+<h3>Folder Structure Templates</h3>
+<p>Templates define how your folder structures are organized for different agencies and use cases.</p>
+
+<h4>Available Templates:</h4>
+<ul>
+<li><b>Default Forensic:</b> Standard law enforcement structure</li>
+<li><b>RCMP Basic:</b> Royal Canadian Mounted Police format</li>
+<li><b>Generic Agency:</b> Simple three-level structure</li>
+</ul>
+
+<h4>Template Features:</h4>
+<ul>
+<li><b>Import Templates:</b> Load custom JSON templates from files</li>
+<li><b>Export Templates:</b> Save templates to share with other agencies</li>
+<li><b>Conditional Patterns:</b> Templates adapt to available data</li>
+<li><b>Date Formats:</b> Military (28AUG25) or ISO (2025-08-28) formatting</li>
+</ul>
+
+<h4>Available Fields:</h4>
+<p>Templates can use these form fields: <code>occurrence_number</code>, <code>business_name</code>, 
+<code>location_address</code>, <code>video_start_datetime</code>, <code>video_end_datetime</code>, 
+<code>technician_name</code>, <code>badge_number</code>, and computed fields like <code>current_datetime</code>.</p>
+
+<p><b>Location:</b> System templates are in <code>templates/folder_templates.json</code><br>
+<b>User Templates:</b> Stored in your user data directory</p>
+        """
+        
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Template Documentation")
+        msg.setTextFormat(Qt.RichText)
+        msg.setText(doc_text)
+        msg.setStandardButtons(QMessageBox.Ok)
+        msg.exec()
+    
+    def _on_templates_changed(self):
+        """Handle templates changed signal from management dialog"""
+        try:
+            # Refresh forensic tab template selector
+            if hasattr(self, 'forensic_tab') and hasattr(self.forensic_tab, 'template_selector'):
+                self.forensic_tab.template_selector._load_templates()
+            logger.info("Templates refreshed after management changes")
+        except Exception as e:
+            logger.error(f"Error refreshing templates: {e}")
         
     def closeEvent(self, event):
         """Properly clean up all threads before closing

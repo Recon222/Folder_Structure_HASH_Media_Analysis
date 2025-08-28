@@ -1,0 +1,45 @@
+{
+  "version": "1.0.0",
+  "templates": {
+    "rcmp_advanced": {
+      "templateName": "RCMP Advanced Structure",
+      "templateDescription": "Complete RCMP folder structure with metadata tracking and evidence organization. Designed for Royal Canadian Mounted Police digital forensics operations with comprehensive case management.",
+      "structure": {
+        "levels": [
+          {
+            "pattern": "FILE_{occurrence_number}_{year}",
+            "fallback": "FILE_NO_CASE_{year}",
+            "prefix": "",
+            "suffix": ""
+          },
+          {
+            "pattern": "{location_address}_{business_name}",
+            "conditionals": {
+              "business_only": "BUSINESS_{business_name}",
+              "location_only": "LOCATION_{location_address}",
+              "neither": "NO_LOCATION_INFO"
+            },
+            "fallback": "UNKNOWN_LOCATION"
+          },
+          {
+            "pattern": "{video_start_datetime}_to_{video_end_datetime}_UTC",
+            "dateFormat": "iso",
+            "fallback": "EXTRACTED_{current_datetime}_UTC"
+          }
+        ]
+      },
+      "documentsPlacement": "occurrence",
+      "archiveNaming": {
+        "pattern": "RCMP_{occurrence_number}_{year}_{business_name}_Evidence.zip",
+        "fallbackPattern": "RCMP_{occurrence_number}_Evidence.zip"
+      },
+      "metadata": {
+        "author": "RCMP Digital Forensics Unit",
+        "agency": "Royal Canadian Mounted Police",
+        "version": "2.1.0",
+        "created": "2025-08-28T10:00:00Z",
+        "tags": ["rcmp", "forensics", "evidence", "canada", "law-enforcement"]
+      }
+    }
+  }
+}
