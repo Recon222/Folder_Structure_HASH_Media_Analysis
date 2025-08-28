@@ -75,14 +75,12 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Folder Structure Utility")
         self.resize(1200, 800)
         
-        # CRITICAL FIX: Prevent content-based window resizing
-        # Set minimum and maximum size constraints to prevent dynamic expansion
+        # CRITICAL FIX: Prevent content-based window resizing while allowing user resizing
+        # Set minimum size but NO maximum to allow maximize button to work
         self.setMinimumSize(900, 600)  # Reasonable minimum for usability
-        # Allow user resizing but prevent unlimited growth from content
-        self.setMaximumSize(2000, 1400)  # Generous maximum for large screens
         
-        # Set size policy to maintain user control while preventing content expansion
-        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+        # Allow user resizing and maximize while preventing content-based expansion
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         
         self._setup_ui()
         self._apply_theme()

@@ -116,24 +116,33 @@ class BatchQueueWidget(QWidget):
             "Job Name", "Occurrence #", "Files", "Status", "Duration", "Template", "Edit"
         ])
         
-        # CRITICAL FIX: Configure table to prevent window expansion
+        # RESPONSIVE FIX: Proportional column sizing - all columns always visible
         header = self.queue_table.horizontalHeader()
-        # Change from Stretch to Fixed to prevent window expansion from long job names
-        header.setSectionResizeMode(0, QHeaderView.Fixed)  # Job Name - Fixed width
-        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Occurrence
-        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)  # Files
-        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)  # Status
-        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)  # Duration
-        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)  # Template
-        header.setSectionResizeMode(6, QHeaderView.ResizeToContents)  # Edit
         
-        # Set fixed widths to prevent expansion
-        self.queue_table.setColumnWidth(0, 250)  # Job Name - reasonable fixed width
+        # Use proportional sizing so all columns are always visible without scrolling
+        header.setSectionResizeMode(0, QHeaderView.Stretch)      # Job Name - takes remaining space
+        header.setSectionResizeMode(1, QHeaderView.Interactive)  # Occurrence - user adjustable
+        header.setSectionResizeMode(2, QHeaderView.Interactive)  # Files - user adjustable  
+        header.setSectionResizeMode(3, QHeaderView.Interactive)  # Status - user adjustable
+        header.setSectionResizeMode(4, QHeaderView.Interactive)  # Duration - user adjustable
+        header.setSectionResizeMode(5, QHeaderView.Interactive)  # Template - user adjustable
+        header.setSectionResizeMode(6, QHeaderView.Interactive)  # Edit - user adjustable
         
-        # Enable horizontal scroll instead of window expansion
-        self.queue_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        # Set reasonable proportional widths (Job Name gets remaining space via Stretch)
+        self.queue_table.setColumnWidth(1, 100)  # Occurrence #
+        self.queue_table.setColumnWidth(2, 60)   # Files  
+        self.queue_table.setColumnWidth(3, 80)   # Status
+        self.queue_table.setColumnWidth(4, 70)   # Duration
+        self.queue_table.setColumnWidth(5, 80)   # Template
+        self.queue_table.setColumnWidth(6, 50)   # Edit
         
-        # Prevent table from expanding beyond its container
+        # Disable horizontal scrolling - all columns should fit
+        self.queue_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        
+        # Set minimum column widths to prevent columns from becoming too small
+        header.setMinimumSectionSize(40)  # Minimum for any column
+        
+        # Allow table to expand with window
         self.queue_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         
         self.queue_table.setSelectionBehavior(QTableWidget.SelectRows)
