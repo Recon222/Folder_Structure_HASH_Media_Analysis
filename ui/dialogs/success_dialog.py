@@ -193,30 +193,18 @@ class SuccessDialog(QDialog):
         self.setStyleSheet(stylesheet)
         
     def _center_on_screen(self):
-        """Center dialog on screen or parent widget"""
-        if self.parent():
-            # Center on parent window
-            parent_geometry = self.parent().geometry()
-            parent_center = parent_geometry.center()
-            
-            # Calculate position to center this dialog
-            dialog_rect = self.geometry()
-            new_x = parent_center.x() - dialog_rect.width() // 2
-            new_y = parent_center.y() - dialog_rect.height() // 2
-            
-            self.move(new_x, new_y)
-        else:
-            # Center on primary screen
-            screen = QApplication.primaryScreen()
-            screen_geometry = screen.availableGeometry()
-            screen_center = screen_geometry.center()
-            
-            # Calculate position to center this dialog  
-            dialog_rect = self.geometry()
-            new_x = screen_center.x() - dialog_rect.width() // 2
-            new_y = screen_center.y() - dialog_rect.height() // 2
-            
-            self.move(new_x, new_y)
+        """Always center dialog on primary screen for consistent positioning"""
+        # Always center on primary screen regardless of parent
+        screen = QApplication.primaryScreen()
+        screen_geometry = screen.availableGeometry()
+        screen_center = screen_geometry.center()
+        
+        # Calculate position to center this dialog  
+        dialog_rect = self.geometry()
+        new_x = screen_center.x() - dialog_rect.width() // 2
+        new_y = screen_center.y() - dialog_rect.height() // 2
+        
+        self.move(new_x, new_y)
             
     def show_success(self):
         """Show the success dialog modally and return when user closes it"""

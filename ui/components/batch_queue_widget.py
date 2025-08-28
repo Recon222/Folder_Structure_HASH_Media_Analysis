@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QHeaderView, QMenu, QSplitter, QTextEdit,
     QCheckBox, QComboBox
 )
-from PySide6.QtGui import QAction, QFont
+from PySide6.QtGui import QAction, QFont, QIcon
 
 from core.batch_queue import BatchQueue
 from core.models import BatchJob
@@ -109,7 +109,7 @@ class BatchQueueWidget(QWidget):
         self.queue_table = QTableWidget()
         self.queue_table.setColumnCount(7)
         self.queue_table.setHorizontalHeaderLabels([
-            "Job Name", "Occurrence #", "Files", "Status", "Duration", "Template", "Actions"
+            "Job Name", "Occurrence #", "Files", "Status", "Duration", "Template", "Edit"
         ])
         
         # Configure table
@@ -120,12 +120,13 @@ class BatchQueueWidget(QWidget):
         header.setSectionResizeMode(3, QHeaderView.ResizeToContents)  # Status
         header.setSectionResizeMode(4, QHeaderView.ResizeToContents)  # Duration
         header.setSectionResizeMode(5, QHeaderView.ResizeToContents)  # Template
-        header.setSectionResizeMode(6, QHeaderView.ResizeToContents)  # Actions
+        header.setSectionResizeMode(6, QHeaderView.ResizeToContents)  # Edit
         
         self.queue_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.queue_table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.queue_table.customContextMenuRequested.connect(self._show_context_menu)
         self.queue_table.itemSelectionChanged.connect(self._on_selection_changed)
+        self.queue_table.itemClicked.connect(self._on_item_clicked)
         
         layout.addWidget(self.queue_table)
         
@@ -214,13 +215,25 @@ class BatchQueueWidget(QWidget):
         self.batch_queue.job_added.connect(lambda job: self.log_message.emit(f"Added job: {job.job_name}"))
         self.batch_queue.job_removed.connect(lambda job_id: self.log_message.emit(f"Removed job: {job_id}"))
         
+    def _build_job_name(self, form_data) -> str:
+        """Build job name from occurrence number, business name, and address"""
+        parts = [form_data.occurrence_number]
+        
+        if form_data.business_name:
+            parts.append(form_data.business_name)
+        
+        if form_data.location_address:
+            parts.append(form_data.location_address)
+        
+        return " - ".join(parts)
+
     def add_job_from_current(self, form_data, files: List[Path], folders: List[Path], 
                            output_directory: Path, template_type: str = "forensic"):
         """Add a job from current form configuration"""
         import copy
         
         job = BatchJob(
-            job_name=f"{form_data.occurrence_number} - {datetime.now().strftime('%H:%M:%S')}",
+            job_name=self._build_job_name(form_data),
             form_data=copy.deepcopy(form_data),
             files=files.copy(),
             folders=folders.copy(),
@@ -481,7 +494,6 @@ class BatchQueueWidget(QWidget):
         self.processor_thread.job_progress.connect(self._on_job_progress)
         self.processor_thread.job_completed.connect(self._on_job_completed)
         self.processor_thread.queue_progress.connect(self._on_queue_progress)
-        self.processor_thread.queue_completed.connect(self._on_queue_completed)
         
         # NEW: Connect unified result signal for enhanced success messages
         self.processor_thread.result_ready.connect(self._on_batch_result_ready)
@@ -514,8 +526,13 @@ class BatchQueueWidget(QWidget):
         self.overall_progress.setValue(completed)
         self.queue_status_changed.emit(f"Batch: {completed}/{total} jobs completed")
         
-    def _on_queue_completed(self, total: int, successful: int, failed: int):
-        """Handle queue completion signal"""
+    def _on_batch_result_ready(self, result):
+        """Handle batch result with enhanced success message support (NEW)"""
+        from core.result_types import Result
+        from core.services.success_message_builder import SuccessMessageBuilder
+        from core.services.success_message_data import EnhancedBatchOperationData
+        
+        # Handle UI state updates (moved from _on_queue_completed)
         self.processing_active = False
         self.recovery_manager.set_processing_active(False)
         self._update_ui_for_processing_state()
@@ -527,43 +544,7 @@ class BatchQueueWidget(QWidget):
         self.current_job_label.setText("Batch processing completed")
         self.current_job_progress.setVisible(False)
         self.overall_progress.setVisible(False)
-        
-        # Check if enhanced success message was already shown
-        if hasattr(self, '_enhanced_success_shown') and self._enhanced_success_shown:
-            # Enhanced message already handled by _on_batch_result_ready
-            self.log_message.emit(f"Batch processing completed: {successful}/{total} successful (enhanced message shown)")
-            self.queue_status_changed.emit("Ready")
-            # Clean up flag for next batch
-            delattr(self, '_enhanced_success_shown')
-            return
-        
-        # Show completion message with SuccessDialog (LEGACY FALLBACK)
-        message = f"Batch Processing Complete!\n\n"
-        message += f"✓ Total jobs: {total}\n"
-        message += f"✓ Successful: {successful}\n"
-        if failed > 0:
-            message += f"✗ Failed: {failed}"
-        
-        # Add success rate for better user feedback
-        success_rate = (successful / total * 100) if total > 0 else 0
-        message += f"\n\n📊 Success Rate: {success_rate:.1f}%"
-        
-        # Show modal success dialog for batch completion
-        # NOTE: This is the legacy fallback - enhanced message is preferred
-        SuccessDialog.show_batch_success(
-            "Batch Processing Complete!",
-            message,
-            "",  # No additional details needed for batch
-            self.main_window if hasattr(self, 'main_window') and self.main_window else None
-        )
-        self.log_message.emit(f"Batch processing completed: {successful}/{total} successful (legacy fallback)")
         self.queue_status_changed.emit("Ready")
-        
-    def _on_batch_result_ready(self, result):
-        """Handle batch result with enhanced success message support (NEW)"""
-        from core.result_types import Result
-        from core.services.success_message_builder import SuccessMessageBuilder
-        from core.services.success_message_data import EnhancedBatchOperationData
         
         try:
             if not isinstance(result, Result):
@@ -593,9 +574,6 @@ class BatchQueueWidget(QWidget):
                         f"{enhanced_data.total_files_processed} files processed"
                     )
                     
-                    # Prevent legacy success dialog from showing by setting a flag
-                    self._enhanced_success_shown = True
-                    
                 else:
                     # Fall back to basic batch data if available
                     if result.metadata:
@@ -618,8 +596,6 @@ class BatchQueueWidget(QWidget):
                             message_data,
                             self.main_window if hasattr(self, 'main_window') and self.main_window else None
                         )
-                        
-                        self._enhanced_success_shown = True
                     
             else:
                 # Handle batch processing errors
@@ -653,6 +629,17 @@ class BatchQueueWidget(QWidget):
         """Handle table selection changes"""
         has_selection = self.queue_table.selectionModel().hasSelection()
         self.remove_btn.setEnabled(has_selection and not self.processing_active)
+        
+    def _on_item_clicked(self, item):
+        """Handle item clicks - show context menu for edit column"""
+        if item.column() == 6:  # Edit column
+            # Select the row first
+            self.queue_table.selectRow(item.row())
+            
+            # Get the item position and show context menu
+            item_rect = self.queue_table.visualItemRect(item)
+            position = item_rect.center()
+            self._show_context_menu(position)
         
     def _show_context_menu(self, position):
         """Show context menu for queue table"""
@@ -747,6 +734,7 @@ class BatchQueueWidget(QWidget):
         for row, job in enumerate(self.batch_queue.jobs):
             # Job Name
             name_item = QTableWidgetItem(job.job_name)
+            name_item.setToolTip(job.job_name)  # Show full name on hover
             self.queue_table.setItem(row, 0, name_item)
             
             # Occurrence Number
@@ -783,9 +771,11 @@ class BatchQueueWidget(QWidget):
             template_item = QTableWidgetItem(job.template_type.title())
             self.queue_table.setItem(row, 5, template_item)
             
-            # Actions (placeholder for now)
-            actions_item = QTableWidgetItem("...")
-            self.queue_table.setItem(row, 6, actions_item)
+            # Edit button with pencil icon
+            edit_item = QTableWidgetItem("✏️")
+            edit_item.setTextAlignment(Qt.AlignCenter)
+            edit_item.setToolTip("Click to open job menu")
+            self.queue_table.setItem(row, 6, edit_item)
             
         self._update_statistics()
         
