@@ -31,6 +31,31 @@ class IPathService(ABC):
     def sanitize_path_component(self, component: str) -> str:
         """Sanitize individual path component"""
         pass
+    
+    @abstractmethod
+    def get_available_templates(self) -> List[Dict[str, str]]:
+        """Get list of available templates"""
+        pass
+    
+    @abstractmethod
+    def set_current_template(self, template_id: str) -> Result[None]:
+        """Set active template"""
+        pass
+    
+    @abstractmethod
+    def get_current_template_id(self) -> str:
+        """Get current template ID"""
+        pass
+    
+    @abstractmethod
+    def reload_templates(self) -> Result[None]:
+        """Reload templates from storage"""
+        pass
+    
+    @abstractmethod
+    def build_archive_name(self, form_data: FormData) -> Result[str]:
+        """Build archive name using current template"""
+        pass
 
 class IFileOperationService(ABC):
     """Interface for file operation services"""

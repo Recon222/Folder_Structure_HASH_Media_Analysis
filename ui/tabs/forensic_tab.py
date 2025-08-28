@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
 )
 
 from core.models import FormData
-from ui.components import FormPanel, FilesPanel, LogConsole
+from ui.components import FormPanel, FilesPanel, LogConsole, TemplateSelector
 
 
 class ForensicTab(QWidget):
@@ -20,6 +20,7 @@ class ForensicTab(QWidget):
     # Signals
     process_requested = Signal()
     log_message = Signal(str)
+    template_changed = Signal(str)  # template_id
     
     def __init__(self, form_data: FormData, parent=None):
         """Initialize forensic tab
@@ -37,6 +38,10 @@ class ForensicTab(QWidget):
     def _create_ui(self):
         """Create the tab UI"""
         layout = QVBoxLayout(self)
+        
+        # Template selector at top
+        self.template_selector = TemplateSelector()
+        layout.addWidget(self.template_selector)
         
         # Main splitter
         splitter = QSplitter(Qt.Vertical)
@@ -93,6 +98,10 @@ class ForensicTab(QWidget):
         # Process button
         self.process_btn.clicked.connect(self.process_requested)
         
+        # Template selector signals
+        self.template_selector.template_changed.connect(self.template_changed)
+        self.template_selector.template_changed.connect(self._on_template_changed)
+        
     def log(self, message: str):
         """Forward message to parent via signal
         
@@ -118,6 +127,11 @@ class ForensicTab(QWidget):
             enabled: Whether to enable the button
         """
         self.process_btn.setEnabled(enabled)
+    
+    def _on_template_changed(self, template_id: str):
+        """Handle template selection change"""
+        template_name = self.template_selector.template_combo.currentText()
+        self.log(f"Template changed to: {template_name} ({template_id})")
         
     # Example signal handlers (uncomment to use)
     """

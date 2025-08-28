@@ -1,0 +1,91 @@
+{
+  "version": "1.0.0",
+  "templates": {
+    "default_forensic": {
+      "templateName": "Default Forensic Structure",
+      "templateDescription": "Standard forensic folder structure matching current behavior",
+      "structure": {
+        "levels": [
+          {
+            "pattern": "{occurrence_number}",
+            "fallback": "NO_OCCURRENCE"
+          },
+          {
+            "pattern": "{business_name} @ {location_address}",
+            "conditionals": {
+              "business_only": "{business_name}",
+              "location_only": "{location_address}",
+              "neither": "NO_LOCATION"
+            }
+          },
+          {
+            "pattern": "{video_start_datetime}_to_{video_end_datetime}_DVR_Time",
+            "dateFormat": "military",
+            "fallback": "{current_datetime}"
+          }
+        ]
+      },
+      "documentsPlacement": "location",
+      "archiveNaming": {
+        "pattern": "{occurrence_number} {business_name} @ {location_address} Video Recovery.zip",
+        "fallbackPattern": "{occurrence_number}_Video_Recovery.zip"
+      }
+    },
+    "rcmp_basic": {
+      "templateName": "RCMP Basic Structure",
+      "templateDescription": "Basic RCMP folder structure",
+      "structure": {
+        "levels": [
+          {
+            "pattern": "FILE_{occurrence_number}_{year}",
+            "fallback": "FILE_NO_CASE_{year}"
+          },
+          {
+            "pattern": "{location_address}",
+            "fallback": "NO_LOCATION"
+          },
+          {
+            "pattern": "{video_start_datetime}_UTC",
+            "dateFormat": "iso",
+            "fallback": "{current_datetime}_UTC"
+          }
+        ]
+      },
+      "documentsPlacement": "occurrence",
+      "archiveNaming": {
+        "pattern": "FILE_{occurrence_number}_{year}_{business_name}_Evidence.zip",
+        "fallbackPattern": "FILE_{occurrence_number}_Evidence.zip"
+      }
+    },
+    "agency_basic": {
+      "templateName": "Generic Agency Structure",
+      "templateDescription": "Simple three-level structure for other agencies",
+      "structure": {
+        "levels": [
+          {
+            "pattern": "CASE_{occurrence_number}",
+            "fallback": "CASE_UNKNOWN"
+          },
+          {
+            "pattern": "{business_name}_{location_address}",
+            "conditionals": {
+              "business_only": "{business_name}",
+              "location_only": "{location_address}",
+              "neither": "LOCATION_UNKNOWN"
+            }
+          },
+          {
+            "pattern": "{video_start_datetime}",
+            "dateFormat": "iso",
+            "fallback": "{current_datetime}"
+          }
+        ]
+      },
+      "documentsPlacement": "datetime",
+      "archiveNaming": {
+        "pattern": "CASE_{occurrence_number}_{business_name}_Archive.zip",
+        "fallbackPattern": "CASE_{occurrence_number}_Archive.zip"
+      }
+    }
+  }
+}

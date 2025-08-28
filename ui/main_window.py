@@ -151,6 +151,7 @@ class MainWindow(QMainWindow):
         # Connect signals
         forensic_tab.process_requested.connect(self.process_forensic_files)
         forensic_tab.log_message.connect(self.log)
+        forensic_tab.template_changed.connect(self._on_template_changed)
         
         # Store references we need
         self.form_panel = forensic_tab.form_panel
@@ -935,6 +936,12 @@ class MainWindow(QMainWindow):
             'hash_csv': 'Hash Verification CSV'
         }
         return display_names.get(report_type, report_type.replace('_', ' ').title())
+    
+    def _on_template_changed(self, template_id: str):
+        """Handle template change from forensic tab"""
+        # Template change is already handled by PathService
+        # This method provides a hook for any additional UI updates if needed
+        self.log(f"Folder structure template changed: {template_id}")
             
     def log(self, message):
         """Add message to log console"""

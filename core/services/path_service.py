@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-Path service - centralized path building and validation
+Path service - centralized path building and validation with template support
 """
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Any, List
+import json
 
 from .interfaces import IPathService
 from .base_service import BaseService
@@ -11,13 +12,17 @@ from ..models import FormData
 from ..result_types import Result
 from ..exceptions import FileOperationError, ErrorSeverity
 from ..path_utils import ForensicPathBuilder, PathSanitizer
+from ..template_path_builder import TemplatePathBuilder
 
 class PathService(BaseService, IPathService):
-    """Service for path building and validation operations"""
+    """Service for path building and validation operations with template support"""
     
     def __init__(self):
         super().__init__("PathService")
         self._path_sanitizer = PathSanitizer()
+        self._templates: Dict[str, Dict] = {}
+        self._current_template_id: str = "default_forensic"
+        self._load_templates()
     
     def build_forensic_path(self, form_data: FormData, base_path: Path) -> Result[Path]:
         """Build forensic folder structure path with validation"""
@@ -54,10 +59,31 @@ class PathService(BaseService, IPathService):
                     self._handle_error(error, {'method': 'build_forensic_path'})
                     return Result.error(error)
             
-            # Build forensic structure using existing builder
+            # Try template-based path building first
+            try:
+                # Get current template
+                template = self._templates.get(self._current_template_id)
+                if template:
+                    # Build path using template
+                    builder = TemplatePathBuilder(template, self._path_sanitizer)
+                    relative_path = builder.build_relative_path(form_data)
+                    
+                    # Create full path
+                    full_path = base_path / relative_path
+                    full_path.mkdir(parents=True, exist_ok=True)
+                    
+                    self._log_operation("template_path_built", str(full_path))
+                    return Result.success(full_path)
+                else:
+                    self._log_operation("template_not_found", f"Template {self._current_template_id} not found, using legacy builder", "warning")
+            
+            except Exception as e:
+                self._log_operation("template_build_failed", str(e), "warning")
+            
+            # Fallback to existing ForensicPathBuilder for backward compatibility
             try:
                 forensic_path = ForensicPathBuilder.create_forensic_structure(base_path, form_data)
-                self._log_operation("forensic_path_built", str(forensic_path))
+                self._log_operation("legacy_path_built", str(forensic_path))
                 return Result.success(forensic_path)
                 
             except Exception as e:
@@ -75,6 +101,48 @@ class PathService(BaseService, IPathService):
             )
             self._handle_error(error, {'method': 'build_forensic_path'})
             return Result.error(error)
+    
+    def _load_templates(self):
+        """Load templates from simple JSON file"""
+        template_file = Path("templates/folder_templates.json")
+        if template_file.exists():
+            try:
+                with open(template_file) as f:
+                    templates_data = json.load(f)
+                    self._templates = templates_data.get("templates", {})
+                    self._log_operation("templates_loaded", f"Loaded {len(self._templates)} templates")
+            except Exception as e:
+                self._log_operation("template_load_failed", str(e), "error")
+        
+        # Ensure default template exists
+        if "default_forensic" not in self._templates:
+            self._templates["default_forensic"] = self._get_default_template()
+            self._log_operation("default_template_created", "Using built-in default template")
+    
+    def _get_default_template(self) -> Dict[str, Any]:
+        """Default template matching current ForensicPathBuilder behavior"""
+        return {
+            "templateName": "Default Forensic Structure",
+            "structure": {
+                "levels": [
+                    {"pattern": "{occurrence_number}", "fallback": "NO_OCCURRENCE"},
+                    {
+                        "pattern": "{business_name} @ {location_address}",
+                        "conditionals": {
+                            "business_only": "{business_name}",
+                            "location_only": "{location_address}",
+                            "neither": "NO_LOCATION"
+                        }
+                    },
+                    {
+                        "pattern": "{video_start_datetime}_to_{video_end_datetime}_DVR_Time",
+                        "dateFormat": "military",
+                        "fallback": "{current_datetime}"
+                    }
+                ]
+            },
+            "documentsPlacement": "location"
+        }
     
     def validate_output_path(self, path: Path, base: Path) -> Result[Path]:
         """Validate output path for security"""
@@ -110,3 +178,75 @@ class PathService(BaseService, IPathService):
         except Exception as e:
             self.logger.warning(f"Component sanitization failed for '{component}': {e}")
             return "_"  # Safe fallback
+    
+    def get_available_templates(self) -> List[Dict[str, str]]:
+        """Get list of available templates for UI dropdown"""
+        return [
+            {
+                "id": template_id,
+                "name": template.get("templateName", template_id)
+            }
+            for template_id, template in self._templates.items()
+        ]
+    
+    def set_current_template(self, template_id: str) -> Result[None]:
+        """Set active template"""
+        if template_id not in self._templates:
+            error = FileOperationError(
+                f"Template {template_id} not found",
+                user_message="Selected template is not available."
+            )
+            self._handle_error(error, {'method': 'set_current_template'})
+            return Result.error(error)
+        
+        self._current_template_id = template_id
+        self._log_operation("template_changed", f"Active template: {template_id}")
+        return Result.success(None)
+    
+    def get_current_template_id(self) -> str:
+        """Get current template ID"""
+        return self._current_template_id
+    
+    def reload_templates(self) -> Result[None]:
+        """Reload templates from file"""
+        try:
+            old_count = len(self._templates)
+            self._load_templates()
+            new_count = len(self._templates)
+            self._log_operation("templates_reloaded", f"Templates: {old_count} -> {new_count}")
+            return Result.success(None)
+        except Exception as e:
+            error = FileOperationError(
+                f"Failed to reload templates: {e}",
+                user_message="Failed to reload template configuration."
+            )
+            self._handle_error(error, {'method': 'reload_templates'})
+            return Result.error(error)
+    
+    def build_archive_name(self, form_data: FormData) -> Result[str]:
+        """Build archive name using current template"""
+        try:
+            # Get current template
+            template = self._templates.get(self._current_template_id)
+            if template:
+                # Build archive name using template
+                builder = TemplatePathBuilder(template, self._path_sanitizer)
+                archive_name = builder.build_archive_name(form_data)
+                
+                self._log_operation("template_archive_name_built", archive_name)
+                return Result.success(archive_name)
+            else:
+                # Fallback to basic naming if no template
+                fallback_name = f"{form_data.occurrence_number or 'Archive'}_Video_Recovery.zip"
+                fallback_name = self._path_sanitizer.sanitize_component(fallback_name)
+                
+                self._log_operation("fallback_archive_name_used", fallback_name)
+                return Result.success(fallback_name)
+                
+        except Exception as e:
+            error = FileOperationError(
+                f"Failed to build archive name: {e}",
+                user_message="Failed to generate archive name."
+            )
+            self._handle_error(error, {'method': 'build_archive_name'})
+            return Result.error(error)

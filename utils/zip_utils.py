@@ -17,6 +17,13 @@ from core.native_7zip.controller import Native7ZipController, Native7ZipMetrics
 from core.result_types import Result, ArchiveOperationResult
 from core.logger import logger
 
+# Import template services
+try:
+    from core.services import get_service, IPathService
+    _TEMPLATE_SERVICE_AVAILABLE = True
+except ImportError:
+    _TEMPLATE_SERVICE_AVAILABLE = False
+
 
 class ArchiveMethod(Enum):
     """Archive method options for hybrid mode"""
@@ -269,6 +276,20 @@ class ZipUtility:
         try:
             # Helper to create consistent descriptive archive name
             def create_descriptive_archive_name() -> str:
+                # Try template-based naming first
+                if form_data and _TEMPLATE_SERVICE_AVAILABLE:
+                    try:
+                        path_service = get_service(IPathService)
+                        result = path_service.build_archive_name(form_data)
+                        if result.success:
+                            logger.debug(f"Using template-based archive name: {result.value}")
+                            return result.value
+                        else:
+                            logger.warning(f"Template archive naming failed: {result.error}")
+                    except Exception as e:
+                        logger.warning(f"Template service unavailable for archive naming: {e}")
+                
+                # Fallback to legacy naming
                 if form_data:
                     occurrence = form_data.occurrence_number or "Unknown"
                     business = form_data.business_name or ""
