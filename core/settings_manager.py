@@ -136,7 +136,11 @@ class SettingsManager:
     @property
     def calculate_hashes(self) -> bool:
         """Whether to calculate file hashes"""
-        return bool(self.get('CALCULATE_HASHES', True))
+        value = self.get('CALCULATE_HASHES', True)
+        # Handle QSettings string-to-bool conversion
+        if isinstance(value, str):
+            return value.lower() in ('true', '1', 'yes', 'on')
+        return bool(value)
     
     @property
     def hash_algorithm(self) -> str:
@@ -223,32 +227,58 @@ class SettingsManager:
     @property
     def generate_time_offset_pdf(self) -> bool:
         """Whether to generate time offset PDF"""
-        return bool(self.get('TIME_OFFSET_PDF', True))
+        value = self.get('TIME_OFFSET_PDF', True)
+        # Handle QSettings string-to-bool conversion
+        if isinstance(value, str):
+            return value.lower() in ('true', '1', 'yes', 'on')
+        return bool(value)
     
     @property
     def generate_upload_log_pdf(self) -> bool:
         """Whether to generate upload log PDF"""
-        return bool(self.get('UPLOAD_LOG_PDF', True))
+        value = self.get('UPLOAD_LOG_PDF', True)
+        # Handle QSettings string-to-bool conversion
+        if isinstance(value, str):
+            return value.lower() in ('true', '1', 'yes', 'on')
+        return bool(value)
     
     @property
     def generate_hash_csv(self) -> bool:
         """Whether to generate hash CSV (only if hashes calculated)"""
-        return bool(self.get('HASH_CSV', True)) and self.calculate_hashes
+        value = self.get('HASH_CSV', True)
+        # Handle QSettings string-to-bool conversion
+        if isinstance(value, str):
+            hash_csv_enabled = value.lower() in ('true', '1', 'yes', 'on')
+        else:
+            hash_csv_enabled = bool(value)
+        return hash_csv_enabled and self.calculate_hashes
     
     @property
     def auto_scroll_log(self) -> bool:
         """Whether to auto-scroll log console"""
-        return bool(self.get('AUTO_SCROLL_LOG', True))
+        value = self.get('AUTO_SCROLL_LOG', True)
+        # Handle QSettings string-to-bool conversion
+        if isinstance(value, str):
+            return value.lower() in ('true', '1', 'yes', 'on')
+        return bool(value)
     
     @property
     def confirm_exit_with_operations(self) -> bool:
         """Whether to confirm exit when operations are active"""
-        return bool(self.get('CONFIRM_EXIT', True))
+        value = self.get('CONFIRM_EXIT', True)
+        # Handle QSettings string-to-bool conversion
+        if isinstance(value, str):
+            return value.lower() in ('true', '1', 'yes', 'on')
+        return bool(value)
     
     @property
     def debug_logging(self) -> bool:
         """Whether debug logging is enabled"""
-        return bool(self.get('DEBUG_LOGGING', False))
+        value = self.get('DEBUG_LOGGING', False)
+        # Handle QSettings string-to-bool conversion
+        if isinstance(value, str):
+            return value.lower() in ('true', '1', 'yes', 'on')
+        return bool(value)
     
     @property
     def last_output_directory(self) -> Optional[Path]:

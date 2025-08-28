@@ -343,16 +343,16 @@ class UserSettingsDialog(QDialog):
             self.settings.get('badge_number', '')
         )
         
-        # Documentation settings
+        # Documentation settings - Use properties like working ZIP/buffer settings
         self.generate_time_offset_check.setChecked(
-            bool(self.settings.get('generate_time_offset_pdf', True))
+            self.settings.generate_time_offset_pdf
         )
         self.generate_upload_log_check.setChecked(
-            bool(self.settings.get('generate_upload_log_pdf', True))
+            self.settings.generate_upload_log_pdf
         )
         # Use calculate_hashes as the main setting for hash/CSV generation
         self.generate_hash_csv_check.setChecked(
-            bool(self.settings.get('calculate_hashes', True))
+            self.settings.calculate_hashes
         )
         
     def save_settings(self):
@@ -374,12 +374,12 @@ class UserSettingsDialog(QDialog):
         self.settings.set('technician_name', self.tech_name_edit.text())
         self.settings.set('badge_number', self.badge_edit.text())
         
-        # Documentation settings
-        self.settings.set('generate_time_offset_pdf', self.generate_time_offset_check.isChecked())
-        self.settings.set('generate_upload_log_pdf', self.generate_upload_log_check.isChecked())
+        # Documentation settings - Use canonical keys since properties don't have setters
+        self.settings.set('TIME_OFFSET_PDF', self.generate_time_offset_check.isChecked())
+        self.settings.set('UPLOAD_LOG_PDF', self.generate_upload_log_check.isChecked())
         # Single setting controls both hash calculation and CSV generation
-        self.settings.set('calculate_hashes', self.generate_hash_csv_check.isChecked())
-        self.settings.set('generate_hash_csv', self.generate_hash_csv_check.isChecked())
+        self.settings.set('CALCULATE_HASHES', self.generate_hash_csv_check.isChecked())
+        self.settings.set('HASH_CSV', self.generate_hash_csv_check.isChecked())
     
     def accept(self):
         """Override accept to save settings before closing"""

@@ -274,7 +274,7 @@ class MainWindow(QMainWindow):
         self.last_output_directory = self.output_directory
         
         # Get hash calculation preference
-        calculate_hash = self.settings.get('calculate_hashes', True)
+        calculate_hash = self.settings.calculate_hashes
         
         # Get performance monitor if it exists
         perf_monitor = getattr(self, 'performance_monitor', None) if hasattr(self, 'performance_monitor') else None
@@ -371,9 +371,9 @@ class MainWindow(QMainWindow):
             self.file_operation_performance = completion_message
             
             # Auto-generate reports based on user settings
-            if self.settings.get('generate_time_offset_pdf', True) or \
-               self.settings.get('generate_upload_log_pdf', True) or \
-               self.settings.get('calculate_hashes', True):
+            if self.settings.generate_time_offset_pdf or \
+               self.settings.generate_upload_log_pdf or \
+               self.settings.calculate_hashes:
                 self.log("Generating documentation...")
                 self.generate_reports()
             else:
@@ -573,9 +573,9 @@ class MainWindow(QMainWindow):
                 self.form_data,
                 self.file_operation_results,
                 reports_output_dir,
-                generate_time_offset=self.settings.get('generate_time_offset_pdf', True),
-                generate_upload_log=self.settings.get('generate_upload_log_pdf', True),
-                generate_hash_csv=self.settings.get('calculate_hashes', True)
+                generate_time_offset=self.settings.generate_time_offset_pdf,
+                generate_upload_log=self.settings.generate_upload_log_pdf,
+                generate_hash_csv=self.settings.calculate_hashes
             )
             
             # Log generated reports and handle Result objects
@@ -980,7 +980,7 @@ class MainWindow(QMainWindow):
         """Show user settings dialog"""
         dialog = UserSettingsDialog(self.settings, self)
         if dialog.exec() == QDialog.Accepted:
-            dialog.save_settings()
+            # Settings already saved in dialog.accept() - no need to save again
             self.log("User settings saved")
     
     def show_performance_monitor(self):
