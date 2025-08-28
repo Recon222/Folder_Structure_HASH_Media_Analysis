@@ -713,7 +713,7 @@ class BatchProcessorThread(BaseWorkerThread):
             
             zip_util = ZipUtility(
                 progress_callback=lambda pct, msg: self.job_progress.emit(
-                    job.job_id, pct, f"Creating ZIP: {msg}"
+                    job.job_id, pct, "Creating Zip"
                 )
             )
             

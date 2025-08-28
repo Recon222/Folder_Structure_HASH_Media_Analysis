@@ -304,7 +304,7 @@ class FileWorkerThread(BaseWorkerThread):
             percentage = 0
         
         if current_file:
-            message = f"Processing {current_file} ({files_completed}/{self.total_files})"
+            message = f"{current_file} ({files_completed}/{self.total_files})"
         else:
             message = f"Processed {files_completed}/{self.total_files} files"
         
