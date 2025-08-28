@@ -157,9 +157,10 @@ class TemplatePathBuilder:
             archive_name = self._replace_placeholders(pattern, form_data, {})
             
             # Check if all placeholders were replaced (no remaining {})
-            if '{' not in archive_name or '}' not in archive_name:
-                # Clean up any empty parts from missing data
-                archive_name = re.sub(r'\s+@\s*', ' ', archive_name)  # Remove empty @ parts
+            if '{' not in archive_name and '}' not in archive_name:
+                # Clean up any empty parts from missing data - only when @ is adjacent to multiple spaces
+                archive_name = re.sub(r'\s{2,}@\s*', ' ', archive_name)  # Remove @ after multiple spaces (empty field)
+                archive_name = re.sub(r'\s*@\s{2,}', ' ', archive_name)  # Remove @ before multiple spaces (empty field)
                 archive_name = re.sub(r'\s{2,}', ' ', archive_name)   # Remove multiple spaces
                 archive_name = archive_name.strip()
                 

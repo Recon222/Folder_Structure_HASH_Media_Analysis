@@ -7,6 +7,7 @@ import pytest
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from datetime import datetime
 from PySide6.QtCore import QDateTime, Qt
 
 # Add parent directory to path for imports
@@ -220,8 +221,23 @@ class TestPathService:
     def teardown_method(self):
         """Cleanup test environment"""
         import os
+        import time
+        
         os.chdir(self.original_cwd)
-        self.temp_dir.cleanup()
+        
+        # Close any open log files by forcing garbage collection
+        import gc
+        gc.collect()
+        
+        # Small delay to allow file handles to close
+        time.sleep(0.1)
+        
+        try:
+            self.temp_dir.cleanup()
+        except PermissionError:
+            # On Windows, sometimes log files are still open
+            # This is acceptable for tests
+            pass
     
     def test_template_loading(self):
         """Test that templates are loaded correctly"""
@@ -324,10 +340,15 @@ class TestPathService:
 class TestTemplateUIIntegration:
     """Test UI integration aspects"""
     
-    @pytest.fixture(autouse=True)
-    def setup_qt_app(self, qapp):
-        """Ensure Qt application is available for tests"""
-        self.app = qapp
+    def setup_method(self):
+        """Setup Qt application for UI tests"""
+        from PySide6.QtWidgets import QApplication
+        import sys
+        
+        if not QApplication.instance():
+            self.app = QApplication(sys.argv)
+        else:
+            self.app = QApplication.instance()
     
     def test_template_selector_creation(self):
         """Test that TemplateSelector can be created"""
