@@ -11,12 +11,13 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QSplitter, QGroupBox, QFileDialog, QLabel,
-    QComboBox
+    QComboBox, QSizePolicy
 )
 
 from core.models import FormData
 from ui.components import FormPanel, FilesPanel, LogConsole
 from ui.components.batch_queue_widget import BatchQueueWidget
+from ui.components.elided_label import PathLabel
 from core.exceptions import UIError, ErrorSeverity
 from core.error_handler import handle_error
 
@@ -49,6 +50,9 @@ class BatchTab(QWidget):
         
         # Main splitter: Job Setup (left) | Batch Queue (right)
         main_splitter = QSplitter(Qt.Horizontal)
+        # CRITICAL FIX: Prevent splitter from collapsing/expanding due to content
+        main_splitter.setChildrenCollapsible(False)
+        main_splitter.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         layout.addWidget(main_splitter)
         
         # Left side: Job setup panel
@@ -70,6 +74,8 @@ class BatchTab(QWidget):
         
         # Vertical splitter for form and files
         splitter = QSplitter(Qt.Vertical)
+        # CRITICAL FIX: Prevent form/files splitter from expanding due to content
+        splitter.setChildrenCollapsible(False)
         layout.addWidget(splitter)
         
         # Form panel
@@ -134,8 +140,8 @@ class BatchTab(QWidget):
         
         layout.addLayout(actions_layout)
         
-        # Output directory status
-        self.output_status_label = QLabel("Output Directory: Not set")
+        # Output directory status - CRITICAL FIX: Use PathLabel to prevent expansion
+        self.output_status_label = PathLabel("Output Directory: Not set", max_width=450)
         self.output_status_label.setStyleSheet("""
             QLabel {
                 color: #666666;
@@ -146,6 +152,8 @@ class BatchTab(QWidget):
                 background-color: #F5F5F5;
             }
         """)
+        # Prevent this label from expanding the parent widget
+        self.output_status_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         layout.addWidget(self.output_status_label)
         
         return job_setup
@@ -199,7 +207,7 @@ class BatchTab(QWidget):
                 }
             """)
             
-            # Update status label
+            # Update status label - CRITICAL FIX: Properly handle long directory paths
             self.output_status_label.setText(f"Output Directory: {self.output_directory}")
             self.output_status_label.setStyleSheet("""
                 QLabel {

@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QPushButton, 
     QProgressBar, QLabel, QFileDialog,
     QHeaderView, QMenu, QSplitter, QTextEdit,
-    QCheckBox, QComboBox
+    QCheckBox, QComboBox, QSizePolicy
 )
 from PySide6.QtGui import QAction, QFont, QIcon
 
@@ -27,6 +27,7 @@ from core.batch_recovery import BatchRecoveryManager
 from core.exceptions import UIError, ErrorSeverity
 from core.error_handler import handle_error
 from ui.dialogs.success_dialog import SuccessDialog
+from ui.components.elided_label import ElidedLabel
 
 
 class BatchQueueWidget(QWidget):
@@ -66,6 +67,9 @@ class BatchQueueWidget(QWidget):
         
         # Split view: Queue table (top) | Controls and progress (bottom)
         splitter = QSplitter(Qt.Vertical)
+        # CRITICAL FIX: Prevent splitter from collapsing/expanding unexpectedly
+        splitter.setChildrenCollapsible(False)
+        splitter.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         layout.addWidget(splitter)
         
         # Queue table section
@@ -112,15 +116,25 @@ class BatchQueueWidget(QWidget):
             "Job Name", "Occurrence #", "Files", "Status", "Duration", "Template", "Edit"
         ])
         
-        # Configure table
+        # CRITICAL FIX: Configure table to prevent window expansion
         header = self.queue_table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.Stretch)  # Job Name
+        # Change from Stretch to Fixed to prevent window expansion from long job names
+        header.setSectionResizeMode(0, QHeaderView.Fixed)  # Job Name - Fixed width
         header.setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Occurrence
         header.setSectionResizeMode(2, QHeaderView.ResizeToContents)  # Files
         header.setSectionResizeMode(3, QHeaderView.ResizeToContents)  # Status
         header.setSectionResizeMode(4, QHeaderView.ResizeToContents)  # Duration
         header.setSectionResizeMode(5, QHeaderView.ResizeToContents)  # Template
         header.setSectionResizeMode(6, QHeaderView.ResizeToContents)  # Edit
+        
+        # Set fixed widths to prevent expansion
+        self.queue_table.setColumnWidth(0, 250)  # Job Name - reasonable fixed width
+        
+        # Enable horizontal scroll instead of window expansion
+        self.queue_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        
+        # Prevent table from expanding beyond its container
+        self.queue_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         
         self.queue_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.queue_table.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -179,7 +193,9 @@ class BatchQueueWidget(QWidget):
         current_label.setFont(QFont("", 9, QFont.Bold))
         progress_layout.addWidget(current_label)
         
-        self.current_job_label = QLabel("Ready to process")
+        # CRITICAL FIX: Use ElidedLabel to prevent window expansion from long job names
+        self.current_job_label = ElidedLabel("Ready to process", max_width=500)
+        self.current_job_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         progress_layout.addWidget(self.current_job_label)
         
         self.current_job_progress = QProgressBar()
@@ -732,8 +748,12 @@ class BatchQueueWidget(QWidget):
         self.queue_table.setRowCount(len(self.batch_queue.jobs))
         
         for row, job in enumerate(self.batch_queue.jobs):
-            # Job Name
-            name_item = QTableWidgetItem(job.job_name)
+            # Job Name - CRITICAL FIX: Truncate long names to prevent table expansion
+            display_name = job.job_name
+            if len(display_name) > 35:  # Truncate very long names
+                display_name = display_name[:32] + "..."
+            
+            name_item = QTableWidgetItem(display_name)
             name_item.setToolTip(job.job_name)  # Show full name on hover
             self.queue_table.setItem(row, 0, name_item)
             

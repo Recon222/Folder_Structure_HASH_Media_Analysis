@@ -15,7 +15,8 @@ from PySide6.QtWidgets import (
     QMainWindow, QTabWidget, QVBoxLayout, QWidget,
     QProgressBar, QStatusBar, QFileDialog,
     QSplitter, QHBoxLayout, QDialog, QDialogButtonBox,
-    QGroupBox, QComboBox, QCheckBox, QPushButton, QLabel
+    QGroupBox, QComboBox, QCheckBox, QPushButton, QLabel,
+    QSizePolicy
 )
 
 from controllers import WorkflowController, ReportController, HashController
@@ -74,6 +75,15 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Folder Structure Utility")
         self.resize(1200, 800)
         
+        # CRITICAL FIX: Prevent content-based window resizing
+        # Set minimum and maximum size constraints to prevent dynamic expansion
+        self.setMinimumSize(900, 600)  # Reasonable minimum for usability
+        # Allow user resizing but prevent unlimited growth from content
+        self.setMaximumSize(2000, 1400)  # Generous maximum for large screens
+        
+        # Set size policy to maintain user control while preventing content expansion
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+        
         self._setup_ui()
         self._apply_theme()
         self._load_settings()
@@ -112,6 +122,9 @@ class MainWindow(QMainWindow):
         self.hashing_tab = HashingTab(self.hash_controller)
         self.hashing_tab.log_message.connect(self.log)
         self.tabs.addTab(self.hashing_tab, "Hashing")
+        
+        # Configure tab widget to prevent content-based expansion
+        self.tabs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         
         # Add tabs to layout
         layout.addWidget(self.tabs)

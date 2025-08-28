@@ -12,7 +12,7 @@ from PySide6.QtCore import Signal, Qt
 from PySide6.QtWidgets import (
     QGroupBox, QVBoxLayout, QHBoxLayout,
     QListWidget, QListWidgetItem, QPushButton, 
-    QFileDialog, QLabel
+    QFileDialog, QLabel, QSizePolicy
 )
 from core.logger import logger
 
@@ -57,13 +57,20 @@ class FilesPanel(QGroupBox):
         """Create the files panel UI"""
         layout = QVBoxLayout()
         
-        # File list
+        # File list - CRITICAL FIX: Prevent expansion from long file paths
         self.file_list = QListWidget()
         self.file_list.setSelectionMode(QListWidget.ExtendedSelection)
+        # Prevent list from expanding horizontally due to long file names
+        self.file_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.file_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        # Set reasonable size constraints
+        self.file_list.setMinimumHeight(100)
         layout.addWidget(self.file_list)
         
-        # Count label
+        # Count label - CRITICAL FIX: Prevent expansion from long count text
         self.count_label = QLabel("No items selected")
+        self.count_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        self.count_label.setMaximumHeight(30)
         layout.addWidget(self.count_label)
         
         # Buttons
@@ -143,10 +150,14 @@ class FilesPanel(QGroupBox):
             entry = self._create_entry('file', path)
             self.entries.append(entry)
             
-            # Create list item (use index as ID for UI mapping)
-            item = QListWidgetItem(f"📄 {path.name}")
+            # Create list item - CRITICAL FIX: Truncate long file names
+            display_name = path.name
+            if len(display_name) > 50:  # Truncate very long names
+                display_name = display_name[:47] + "..."
+            
+            item = QListWidgetItem(f"📄 {display_name}")
             item.setData(Qt.UserRole, len(self.entries) - 1)  # Store index
-            item.setToolTip(str(path))
+            item.setToolTip(str(path))  # Full path in tooltip
             self.file_list.addItem(item)
             
             added += 1
@@ -177,11 +188,15 @@ class FilesPanel(QGroupBox):
         entry = self._create_entry('folder', path)
         self.entries.append(entry)
         
-        # Create list item
+        # Create list item - CRITICAL FIX: Truncate long folder names
         file_count = entry.file_count or 0
-        item = QListWidgetItem(f"📁 {path.name} ({file_count} files)")
+        display_name = path.name
+        if len(display_name) > 40:  # Truncate long folder names (leave room for file count)
+            display_name = display_name[:37] + "..."
+        
+        item = QListWidgetItem(f"📁 {display_name} ({file_count} files)")
         item.setData(Qt.UserRole, len(self.entries) - 1)  # Store index
-        item.setToolTip(str(path))
+        item.setToolTip(str(path))  # Full path in tooltip
         self.file_list.addItem(item)
         
         logger.info(f"Added folder with {file_count} files: {path.name}")
@@ -212,17 +227,23 @@ class FilesPanel(QGroupBox):
                 self.entries.pop(index)
                 removed_count += 1
                 
-        # Clear and rebuild UI list to maintain correct indices
+        # Clear and rebuild UI list to maintain correct indices - CRITICAL FIX: Apply truncation
         self.file_list.clear()
         for i, entry in enumerate(self.entries):
             if entry.type == 'file':
-                item = QListWidgetItem(f"📄 {entry.path.name}")
+                display_name = entry.path.name
+                if len(display_name) > 50:
+                    display_name = display_name[:47] + "..."
+                item = QListWidgetItem(f"📄 {display_name}")
             else:
                 file_count = entry.file_count or 0
-                item = QListWidgetItem(f"📁 {entry.path.name} ({file_count} files)")
+                display_name = entry.path.name
+                if len(display_name) > 40:
+                    display_name = display_name[:37] + "..."
+                item = QListWidgetItem(f"📁 {display_name} ({file_count} files)")
             
             item.setData(Qt.UserRole, i)
-            item.setToolTip(str(entry.path))
+            item.setToolTip(str(entry.path))  # Full path in tooltip
             self.file_list.addItem(item)
             
         logger.info(f"Removed {removed_count} items")
