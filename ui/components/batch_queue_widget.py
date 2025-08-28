@@ -488,7 +488,7 @@ class BatchQueueWidget(QWidget):
         
     def _on_job_started(self, job_id: str, job_name: str):
         """Handle job started signal"""
-        self.current_job_label.setText(f"Processing: {job_name}")
+        self.current_job_label.setText(job_name)
         self.current_job_progress.setVisible(True)
         self.current_job_progress.setValue(0)
         self.log_message.emit(f"Started job: {job_name}")
@@ -498,7 +498,7 @@ class BatchQueueWidget(QWidget):
         if percentage >= 0:
             self.current_job_progress.setValue(percentage)
         if message:
-            self.current_job_label.setText(f"Processing: {message}")
+            self.current_job_label.setText(message)
             
     def _on_job_completed(self, job_id: str, success: bool, message: str, results):
         """Handle job completed signal"""
