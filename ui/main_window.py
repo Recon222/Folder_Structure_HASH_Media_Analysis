@@ -468,6 +468,65 @@ class MainWindow(QMainWindow):
             
         # Call the existing handler with converted data
         self.on_operation_finished(success, message, results)
+    
+    def cleanup_operation_memory(self):
+        """
+        MEMORY LEAK FIX: Clean up large objects and references after operation completion
+        
+        This addresses the 40-second performance gap by preventing memory accumulation
+        that causes garbage collection overhead and memory pressure.
+        """
+        # Clear large result dictionaries that can contain hundreds of MB for large operations
+        if hasattr(self, 'file_operation_results'):
+            self.file_operation_results = None
+            
+        if hasattr(self, 'file_operation_result'):
+            self.file_operation_result = None
+            
+        if hasattr(self, 'file_operation_performance'):
+            self.file_operation_performance = None
+        
+        # Disconnect thread signals to break reference cycles and clear thread reference
+        if hasattr(self, 'file_thread') and self.file_thread:
+            try:
+                # Disconnect all signals to break Qt reference cycles
+                self.file_thread.progress_update.disconnect()
+                self.file_thread.result_ready.disconnect()
+                
+                # Wait for thread to finish if it's still running
+                if self.file_thread.isRunning():
+                    self.file_thread.wait(1000)  # Wait up to 1 second
+                    
+                # Clear the thread reference
+                self.file_thread = None
+                
+            except Exception as e:
+                # Don't let cleanup errors break the application
+                self.log(f"Note: Thread cleanup had minor issues: {e}")
+        
+        # Clear WorkflowController stored results to prevent memory leaks
+        if hasattr(self, 'workflow_controller') and self.workflow_controller:
+            try:
+                self.workflow_controller.clear_stored_results()
+            except Exception as e:
+                self.log(f"Note: Workflow controller cleanup had minor issues: {e}")
+        
+        # Clear ZIP thread if it exists
+        if hasattr(self, 'zip_thread') and self.zip_thread:
+            try:
+                self.zip_thread.progress_update.disconnect()
+                self.zip_thread.result_ready.disconnect()
+                if self.zip_thread.isRunning():
+                    self.zip_thread.wait(1000)
+                self.zip_thread = None
+            except Exception:
+                pass  # ZIP thread cleanup is optional
+                
+        # Force garbage collection to clean up any remaining cycles
+        import gc
+        gc.collect()
+        
+        self.log("Memory cleanup completed - optimized for next operation")
         
     def generate_reports(self):
         """Generate PDF reports and hash verification CSV based on user settings"""
@@ -700,8 +759,8 @@ class MainWindow(QMainWindow):
                 self.log(f"Warning: New success system failed ({str(fallback_error)}), using legacy approach")
                 self._show_legacy_completion_message()
         
-        # Clean up temporary attributes
-        self._cleanup_operation_attributes()
+        # MEMORY LEAK FIX: Comprehensive cleanup to prevent memory accumulation
+        self.cleanup_operation_memory()
     
     def _reconstruct_file_result_data(self):
         """Reconstruct file result data from legacy attributes for migration"""
@@ -832,19 +891,28 @@ class MainWindow(QMainWindow):
         )
     
     def _cleanup_operation_attributes(self):
-        """Clean up temporary operation attributes after success display"""
+        """Clean up temporary operation attributes after success display - ENHANCED for memory optimization"""
         attrs_to_clean = [
             'zip_archives_created',
             'reports_generated', 
             'reports_output_dir',
             'file_operation_performance',
             'file_operation_result',
-            'zip_operation_result'
+            'zip_operation_result',
+            # MEMORY LEAK FIX: Add missing large objects that were causing memory accumulation
+            'file_operation_results',  # Large dictionary that can contain hundreds of MB
         ]
         
         for attr in attrs_to_clean:
             if hasattr(self, attr):
                 delattr(self, attr)
+        
+        # MEMORY LEAK FIX: Also clear WorkflowController results if not already cleared
+        if hasattr(self, 'workflow_controller') and self.workflow_controller:
+            try:
+                self.workflow_controller.clear_stored_results()
+            except:
+                pass  # Already cleared or error - continue cleanup
         
     def _get_report_display_name(self, report_type: str) -> str:
         """Get user-friendly report display name"""

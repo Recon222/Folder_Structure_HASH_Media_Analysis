@@ -104,8 +104,8 @@ class ForensicCommandBuilder:
         }
         cmd.extend(compression_settings.get(compression_mode, ['-mx0']))
         
-        # Threading optimization (simplified for ZIP format)
-        cmd.append(f'-mmt{min(self.optimal_threads, 16)}')  # Cap threads for ZIP
+        # Threading optimization - use full thread count (16 thread cap removed)
+        cmd.append(f'-mmt{self.optimal_threads}')  # Use optimal threads without artificial ZIP cap
         
         # Memory optimization (remove problematic parameter for ZIP)
         # cmd.append(f'-mmemuse=p{self.optimal_memory_percent}')  # Not used for ZIP
