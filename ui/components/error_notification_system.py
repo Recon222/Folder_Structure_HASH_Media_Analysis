@@ -13,10 +13,15 @@ from PySide6.QtWidgets import (
     QDialog, QTextEdit, QScrollArea, QFrame
 )
 from PySide6.QtCore import Signal, QTimer, Qt, QPropertyAnimation, QEasingCurve, QRect
-from PySide6.QtGui import QIcon, QFont, QPixmap, QPainter, QColor, QBrush
+from PySide6.QtGui import QIcon, QFont, QPixmap, QPainter, QColor, QBrush, QFontMetrics
 from typing import Dict, Optional
 from datetime import datetime
 import uuid
+import logging
+
+# Set up logging for debugging notification behavior
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger('ErrorNotificationSystem')
 
 from core.exceptions import FSAError, ErrorSeverity
 
@@ -47,8 +52,11 @@ class ErrorNotification(QFrame):
         self.context = context
         self.notification_id = notification_id
         
+        logger.info(f"Creating notification {notification_id} with message: '{error.user_message or str(error)[:50]}...'")
+        
         # Determine severity from error or context
         self.severity = self._determine_severity()
+        logger.debug(f"Notification {notification_id} severity: {self.severity}")
         
         self._setup_ui()
         self._setup_auto_dismiss()
@@ -76,11 +84,71 @@ class ErrorNotification(QFrame):
         else:
             return ErrorSeverity.ERROR
     
+    def _calculate_required_height(self) -> int:
+        """
+        Calculate the required height for the notification based on content
+        
+        Returns:
+            int: Required height in pixels (constrained between min/max values)
+        """
+        # Base components height
+        base_height = 24  # Top/bottom margins (8px each) + padding
+        icon_height = 32  # Icon size
+        button_height = 24  # Button height
+        spacing = 12  # Layout spacing
+        
+        # Calculate text height for main message
+        message_text = self.error.user_message or str(self.error)
+        content_width = 300  # Available width for text (400 total - margins - icon - buttons)
+        
+        # Create font and metrics for calculation
+        font = QFont()
+        font.setPointSize(13)
+        font.setBold(True)
+        font_metrics = QFontMetrics(font)
+        
+        # Calculate wrapped text height
+        text_rect = font_metrics.boundingRect(
+            0, 0, content_width, 0,
+            Qt.TextWordWrap | Qt.AlignLeft,
+            message_text
+        )
+        message_height = text_rect.height()
+        
+        # Calculate context text height if present
+        context_height = 0
+        if self.context.get('operation'):
+            context_font = QFont()
+            context_font.setPointSize(11)
+            context_font.setItalic(True)
+            context_metrics = QFontMetrics(context_font)
+            
+            context_text = f"Operation: {self.context['operation']}"
+            context_rect = context_metrics.boundingRect(
+                0, 0, content_width, 0,
+                Qt.TextWordWrap | Qt.AlignLeft,
+                context_text
+            )
+            context_height = context_rect.height() + 4  # +4px spacing
+        
+        # Calculate total required height
+        content_area_height = max(message_height + context_height, button_height)
+        total_height = base_height + max(icon_height, content_area_height) + spacing
+        
+        # Apply constraints: minimum 60px, maximum 150px
+        min_height = 60
+        max_height = 150
+        
+        return max(min_height, min(max_height, total_height))
+    
     def _setup_ui(self):
         """Create the notification UI with severity-based styling"""
         self.setFrameStyle(QFrame.StyledPanel | QFrame.Raised)
         self.setLineWidth(2)
-        self.setFixedHeight(80)
+        
+        # Use dynamic height calculation instead of fixed height
+        required_height = self._calculate_required_height()
+        self.setFixedHeight(required_height)
         self.setMaximumWidth(400)
         
         # Main layout
@@ -248,33 +316,32 @@ class ErrorNotification(QFrame):
         """Setup auto-dismiss timer for non-critical errors"""
         if self.severity in [ErrorSeverity.INFO, ErrorSeverity.WARNING]:
             dismiss_time = 8000 if self.severity == ErrorSeverity.WARNING else 5000
+            logger.info(f"Setting up auto-dismiss for {self.notification_id} in {dismiss_time}ms")
             QTimer.singleShot(dismiss_time, self.dismiss)
+        else:
+            logger.debug(f"No auto-dismiss for {self.notification_id} - severity: {self.severity}")
     
     def _show_details(self):
         """Show detailed error information"""
+        logger.info(f"Details button clicked for notification {self.notification_id}")
         self.details_requested.emit(self.error, self.context)
     
     def dismiss(self):
         """Dismiss this notification"""
+        logger.info(f"DISMISS CALLED for notification {self.notification_id}")
         self.dismissed.emit(self.notification_id)
         
-        # Fade out animation
-        self.animation = QPropertyAnimation(self, b"geometry")
-        self.animation.setDuration(200)
-        self.animation.setEasingCurve(QEasingCurve.OutCubic)
+        # Remove from parent layout FIRST, then hide and delete
+        logger.debug(f"Removing notification {self.notification_id} from layout")
+        if self.parent() and hasattr(self.parent(), 'layout'):
+            parent_layout = self.parent().layout
+            if parent_layout:
+                logger.debug(f"Removing {self.notification_id} from parent layout")
+                parent_layout.removeWidget(self)
         
-        current_geometry = self.geometry()
-        target_geometry = QRect(
-            current_geometry.x() + current_geometry.width(),
-            current_geometry.y(),
-            0,
-            current_geometry.height()
-        )
-        
-        self.animation.setStartValue(current_geometry)
-        self.animation.setEndValue(target_geometry)
-        self.animation.finished.connect(self.deleteLater)
-        self.animation.start()
+        logger.debug(f"Hiding and deleting notification {self.notification_id}")
+        self.hide()
+        self.deleteLater()
 
 
 class ErrorDetailsDialog(QDialog):
@@ -434,26 +501,27 @@ class ErrorNotificationManager(QWidget):
         
         # Setup widget as top-level overlay window
         self.setFixedWidth(420)
-        self.setMaximumHeight(600)
+        # Remove fixed maximum height since notifications now have variable heights
+        # The height will be calculated dynamically based on notification count and their sizes
         
         # Critical z-order fixes: Use top-level window approach for guaranteed visibility
         if parent:
             # Set as top-level window but track parent for positioning
+            # Remove WindowDoesNotAcceptFocus to allow button interactions
             self.setWindowFlags(
                 Qt.Window | 
                 Qt.WindowStaysOnTopHint | 
-                Qt.FramelessWindowHint | 
-                Qt.WindowDoesNotAcceptFocus
+                Qt.FramelessWindowHint
             )
             # Make it always stay on top with transparency support
             self.setAttribute(Qt.WA_TranslucentBackground)
-            self.setAttribute(Qt.WA_ShowWithoutActivating)
+            # Remove ShowWithoutActivating to allow interactions
             self.parent_window = parent
         else:
             # Fallback for no parent
             self.parent_window = None
             
-        # Ensure mouse events work despite being top-level
+        # Ensure mouse events work properly
         self.setAttribute(Qt.WA_TransparentForMouseEvents, False)
         
         # Layout for stacking notifications
@@ -472,6 +540,45 @@ class ErrorNotificationManager(QWidget):
             # Update initial position
             self._update_position()
     
+    def _calculate_total_height(self) -> int:
+        """
+        Calculate total height needed for all active notifications
+        
+        Returns:
+            int: Total height in pixels needed for the notification manager
+        """
+        if not self.notifications:
+            return 50  # Minimum height when no notifications
+        
+        total_height = 20  # Top and bottom margins (10px each)
+        
+        # Add height of each notification plus spacing
+        for notification in self.notifications.values():
+            total_height += notification.height()
+            total_height += self.notification_spacing
+        
+        # Remove the last spacing since there's no notification after the last one
+        if self.notifications:
+            total_height -= self.notification_spacing
+        
+        # Apply reasonable maximum to prevent notifications from going off-screen
+        max_screen_height = 800  # Reasonable maximum for most screens
+        return min(total_height, max_screen_height)
+    
+    def _update_manager_size(self):
+        """Update the notification manager's size based on active notifications"""
+        required_height = self._calculate_total_height()
+        self.setFixedHeight(required_height)
+        
+        # Hide the manager window if no notifications, show if there are notifications
+        if len(self.notifications) == 0:
+            logger.debug("MANAGER: No notifications - hiding manager window")
+            self.hide()
+        else:
+            logger.debug(f"MANAGER: {len(self.notifications)} notifications - showing manager window")
+            if not self.isVisible():
+                self.show()
+    
     def show_error(self, error: FSAError, context: dict):
         """
         Display a new error notification
@@ -484,12 +591,16 @@ class ErrorNotificationManager(QWidget):
         notification_id = f"error_{self.notification_counter}_{uuid.uuid4().hex[:8]}"
         self.notification_counter += 1
         
+        logger.info(f"MANAGER: Showing new error notification {notification_id}")
+        logger.debug(f"MANAGER: Current notifications count: {len(self.notifications)}")
+        
         # Create notification
         notification = ErrorNotification(error, context, notification_id)
         notification.dismissed.connect(self._remove_notification)
         notification.details_requested.connect(self._show_error_details)
         
         # Insert at top (before stretch)
+        logger.debug(f"MANAGER: Inserting notification {notification_id} into layout")
         self.layout.insertWidget(0, notification)
         self.notifications[notification_id] = notification
         
@@ -502,12 +613,18 @@ class ErrorNotificationManager(QWidget):
             )
             self.notifications[oldest_id].dismiss()
         
+        # Update manager size to accommodate new notification
+        logger.debug(f"MANAGER: Updating manager size for {notification_id}")
+        self._update_manager_size()
+        
         # Update positioning and ensure manager stays on top
+        logger.debug(f"MANAGER: Updating position for {notification_id}")
         self._update_position()
         self.raise_()
         self.activateWindow()  # Ensure top-level window is active
         
         # Show with slide-in animation
+        logger.debug(f"MANAGER: Showing notification {notification_id} and starting animation")
         notification.show()
         self._animate_notification_in(notification)
     
@@ -518,9 +635,22 @@ class ErrorNotificationManager(QWidget):
         Args:
             notification_id: ID of notification to remove
         """
+        logger.info(f"MANAGER: REMOVING notification {notification_id}")
+        logger.debug(f"MANAGER: Notifications before removal: {list(self.notifications.keys())}")
+        
         if notification_id in self.notifications:
             del self.notifications[notification_id]
+            logger.info(f"MANAGER: Successfully removed {notification_id} from notifications dict")
+            logger.debug(f"MANAGER: Notifications after removal: {list(self.notifications.keys())}")
+            
+            # Update manager size after removing notification
+            logger.debug(f"MANAGER: Updating manager size after removing {notification_id}")
+            self._update_manager_size()
+            logger.debug(f"MANAGER: Updating position after removing {notification_id}")
             self._update_position()
+        else:
+            logger.warning(f"MANAGER: Attempted to remove non-existent notification {notification_id}")
+            logger.debug(f"MANAGER: Available notifications: {list(self.notifications.keys())}")
     
     def _show_error_details(self, error: FSAError, context: dict):
         """
@@ -530,7 +660,9 @@ class ErrorNotificationManager(QWidget):
             error: The FSAError to show details for
             context: Additional context information
         """
-        dialog = ErrorDetailsDialog(error, context, self)
+        # Use the main parent window instead of the notification manager for proper modal behavior
+        parent_for_dialog = self.parent_window if self.parent_window else self
+        dialog = ErrorDetailsDialog(error, context, parent_for_dialog)
         dialog.exec()
     
     def _animate_notification_in(self, notification: ErrorNotification):
@@ -540,14 +672,20 @@ class ErrorNotificationManager(QWidget):
         Args:
             notification: Notification to animate
         """
-        # Start position (off-screen right)
-        start_geometry = notification.geometry()
-        start_geometry.moveLeft(self.width())
+        # Get the notification's current position in the layout
+        target_geometry = notification.geometry()
+        
+        # Start position (off-screen right) - maintain the same height and y position
+        start_geometry = QRect(
+            self.width(),  # Start off-screen to the right
+            target_geometry.y(),  # Keep same vertical position
+            target_geometry.width(),  # Keep same width
+            target_geometry.height()  # Keep calculated height
+        )
         notification.setGeometry(start_geometry)
         
-        # Target position (visible)
-        target_geometry = notification.geometry()
-        target_geometry.moveLeft(10)
+        # Target position (visible) - use the layout's calculated position
+        # The layout should have already positioned this correctly
         
         # Animate
         animation = QPropertyAnimation(notification, b"geometry")
@@ -562,11 +700,15 @@ class ErrorNotificationManager(QWidget):
     
     def _update_position(self):
         """Update manager position using global screen coordinates"""
+        logger.debug(f"MANAGER: _update_position called")
+        
         if self.parent_window:
             # Get parent window's global position and size
             parent_global_pos = self.parent_window.mapToGlobal(self.parent_window.rect().topLeft())
             parent_rect = self.parent_window.rect()
             margin = 10
+            
+            logger.debug(f"MANAGER: Parent window global pos: {parent_global_pos}, rect: {parent_rect}")
             
             # Try to get actual menu bar height
             menu_bar_height = 0
@@ -583,8 +725,12 @@ class ErrorNotificationManager(QWidget):
             global_x = parent_global_pos.x() + parent_rect.width() - self.width() - margin
             global_y = parent_global_pos.y() + menu_bar_height + margin
             
+            logger.debug(f"MANAGER: Calculated position: ({global_x}, {global_y})")
+            logger.debug(f"MANAGER: Current position: {self.pos()}")
+            
             # Move to global screen coordinates
             self.move(global_x, global_y)
+            logger.debug(f"MANAGER: Moved to position: {self.pos()}")
     
     def clear_all(self):
         """Clear all active notifications"""
