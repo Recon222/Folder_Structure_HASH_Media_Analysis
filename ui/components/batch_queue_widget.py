@@ -131,7 +131,7 @@ class BatchQueueWidget(QWidget):
         # Set reasonable proportional widths (Job Name gets remaining space via Stretch)
         self.queue_table.setColumnWidth(1, 100)  # Occurrence #
         self.queue_table.setColumnWidth(2, 60)   # Files  
-        self.queue_table.setColumnWidth(3, 80)   # Status
+        self.queue_table.setColumnWidth(3, 105)  # Status - wider for icons + text
         self.queue_table.setColumnWidth(4, 70)   # Duration
         self.queue_table.setColumnWidth(5, 80)   # Template
         self.queue_table.setColumnWidth(6, 50)   # Edit
@@ -758,12 +758,8 @@ class BatchQueueWidget(QWidget):
         self.queue_table.setRowCount(len(self.batch_queue.jobs))
         
         for row, job in enumerate(self.batch_queue.jobs):
-            # Job Name - CRITICAL FIX: Truncate long names to prevent table expansion
-            display_name = job.job_name
-            if len(display_name) > 35:  # Truncate very long names
-                display_name = display_name[:32] + "..."
-            
-            name_item = QTableWidgetItem(display_name)
+            # Job Name - Let Qt handle truncation via Stretch mode, tooltip shows full name
+            name_item = QTableWidgetItem(job.job_name)
             name_item.setToolTip(job.job_name)  # Show full name on hover
             self.queue_table.setItem(row, 0, name_item)
             
