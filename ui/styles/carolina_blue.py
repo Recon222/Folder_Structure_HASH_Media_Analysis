@@ -201,9 +201,19 @@ class CarolinaBlueTheme:
             background-color: #4B9CD3;
         }
         
+        /* BACKUP - Original splitter styling (visible blue lines):
         QSplitter::handle {
             background-color: #4B9CD3;
             height: 2px;
+        }
+        */
+        
+        /* INVISIBLE SPLITTERS - Remove visual dividing lines while preserving functionality */
+        QSplitter::handle {
+            background-color: transparent;
+            height: 0px;
+            width: 0px;
+            border: none;
         }
         
         QScrollBar:vertical {

@@ -94,49 +94,20 @@ class BatchTab(QWidget):
         # Job actions
         actions_layout = QHBoxLayout()
         
-        self.set_output_btn = QPushButton("Set Output Directory...")
-        self.set_output_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #FF9800;
-                color: white;
-                font-weight: bold;
-                padding: 8px 6px;
-                border: none;
-                border-radius: 4px;
-            }
-            QPushButton:hover {
-                background-color: #F57C00;
-            }
-        """)
+        self.set_output_btn = QPushButton("Set Output Directory")
+        # SIZE-NEUTRAL FIX: Color only, let Qt handle sizing to match other buttons
+        self.set_output_btn.setStyleSheet("QPushButton { background-color: #FF9800; color: white; min-width: 120px; } QPushButton:hover { background-color: #F57C00; }")
         actions_layout.addWidget(self.set_output_btn)
         
         self.add_to_queue_btn = QPushButton("Add to Batch Queue")
-        self.add_to_queue_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #2196F3;
-                color: white;
-                font-weight: bold;
-                padding: 8px 6px;
-                border: none;
-                border-radius: 4px;
-            }
-            QPushButton:hover {
-                background-color: #1976D2;
-            }
-            QPushButton:disabled {
-                background-color: #CCCCCC;
-                color: #666666;
-            }
-        """)
+        # SIZE-NEUTRAL FIX: Color only, let Qt handle sizing to match other buttons
+        self.add_to_queue_btn.setStyleSheet("QPushButton { background-color: #2196F3; color: white; min-width: 120px; } QPushButton:hover { background-color: #1976D2; } QPushButton:disabled { background-color: #CCCCCC; color: #666666; }")
         actions_layout.addWidget(self.add_to_queue_btn)
         
         self.clear_form_btn = QPushButton("Clear Form/Files")
         actions_layout.addWidget(self.clear_form_btn)
         
         actions_layout.addStretch()
-        
-        self.load_template_btn = QPushButton("Load Template...")
-        actions_layout.addWidget(self.load_template_btn)
         
         layout.addLayout(actions_layout)
         
@@ -164,7 +135,6 @@ class BatchTab(QWidget):
         self.set_output_btn.clicked.connect(self._set_output_directory)
         self.add_to_queue_btn.clicked.connect(self._add_current_to_queue)
         self.clear_form_btn.clicked.connect(self._clear_form)
-        self.load_template_btn.clicked.connect(self._load_template)
         
         # Forward signals from components
         self.files_panel.log_message.connect(self.log_message.emit)
@@ -299,16 +269,6 @@ class BatchTab(QWidget):
         
         self.log_message.emit("Cleared form and file selection")
             
-    def _load_template(self):
-        """Load a job template"""
-        # TODO: Implement template loading functionality
-        error = UIError(
-            "Template loading not yet implemented",
-            user_message="Template loading functionality will be implemented in a future update.",
-            component="BatchTab",
-            severity=ErrorSeverity.INFO
-        )
-        handle_error(error, {'operation': 'load_template_not_implemented'})
         
     def get_batch_queue_widget(self) -> BatchQueueWidget:
         """Get the batch queue widget"""
