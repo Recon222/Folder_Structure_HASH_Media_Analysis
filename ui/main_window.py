@@ -343,6 +343,9 @@ class MainWindow(QMainWindow):
         self.file_thread.progress_update.connect(self.update_progress_with_status)
         self.file_thread.result_ready.connect(self.on_operation_finished_result)
         
+        # Update forensic tab state - pass thread reference for control
+        self.forensic_tab.set_processing_state(True, self.file_thread)
+        
         # Disable UI and show progress
         self.process_btn.setEnabled(False)
         self.progress_bar.setVisible(True)
@@ -366,6 +369,9 @@ class MainWindow(QMainWindow):
         self.process_btn.setEnabled(True)
         self.operation_active = False
         self.current_copy_speed = 0.0
+        
+        # Reset forensic tab processing state
+        self.forensic_tab.set_processing_state(False)
         
         # Stop performance monitor if it's running
         if hasattr(self, 'performance_monitor') and self.performance_monitor:

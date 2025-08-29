@@ -69,7 +69,7 @@ class BatchTab(QWidget):
         
     def _create_job_setup_panel(self) -> QWidget:
         """Create the job setup panel"""
-        job_setup = QGroupBox("Job Configuration")
+        job_setup = QWidget()  # Removed redundant QGroupBox border - inner GroupBoxes provide sufficient visual structure
         layout = QVBoxLayout(job_setup)
         
         # Vertical splitter for form and files
