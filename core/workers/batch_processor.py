@@ -58,8 +58,7 @@ class BatchProcessorThread(BaseWorkerThread):
         super().__init__()
         self.batch_queue = batch_queue
         self.main_window = main_window
-        # cancelled is inherited from BaseWorkerThread
-        self.pause_requested = False
+        # cancelled and pause_requested are inherited from BaseWorkerThread
         self.current_job = None
         self.current_worker_thread = None
         
@@ -117,8 +116,7 @@ class BatchProcessorThread(BaseWorkerThread):
                     break
                     
                 # Handle pause
-                while self.pause_requested and not self.cancelled:
-                    self.msleep(100)
+                self.check_pause()
                     
                 # Get next job
                 job = self.batch_queue.get_next_pending_job()
@@ -499,6 +497,13 @@ class BatchProcessorThread(BaseWorkerThread):
             # Extract thread from successful workflow result
             folder_thread = workflow_result.value
             
+            # CRITICAL FIX: Propagate pause state from batch thread to worker thread
+            if self.pause_requested:
+                folder_thread.pause_requested = True
+            
+            # Store worker thread reference for pause/resume control
+            self.current_worker_thread = folder_thread
+            
             # Execute synchronously within batch thread using proven forensic pipeline
             success, message, results = self._execute_folder_thread_sync(folder_thread)
             
@@ -747,16 +752,20 @@ class BatchProcessorThread(BaseWorkerThread):
                 self.current_worker_thread.cancelled = True
                 
     def pause(self):
-        """Pause the batch processing"""
-        self.pause_requested = True
+        """Pause batch processing and propagate to current worker thread"""
+        super().pause()  # Set pause on batch thread
         
+        # Propagate to current worker thread if it exists
+        if self.current_worker_thread:
+            self.current_worker_thread.pause_requested = True
+    
     def resume(self):
-        """Resume the batch processing"""
-        self.pause_requested = False
+        """Resume batch processing and propagate to current worker thread"""
+        super().resume()  # Clear pause on batch thread
         
-    def is_paused(self) -> bool:
-        """Check if processing is paused"""
-        return self.pause_requested
+        # Propagate to current worker thread if it exists
+        if self.current_worker_thread:
+            self.current_worker_thread.pause_requested = False
         
     def get_current_job_id(self) -> str:
         """Get the ID of the currently processing job"""

@@ -80,7 +80,8 @@ class BufferedFileOperations:
     
     def __init__(self, progress_callback: Optional[Callable[[int, str], None]] = None,
                  metrics_callback: Optional[Callable[[PerformanceMetrics], None]] = None,
-                 cancelled_check: Optional[Callable[[], bool]] = None):
+                 cancelled_check: Optional[Callable[[], bool]] = None,
+                 pause_check: Optional[Callable[[], None]] = None):
         """
         Initialize with optional callbacks
         
@@ -88,10 +89,12 @@ class BufferedFileOperations:
             progress_callback: Function that receives (progress_pct, status_message)
             metrics_callback: Function that receives PerformanceMetrics updates
             cancelled_check: Function that returns True if operation should be cancelled
+            pause_check: Function that checks and waits if operation should be paused
         """
         self.progress_callback = progress_callback
         self.metrics_callback = metrics_callback
         self.cancelled_check = cancelled_check
+        self.pause_check = pause_check
         self.cancelled = False
         self.cancel_event = Event()
         self.settings = SettingsManager()
@@ -268,6 +271,10 @@ class BufferedFileOperations:
         with open(source, 'rb') as src:
             with open(dest, 'wb') as dst:
                 while not self.cancelled:
+                    # Check for pause - this should block if paused
+                    if self.pause_check:
+                        self.pause_check()  # This should block until resumed
+                    
                     # Read chunk
                     chunk = src.read(buffer_size)
                     if not chunk:
@@ -333,6 +340,10 @@ class BufferedFileOperations:
         
         with open(file_path, 'rb') as f:
             while True:
+                # Check for pause
+                if self.pause_check:
+                    self.pause_check()
+                
                 chunk = f.read(buffer_size)
                 if not chunk:
                     break

@@ -46,6 +46,9 @@ class BaseWorkerThread(QThread):
         self.cancelled = False
         self._cancel_requested = False
         
+        # Pause support
+        self.pause_requested = False
+        
         # Operation context
         self.operation_start_time = None
         self.operation_name = self.__class__.__name__
@@ -220,6 +223,28 @@ class BaseWorkerThread(QThread):
                 recoverable=True
             )
             raise error
+    
+    def pause(self):
+        """Request pause of the worker operation"""
+        self.pause_requested = True
+    
+    def resume(self):
+        """Resume the worker operation"""
+        self.pause_requested = False
+    
+    def is_paused(self) -> bool:
+        """Check if the worker is paused"""
+        return self.pause_requested
+    
+    def check_pause(self):
+        """
+        Check for pause and wait until resumed or cancelled
+        
+        Worker operations should call this method periodically in loops
+        to allow responsive pausing during long operations.
+        """
+        while self.pause_requested and not self.cancelled:
+            self.msleep(100)  # Wait 100ms before checking again
     
     def set_operation_name(self, name: str):
         """

@@ -80,6 +80,7 @@ class FolderStructureThread(FileWorkerThread):
             
             # Check for cancellation before starting
             self.check_cancellation()
+            self.check_pause()
             
             # Analyze folder structure and collect files
             self.emit_progress(5, "Analyzing folder structure...")
@@ -92,8 +93,9 @@ class FolderStructureThread(FileWorkerThread):
                     bytes_processed=0
                 ).add_metadata('analysis', structure_analysis)
             
-            # Check for cancellation after analysis
+            # Check for cancellation and pause after analysis
             self.check_cancellation()
+            self.check_pause()
             
             # Execute folder structure copying
             return self._execute_structure_copy(structure_analysis)
@@ -268,7 +270,8 @@ class FolderStructureThread(FileWorkerThread):
             self.buffered_ops = BufferedFileOperations(
                 progress_callback=self._handle_progress_update,
                 metrics_callback=self._handle_metrics_update,
-                cancelled_check=lambda: self.is_cancelled()
+                cancelled_check=lambda: self.is_cancelled(),
+                pause_check=lambda: self.check_pause()
             )
             
             # Create empty directories first
@@ -278,6 +281,7 @@ class FolderStructureThread(FileWorkerThread):
             for dir_path in empty_dirs:
                 if self.is_cancelled():
                     break
+                self.check_pause()
                     
                 dest_dir = self.destination / dir_path
                 
@@ -325,6 +329,7 @@ class FolderStructureThread(FileWorkerThread):
                 for source_file, relative_path in total_files:
                     if self.is_cancelled():
                         break
+                    self.check_pause()
                     
                     try:
                         # Create destination path preserving structure
