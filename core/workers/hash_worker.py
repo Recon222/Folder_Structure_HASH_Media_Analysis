@@ -270,7 +270,7 @@ class SingleHashWorker(BaseWorkerThread):
             except Exception as e:
                 handle_error(
                     HashVerificationError(f"Error during hash operation cancellation: {e}"),
-                    {'stage': 'cancellation', 'severity': 'warning'}
+                    {'stage': 'cancellation'}
                 )
 
 
@@ -370,8 +370,7 @@ class VerificationWorker(BaseWorkerThread):
             self.handle_error(error, {
                 'stage': 'hash_verification',
                 'error_type': 'unexpected',
-                'exception_type': e.__class__.__name__,
-                'severity': 'critical'
+                'exception_type': e.__class__.__name__
             })
             return Result.error(error)
     
@@ -463,9 +462,14 @@ class VerificationWorker(BaseWorkerThread):
                     ErrorSeverity.ERROR if mismatches > matches else ErrorSeverity.WARNING
                 )
                 
+                # Create detailed mismatch information for user message
+                detailed_message = self._create_detailed_verification_message(
+                    verification_results, matches, total_comparisons, error_details
+                )
+                
                 error = HashVerificationError(
                     f"Hash verification completed with issues: {', '.join(error_details)}",
-                    user_message=f"Verification found issues: {', '.join(error_details)}. {matches}/{total_comparisons} files match.",
+                    user_message=detailed_message,
                     severity=severity
                 )
                 
@@ -521,6 +525,68 @@ class VerificationWorker(BaseWorkerThread):
             self.handle_error(error, {'stage': 'verification_result_processing'})
             return HashOperationResult(success=False, error=error, value={})
     
+    def _create_detailed_verification_message(self, verification_results, matches: int, total_comparisons: int, error_details: list) -> str:
+        """Create detailed user-friendly verification message with file-specific information"""
+        
+        # Start with summary
+        message_parts = [
+            f"Hash Verification Results: {matches}/{total_comparisons} files match."
+        ]
+        
+        # Add overall issues summary
+        if error_details:
+            message_parts.append(f"\nIssues found: {', '.join(error_details)}")
+        
+        # Add detailed mismatch information
+        mismatched_files = [v for v in verification_results if not v.match and v.target_result is not None]
+        if mismatched_files:
+            message_parts.append("\n\n🔍 HASH MISMATCHES:")
+            for i, result in enumerate(mismatched_files[:5], 1):  # Limit to first 5 for readability
+                source_hash = result.source_result.hash_value if result.source_result.success else "ERROR"
+                target_hash = result.target_result.hash_value if result.target_result.success else "ERROR"
+                
+                message_parts.append(f"\n{i}. File: {result.source_result.file_path.name}")
+                message_parts.append(f"   Source: {source_hash[:16]}...")
+                message_parts.append(f"   Target: {target_hash[:16]}...")
+                
+            # Add note if there are more mismatches
+            if len(mismatched_files) > 5:
+                remaining = len(mismatched_files) - 5
+                message_parts.append(f"\n   ... and {remaining} more mismatched files")
+        
+        # Add missing targets information
+        missing_files = [v for v in verification_results if v.target_result is None]
+        if missing_files:
+            message_parts.append("\n\n📂 MISSING TARGET FILES:")
+            for i, result in enumerate(missing_files[:3], 1):  # Limit to first 3
+                message_parts.append(f"\n{i}. {result.source_result.file_path.name}")
+                
+            if len(missing_files) > 3:
+                remaining = len(missing_files) - 3
+                message_parts.append(f"\n   ... and {remaining} more missing files")
+        
+        # Add error files information  
+        error_files = [v for v in verification_results if not v.source_result.success or (v.target_result and not v.target_result.success)]
+        if error_files:
+            message_parts.append("\n\n⚠️ FILES WITH ERRORS:")
+            for i, result in enumerate(error_files[:3], 1):  # Limit to first 3
+                file_name = result.source_result.file_path.name
+                if not result.source_result.success:
+                    message_parts.append(f"\n{i}. {file_name} (source error: {result.source_result.error_message})")
+                elif result.target_result and not result.target_result.success:
+                    message_parts.append(f"\n{i}. {file_name} (target error: {result.target_result.error_message})")
+                    
+            if len(error_files) > 3:
+                remaining = len(error_files) - 3
+                message_parts.append(f"\n   ... and {remaining} more files with errors")
+        
+        # Add recommendation
+        if mismatched_files or missing_files:
+            message_parts.append("\n\n💡 RECOMMENDATION:")
+            message_parts.append("Export the verification CSV for complete details and investigate the mismatched/missing files.")
+        
+        return "".join(message_parts)
+    
     def _handle_progress_update(self, percent: int, status_msg: str):
         """Handle progress updates from hash operations"""
         self.emit_progress(percent, status_msg)
@@ -541,5 +607,5 @@ class VerificationWorker(BaseWorkerThread):
             except Exception as e:
                 handle_error(
                     HashVerificationError(f"Error during verification cancellation: {e}"),
-                    {'stage': 'cancellation', 'severity': 'warning'}
+                    {'stage': 'cancellation'}
                 )

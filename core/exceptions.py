@@ -258,6 +258,9 @@ class HashVerificationError(FSAError):
             context['actual_hash'] = actual_hash
         kwargs['context'] = context
         
+        # Remove severity from kwargs if present to avoid conflict
+        kwargs.pop('severity', None)
+        
         super().__init__(message, severity=ErrorSeverity.CRITICAL, **kwargs)
     
     def _generate_user_message(self) -> str:
