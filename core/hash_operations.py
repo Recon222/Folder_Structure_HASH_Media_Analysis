@@ -389,29 +389,86 @@ class HashOperations:
         if self.status_callback:
             self.status_callback("Comparing hash results...")
         
-        # Debug logging: show sample of source and target paths
-        logger.debug("=== HASH VERIFICATION DEBUG ===")
-        logger.debug(f"Source files ({len(source_results)}):")
-        for i, result in enumerate(source_results[:5]):  # Show first 5
+        # 🔍 Enhanced debug logging to track missing files
+        logger.info("=== 🔍 HASH VERIFICATION DEBUG ===")
+        logger.info(f"📁 Source files discovered: {len(source_results)}")
+        logger.info(f"📁 Target files discovered: {len(target_results)}")
+        
+        # Show first and last few files from each side
+        logger.debug(f"Source files (first 3):")
+        for i, result in enumerate(source_results[:3]):
             logger.debug(f"  [{i}] {result.relative_path}")
-        if len(source_results) > 5:
-            logger.debug(f"  ... and {len(source_results) - 5} more")
+        if len(source_results) > 6:
+            logger.debug(f"  ... ({len(source_results) - 6} more) ...")
+        for i, result in enumerate(source_results[-3:], len(source_results) - 3):
+            logger.debug(f"  [{i}] {result.relative_path}")
             
-        logger.debug(f"Target files ({len(target_results)}):")
-        for i, result in enumerate(target_results[:5]):  # Show first 5
+        logger.debug(f"Target files (first 3):")
+        for i, result in enumerate(target_results[:3]):
             logger.debug(f"  [{i}] {result.relative_path}")
-        if len(target_results) > 5:
-            logger.debug(f"  ... and {len(target_results) - 5} more")
-        logger.debug("=== END DEBUG ===")
+        if len(target_results) > 6:
+            logger.debug(f"  ... ({len(target_results) - 6} more) ...")
+        for i, result in enumerate(target_results[-3:], len(target_results) - 3):
+            logger.debug(f"  [{i}] {result.relative_path}")
+        
+        logger.info("=== 🔍 END DEBUG ===")
         
         verification_results = self._compare_hash_results(source_results, target_results)
         
-        # Summary
+        # Summary with detailed bidirectional analysis
         matches = sum(1 for v in verification_results if v.match)
         total_comparisons = len(verification_results)
         
+        # 🔄 BIDIRECTIONAL COUNTING: Count both types of missing files
+        missing_targets = sum(1 for v in verification_results if v.comparison_type == "missing_target")
+        missing_sources = sum(1 for v in verification_results if v.comparison_type == "missing_source")
+        hash_mismatches = sum(1 for v in verification_results if v.target_result is not None and v.source_result is not None and not v.match)
+        
+        # 🚨 Enhanced debug logging for bidirectional missing files
+        logger.info(f"🔍 BIDIRECTIONAL COMPARISON RESULTS:")
+        logger.info(f"   📊 Total verification entries: {total_comparisons}")
+        logger.info(f"   ✅ Successful matches: {matches}")
+        logger.info(f"   ❌ Hash mismatches: {hash_mismatches}")
+        logger.info(f"   🚨 Missing targets (source without target): {missing_targets}")
+        logger.info(f"   🚨 Missing sources (target without source): {missing_sources}")
+        
+        if missing_targets > 0:
+            logger.info(f"🚨 MISSING TARGET FILES:")
+            missing_target_files = [v for v in verification_results if v.comparison_type == "missing_target"]
+            for i, v in enumerate(missing_target_files[:5], 1):
+                logger.info(f"   {i}. {v.source_result.relative_path}")
+            if len(missing_target_files) > 5:
+                logger.info(f"   ... and {len(missing_target_files) - 5} more missing targets")
+        
+        if missing_sources > 0:
+            logger.info(f"🚨 MISSING SOURCE FILES:")
+            missing_source_files = [v for v in verification_results if v.comparison_type == "missing_source"]
+            for i, v in enumerate(missing_source_files[:5], 1):
+                logger.info(f"   {i}. {v.target_result.relative_path}")
+            if len(missing_source_files) > 5:
+                logger.info(f"   ... and {len(missing_source_files) - 5} more missing sources")
+        
+        # Create comprehensive bidirectional status message
+        total_issues = missing_targets + missing_sources + hash_mismatches
+        if total_issues > 0:
+            status_parts = []
+            if matches > 0:
+                status_parts.append(f"{matches} files match")
+            if missing_targets > 0:
+                status_parts.append(f"{missing_targets} files missing in target")
+            if missing_sources > 0:
+                status_parts.append(f"{missing_sources} files missing in source")
+            if hash_mismatches > 0:
+                status_parts.append(f"{hash_mismatches} hash mismatches")
+            
+            source_count = len(source_results)
+            target_count = len(target_results)
+            status_message = f"Verification completed with issues: {', '.join(status_parts)} (source: {source_count} files, target: {target_count} files)"
+        else:
+            status_message = f"Verification completed successfully: All {matches} files match perfectly"
+        
         if self.status_callback:
-            self.status_callback(f"Verification complete: {matches}/{total_comparisons} files match")
+            self.status_callback(status_message)
         
         return verification_results, combined_metrics
     
@@ -445,14 +502,18 @@ class HashOperations:
             return relative_path
 
     def _compare_hash_results(self, source_results: List[HashResult], target_results: List[HashResult]) -> List[VerificationResult]:
-        """Compare two sets of hash results
+        """Compare two sets of hash results using bidirectional matching
+        
+        BIDIRECTIONAL ALGORITHM:
+        - Phase 1: For each source file, find matching target (forward pass)
+        - Phase 2: For each unmatched target file, create missing_source result (reverse pass)
         
         Args:
             source_results: Results from source files
             target_results: Results from target files
             
         Returns:
-            List of verification results
+            List of verification results including both missing sources and missing targets
         """
         verification_results = []
         
@@ -476,6 +537,9 @@ class HashOperations:
                 target_filename_map[filename] = []
             target_filename_map[filename].append(target_result)
         
+        # 🔄 PHASE 1: Forward Pass - Source → Target (existing logic with tracking)
+        matched_targets = set()  # Track which targets were matched
+        
         # Compare each source file
         for source_result in source_results:
             source_filename = source_result.relative_path.name
@@ -493,6 +557,8 @@ class HashOperations:
             if normalized_source_path_str in target_path_map:
                 target_result = target_path_map[normalized_source_path_str]
                 comparison_type = "exact_match"
+                # 🎯 CRITICAL: Track matched targets for Phase 2
+                matched_targets.add(str(target_result.file_path))
             # PRIORITY 2: Try filename-only match (fallback for single files)
             elif source_filename in target_filename_map:
                 filename_matches = target_filename_map[source_filename]
@@ -500,6 +566,8 @@ class HashOperations:
                     # Only one file with this name, safe to match
                     target_result = filename_matches[0]
                     comparison_type = "name_match"
+                    # 🎯 CRITICAL: Track matched targets for Phase 2
+                    matched_targets.add(str(target_result.file_path))
                 else:
                     # Multiple files with same name - cannot determine correct match
                     target_result = None
@@ -544,5 +612,31 @@ class HashOperations:
                 comparison_type=comparison_type,
                 notes=notes
             ))
+        
+        # 🔄 PHASE 2: Reverse Pass - Target → Source (NEW BIDIRECTIONAL LOGIC!)
+        # Find target files that weren't matched in Phase 1 - these are "missing source" files
+        logger.info(f"🔄 PHASE 2: Checking for unmatched target files...")
+        unmatched_targets = 0
+        
+        for target_result in target_results:
+            target_file_path = str(target_result.file_path)
+            
+            # If this target wasn't matched to any source file
+            if target_file_path not in matched_targets:
+                unmatched_targets += 1
+                
+                # Create a "missing source" verification result
+                verification_results.append(VerificationResult(
+                    source_result=None,  # No source file found for this target
+                    target_result=target_result,
+                    match=False,  # Missing source = verification failure
+                    comparison_type="missing_source",  # NEW comparison type
+                    notes="No corresponding source file found for this target file"
+                ))
+                
+                # Log for debugging
+                logger.info(f"Missing source for target: '{target_result.relative_path}'")
+        
+        logger.info(f"🔄 PHASE 2 COMPLETE: Found {unmatched_targets} unmatched target files")
         
         return verification_results

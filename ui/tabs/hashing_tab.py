@@ -139,7 +139,8 @@ class OperationStatusCard(QFrame):
         elif status == 'failed':
             self.status_icon.setText("❌")
             self.title_label.setText(f"{op_type.title()}: Failed")
-            self.export_btn.setEnabled(False)
+            # CRITICAL FIX: Enable export for failed operations that have results
+            self.export_btn.setEnabled(bool(results))
         elif status == 'in_progress':
             self.status_icon.setText("⚙️")
             self.title_label.setText(f"{op_type.title()}: Processing...")
@@ -203,6 +204,15 @@ class ResultsManagementPanel(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.operation_history = []
+        
+        # Session statistics tracking
+        self.session_stats = {
+            'total_files_processed': 0,
+            'total_processing_time': 0.0,
+            'total_data_processed_mb': 0.0,
+            'operations_completed': 0
+        }
+        
         self._setup_ui()
         
     def _setup_ui(self):
@@ -254,13 +264,68 @@ class ResultsManagementPanel(QFrame):
             self.verification_card.set_operation_data(operation_type, status, results)
             
         # Update session statistics
+        if operation_type in ['single_hash', 'verification'] and status == 'completed' and results:
+            self._add_to_session_stats(operation_type, results)
+        
         self._update_session_stats()
+        
+    def _add_to_session_stats(self, operation_type: str, results: Dict):
+        """Add operation results to session statistics"""
+        try:
+            # Extract metrics from results - handle multiple possible key names
+            files_processed = (results.get('files_processed', 0) or 
+                             results.get('files_hashed', 0) or 
+                             results.get('total_files', 0) or
+                             len(results.get('results', [])) if isinstance(results.get('results'), list) else 0)
+            
+            processing_time = (results.get('duration_seconds', 0) or 
+                             results.get('processing_time', 0) or
+                             results.get('elapsed_time', 0))
+            
+            # Try to get data processed in MB
+            data_mb = results.get('total_size_mb', 0) or 0
+            
+            # Update session statistics
+            self.session_stats['total_files_processed'] += files_processed
+            self.session_stats['total_processing_time'] += processing_time
+            self.session_stats['total_data_processed_mb'] += data_mb
+            self.session_stats['operations_completed'] += 1
+            
+        except Exception as e:
+            # If we can't extract metrics, at least increment operation count
+            self.session_stats['operations_completed'] += 1
         
     def _update_session_stats(self):
         """Update session statistics display"""
-        # This would calculate totals from all completed operations
-        # For now, placeholder implementation
-        pass
+        try:
+            # Calculate average speed
+            avg_speed = 0.0
+            if self.session_stats['total_processing_time'] > 0 and self.session_stats['total_data_processed_mb'] > 0:
+                avg_speed = self.session_stats['total_data_processed_mb'] / self.session_stats['total_processing_time']
+            
+            # Format time nicely
+            total_time = self.session_stats['total_processing_time']
+            if total_time < 60:
+                time_str = f"{total_time:.1f}s"
+            elif total_time < 3600:
+                minutes = int(total_time // 60)
+                seconds = int(total_time % 60)
+                time_str = f"{minutes}m {seconds}s"
+            else:
+                hours = int(total_time // 3600)
+                minutes = int((total_time % 3600) // 60)
+                time_str = f"{hours}h {minutes}m"
+            
+            # Update labels
+            self.total_files_label.setText(f"Files Processed: {self.session_stats['total_files_processed']}")
+            self.total_time_label.setText(f"Total Time: {time_str}")
+            self.avg_speed_label.setText(f"Avg Speed: {avg_speed:.1f} MB/s")
+            
+        except Exception as e:
+            # Fallback to show at least basic stats
+            self.total_files_label.setText(f"Files Processed: {self.session_stats.get('total_files_processed', 0)}")
+            self.total_time_label.setText("Total Time: --")
+            self.avg_speed_label.setText("Avg Speed: --")
 
 
 class HashingTab(QWidget):
@@ -655,7 +720,14 @@ class HashingTab(QWidget):
                 return
                 
             algorithm = settings.hash_algorithm
-            self._log(f"Starting single hash operation with {algorithm.upper()} on {len(all_paths)} items...")
+            
+            # Get actual file count by expanding folders
+            from core.hash_operations import HashOperations
+            temp_hash_ops = HashOperations(algorithm)
+            file_list = temp_hash_ops.discover_files(all_paths)
+            file_count = len(file_list)
+            
+            self._log(f"Starting single hash operation with {algorithm.upper()} on {file_count} files...")
             
             # Update UI state
             self._set_operation_active(True, 'single_hash')
@@ -691,7 +763,17 @@ class HashingTab(QWidget):
                 
             algorithm = settings.hash_algorithm
             self._log(f"Starting verification operation with {algorithm.upper()}...")
-            self._log(f"Source: {len(source_paths)} items, Target: {len(target_paths)} items")
+            
+            # Get actual file counts by expanding folders
+            from core.hash_operations import HashOperations
+            temp_hash_ops = HashOperations(algorithm)
+            source_file_list = temp_hash_ops.discover_files(source_paths)
+            target_file_list = temp_hash_ops.discover_files(target_paths)
+            
+            source_file_count = len(source_file_list)
+            target_file_count = len(target_file_list)
+            
+            self._log(f"Source: {source_file_count} files, Target: {target_file_count} files")
             
             # Update UI state
             self._set_operation_active(True, 'verification')
@@ -743,7 +825,14 @@ class HashingTab(QWidget):
             self.results_panel.update_operation_status('verification', 'completed', result.value)
             self._log("Verification operation completed successfully!")
         else:
-            self.results_panel.update_operation_status('verification', 'failed')
+            # CRITICAL FIX: Failed verifications still have results - pass them to UI for export
+            if isinstance(result, Result) and result.value:
+                self.current_verification_results = result.value
+                self.results_panel.update_operation_status('verification', 'failed', result.value)
+            else:
+                self.current_verification_results = {}
+                self.results_panel.update_operation_status('verification', 'failed')
+            
             error_msg = result.error.user_message if hasattr(result, 'error') and result.error else "Verification operation failed"
             self._log(f"Verification operation failed: {error_msg}")
             

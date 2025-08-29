@@ -247,10 +247,13 @@ class HashReportGenerator:
             with open(output_path, 'w', newline='', encoding='utf-8') as csvfile:
                 fieldnames = [
                     'Source File Path',
+                    'Source Relative Path', 
                     'Target File Path',
+                    'Target Relative Path',
                     f'Source Hash ({algorithm.upper()})',
                     f'Target Hash ({algorithm.upper()})',
                     'Verification Status',
+                    'Comparison Type',
                     'Source Status',
                     'Target Status',
                     'Source Error',
@@ -259,31 +262,56 @@ class HashReportGenerator:
                 
                 writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
                 
+                # Analyze verification results for enhanced bidirectional metadata
+                matches = len([v for v in verification_dict.values() if v.get('match', False)])
+                missing_targets = len([v for v in verification_dict.values() if v.get('verification_status') == 'MISSING_TARGET'])
+                missing_sources = len([v for v in verification_dict.values() if v.get('verification_status') == 'MISSING_SOURCE'])  # NEW
+                hash_mismatches = len([v for v in verification_dict.values() if v.get('verification_status') == 'MISMATCH'])
+                successful_comparisons = len([v for v in verification_dict.values() if v.get('verification_status') == 'MATCH'])
+                
                 # Write metadata header if requested
                 if include_metadata:
                     metadata_writer = csv.writer(csvfile)
                     metadata_writer.writerow(['# Hash Verification Report Metadata'])
                     metadata_writer.writerow([f'# Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'])
                     metadata_writer.writerow([f'# Algorithm: {algorithm.upper()}'])
-                    metadata_writer.writerow([f'# Total Comparisons: {len(verification_dict)}'])
-                    matches = len([v for v in verification_dict.values() if v.get('match', False)])
-                    metadata_writer.writerow([f'# Matches: {matches}'])
-                    metadata_writer.writerow([f'# Mismatches: {len(verification_dict) - matches}'])
+                    metadata_writer.writerow([f'# Total Verification Entries: {len(verification_dict)}'])
+                    metadata_writer.writerow([f'# Successful Matches: {successful_comparisons}'])
+                    metadata_writer.writerow([f'# Hash Mismatches: {hash_mismatches}'])
+                    metadata_writer.writerow([f'# Missing Target Files: {missing_targets}'])
+                    metadata_writer.writerow([f'# Missing Source Files: {missing_sources}'])  # NEW
+                    metadata_writer.writerow([f'# Verification Result: {"FAILED" if (missing_targets > 0 or missing_sources > 0 or hash_mismatches > 0) else "PASSED"}'])
                     metadata_writer.writerow([''])  # Empty line before data
                 
                 # Write header
                 writer.writeheader()
                 
-                # Write data rows
+                # Write data rows with enhanced missing file support
                 for verification_data in verification_dict.values():
+                    # Get verification status with fallback logic - BIDIRECTIONAL
+                    verification_status = verification_data.get('verification_status')
+                    if not verification_status:
+                        # Fallback for older format - support both missing types
+                        if verification_data.get('target_path') == 'MISSING':
+                            verification_status = 'MISSING_TARGET'
+                        elif verification_data.get('source_path') == 'MISSING':
+                            verification_status = 'MISSING_SOURCE'
+                        elif verification_data.get('match', False):
+                            verification_status = 'MATCH'
+                        else:
+                            verification_status = 'MISMATCH'
+                    
                     writer.writerow({
                         'Source File Path': verification_data.get('source_path', ''),
+                        'Source Relative Path': verification_data.get('source_relative_path', ''),
                         'Target File Path': verification_data.get('target_path', ''),
+                        'Target Relative Path': verification_data.get('target_relative_path', ''),
                         f'Source Hash ({algorithm.upper()})': verification_data.get('source_hash', ''),
                         f'Target Hash ({algorithm.upper()})': verification_data.get('target_hash', ''),
-                        'Verification Status': 'MATCH' if verification_data.get('match', False) else 'MISMATCH',
+                        'Verification Status': verification_status,
+                        'Comparison Type': verification_data.get('comparison_type', 'unknown'),
                         'Source Status': 'SUCCESS' if verification_data.get('source_success', False) else 'FAILED',
-                        'Target Status': 'SUCCESS' if verification_data.get('target_success', False) else 'FAILED',
+                        'Target Status': 'SUCCESS' if verification_data.get('target_success', False) else 'FAILED', 
                         'Source Error': verification_data.get('source_error', ''),
                         'Target Error': verification_data.get('target_error', '')
                     })

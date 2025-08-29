@@ -416,75 +416,146 @@ class VerificationWorker(BaseWorkerThread):
             HashOperationResult with processed verification data
         """
         try:
-            # Analyze results
+            # Analyze results - FIXED: Separate actual hash mismatches from missing files
             total_comparisons = len(verification_results)
             matches = len([v for v in verification_results if v.match])
-            mismatches = total_comparisons - matches
+            # CRITICAL FIX: Only count actual hash mismatches, not missing files
+            hash_mismatches = len([v for v in verification_results 
+                                 if v.target_result is not None and v.source_result is not None 
+                                 and not v.match])
             
-            # Count files with errors
-            source_errors = len([v for v in verification_results if not v.source_result.success])
+            # Count files with errors - BIDIRECTIONAL SUPPORT
+            source_errors = len([v for v in verification_results if v.source_result and not v.source_result.success])
             target_errors = len([v for v in verification_results if v.target_result and not v.target_result.success])
-            missing_targets = len([v for v in verification_results if v.target_result is None])
+            missing_targets = len([v for v in verification_results if v.comparison_type == "missing_target"])
+            missing_sources = len([v for v in verification_results if v.comparison_type == "missing_source"])
             
-            # Convert results to dictionary format
+            # Convert results to dictionary format - BIDIRECTIONAL: Include missing files for CSV export
             verification_dict = {}
             for i, result in enumerate(verification_results):
-                key = f"verification_{i}_{result.source_result.file_path.name}"
-                verification_dict[key] = {
-                    'source_path': str(result.source_result.file_path),
-                    'target_path': str(result.target_result.file_path) if result.target_result else None,
-                    'source_hash': result.source_result.hash_value if result.source_result.success else None,
-                    'target_hash': result.target_result.hash_value if result.target_result and result.target_result.success else None,
-                    'match': result.match,
-                    'algorithm': self.algorithm,
-                    'source_success': result.source_result.success,
-                    'target_success': result.target_result.success if result.target_result else False,
-                    'source_error': result.source_result.error_message if not result.source_result.success else None,
-                    'target_error': result.target_result.error_message if result.target_result and not result.target_result.success else None
-                }
+                # Handle both missing targets and missing sources for key generation
+                if result.source_result:
+                    key = f"verification_{i}_{result.source_result.file_path.name}"
+                else:
+                    # Missing source - use target file name
+                    key = f"verification_{i}_{result.target_result.file_path.name}"
+                
+                # BIDIRECTIONAL FIX: Handle all three cases
+                if result.comparison_type == "missing_target":
+                    # Missing target file - source exists, no target
+                    verification_dict[key] = {
+                        'source_path': str(result.source_result.file_path),
+                        'target_path': 'MISSING',  # Clear indicator for CSV
+                        'source_relative_path': str(result.source_result.relative_path),
+                        'target_relative_path': 'MISSING',
+                        'source_hash': result.source_result.hash_value if result.source_result.success else None,
+                        'target_hash': 'MISSING',  # Clear indicator
+                        'match': False,  # Missing files never match
+                        'algorithm': self.algorithm,
+                        'source_success': result.source_result.success,
+                        'target_success': False,  # Missing = not successful
+                        'source_error': result.source_result.error_message if not result.source_result.success else None,
+                        'target_error': 'File not found in target location',
+                        'comparison_type': result.comparison_type,
+                        'verification_status': 'MISSING_TARGET'
+                    }
+                elif result.comparison_type == "missing_source":
+                    # Missing source file - target exists, no source
+                    verification_dict[key] = {
+                        'source_path': 'MISSING',  # Clear indicator for CSV
+                        'target_path': str(result.target_result.file_path),
+                        'source_relative_path': 'MISSING',
+                        'target_relative_path': str(result.target_result.relative_path),
+                        'source_hash': 'MISSING',  # Clear indicator
+                        'target_hash': result.target_result.hash_value if result.target_result.success else None,
+                        'match': False,  # Missing files never match
+                        'algorithm': self.algorithm,
+                        'source_success': False,  # Missing = not successful
+                        'target_success': result.target_result.success,
+                        'source_error': 'File not found in source location',
+                        'target_error': result.target_result.error_message if not result.target_result.success else None,
+                        'comparison_type': result.comparison_type,
+                        'verification_status': 'MISSING_SOURCE'
+                    }
+                else:
+                    # Normal comparison (file exists in both locations) 
+                    verification_dict[key] = {
+                        'source_path': str(result.source_result.file_path),
+                        'target_path': str(result.target_result.file_path),
+                        'source_relative_path': str(result.source_result.relative_path),
+                        'target_relative_path': str(result.target_result.relative_path),
+                        'source_hash': result.source_result.hash_value if result.source_result.success else None,
+                        'target_hash': result.target_result.hash_value if result.target_result.success else None,
+                        'match': result.match,
+                        'algorithm': self.algorithm,
+                        'source_success': result.source_result.success,
+                        'target_success': result.target_result.success,
+                        'source_error': result.source_result.error_message if not result.source_result.success else None,
+                        'target_error': result.target_result.error_message if not result.target_result.success else None,
+                        'comparison_type': result.comparison_type,
+                        'verification_status': 'MATCH' if result.match else 'MISMATCH'
+                    }
             
-            # Determine overall success and create appropriate error if needed
-            total_errors = source_errors + target_errors + missing_targets + mismatches
+            # Determine overall success and create appropriate error if needed - BIDIRECTIONAL
+            total_errors = source_errors + target_errors + missing_targets + missing_sources + hash_mismatches
             overall_success = total_errors == 0
             
-            if not overall_success:
+            # CRITICAL FIX: Missing files should always be treated as verification failures
+            # This ensures they trigger the error system and are reported properly
+            verification_failed = not overall_success
+            
+            if verification_failed:
                 error_details = []
-                if mismatches > 0:
-                    error_details.append(f"{mismatches} hash mismatches")
-                if source_errors > 0:
-                    error_details.append(f"{source_errors} source errors")
-                if target_errors > 0:
-                    error_details.append(f"{target_errors} target errors")
+                # Prioritize missing files first - these are the most critical
                 if missing_targets > 0:
-                    error_details.append(f"{missing_targets} missing targets")
+                    error_details.append(f"{missing_targets} missing target files")
+                if missing_sources > 0:
+                    error_details.append(f"{missing_sources} missing source files")
+                if hash_mismatches > 0:
+                    error_details.append(f"{hash_mismatches} hash mismatches")
+                if source_errors > 0:
+                    error_details.append(f"{source_errors} source file errors")
+                if target_errors > 0:
+                    error_details.append(f"{target_errors} target file errors")
                 
-                severity = ErrorSeverity.CRITICAL if matches == 0 else (
-                    ErrorSeverity.ERROR if mismatches > matches else ErrorSeverity.WARNING
-                )
+                # Emit detailed progress message showing the issues
+                issues_summary = ', '.join(error_details)
+                if matches > 0:
+                    self.emit_progress(100, f"Verification failed: {matches} files match, but found {issues_summary}")
+                else:
+                    self.emit_progress(100, f"Verification failed: No files match. Issues: {issues_summary}")
                 
-                # Create detailed mismatch information for user message
+                # Determine severity: missing files are serious verification failures
+                if missing_targets > 0 or missing_sources > 0 or hash_mismatches > 0:
+                    severity = ErrorSeverity.ERROR if matches > 0 else ErrorSeverity.CRITICAL
+                else:
+                    severity = ErrorSeverity.WARNING  # Only file access errors
+                
+                # Create detailed verification failure message
                 detailed_message = self._create_detailed_verification_message(
                     verification_results, matches, total_comparisons, error_details
                 )
                 
                 error = HashVerificationError(
-                    f"Hash verification completed with issues: {', '.join(error_details)}",
-                    user_message=detailed_message,
-                    severity=severity
+                    f"Hash verification failed: {', '.join(error_details)}",
+                    user_message=detailed_message
                 )
                 
                 self.handle_error(error, {
                     'stage': 'verification_analysis',
-                    'matches': matches,
-                    'mismatches': mismatches,
+                    'total_verification_entries': total_comparisons,
+                    'successful_matches': matches,
+                    'missing_targets': missing_targets,
+                    'missing_sources': missing_sources,  # NEW: Track missing sources
+                    'hash_mismatches': hash_mismatches,
                     'source_errors': source_errors,
                     'target_errors': target_errors,
-                    'missing_targets': missing_targets
+                    'total_verification_failures': total_errors
                 })
                 
                 result = HashOperationResult(
-                    success=matches > 0,  # Partial success if some files matched
-                    error=error if matches == 0 else None,
+                    success=False,  # CRITICAL: Any missing files or mismatches = verification failure
+                    error=error,
                     value=verification_dict,
                     files_hashed=total_comparisons,
                     verification_failures=total_errors,
@@ -492,12 +563,13 @@ class VerificationWorker(BaseWorkerThread):
                     processing_time=metrics.duration
                 )
                 
+                # Add specific warnings for partial success scenarios
                 if matches > 0:
-                    result.add_warning(f"Verification issues found: {', '.join(error_details)}")
+                    result.add_warning(f"Partial verification: {matches} files matched, but {total_errors} issues found")
                 
                 return result
             
-            # All successful
+            # All successful - only reached if no missing files or mismatches
             self.emit_progress(100, f"Verification completed successfully. All {matches} files match perfectly.")
             
             result = HashOperationResult.create(
@@ -528,49 +600,72 @@ class VerificationWorker(BaseWorkerThread):
     def _create_detailed_verification_message(self, verification_results, matches: int, total_comparisons: int, error_details: list) -> str:
         """Create detailed user-friendly verification message with file-specific information"""
         
-        # Start with summary
+        # Count different types of issues - BIDIRECTIONAL SUPPORT
+        missing_target_files = [v for v in verification_results if v.comparison_type == "missing_target"]
+        missing_source_files = [v for v in verification_results if v.comparison_type == "missing_source"]
+        mismatched_files = [v for v in verification_results if not v.match and v.target_result is not None and v.source_result is not None]
+        error_files = [v for v in verification_results if (v.source_result and not v.source_result.success) or (v.target_result and not v.target_result.success)]
+        
+        # Start with clear bidirectional summary
+        total_missing = len(missing_target_files) + len(missing_source_files)
         message_parts = [
-            f"Hash Verification Results: {matches}/{total_comparisons} files match."
+            f"Hash Verification Failed - {matches}/{total_comparisons} verification entries processed successfully, but {total_missing} files are missing."
         ]
         
-        # Add overall issues summary
+        # Add critical issues summary prioritizing missing files
         if error_details:
-            message_parts.append(f"\nIssues found: {', '.join(error_details)}")
+            message_parts.append(f"\n\n❌ VERIFICATION FAILURES:")
+            for detail in error_details:
+                message_parts.append(f"\n• {detail}")
         
-        # Add detailed mismatch information
-        mismatched_files = [v for v in verification_results if not v.match and v.target_result is not None]
+        # PRIORITY 1: Missing target files (source files without targets)
+        if missing_target_files:
+            message_parts.append(f"\n\n📂 MISSING TARGET FILES ({len(missing_target_files)}):")
+            message_parts.append("The following source files have no corresponding target files:")
+            
+            for i, result in enumerate(missing_target_files[:5], 1):  # Show first 5
+                relative_path = str(result.source_result.relative_path)
+                message_parts.append(f"\n{i}. {relative_path}")
+                
+            if len(missing_target_files) > 5:
+                remaining = len(missing_target_files) - 5
+                message_parts.append(f"\n   ... and {remaining} more missing target files")
+        
+        # PRIORITY 1B: Missing source files (target files without sources) - NEW!
+        if missing_source_files:
+            message_parts.append(f"\n\n📁 MISSING SOURCE FILES ({len(missing_source_files)}):")
+            message_parts.append("The following target files have no corresponding source files:")
+            
+            for i, result in enumerate(missing_source_files[:5], 1):  # Show first 5
+                relative_path = str(result.target_result.relative_path)
+                message_parts.append(f"\n{i}. {relative_path}")
+                
+            if len(missing_source_files) > 5:
+                remaining = len(missing_source_files) - 5
+                message_parts.append(f"\n   ... and {remaining} more missing source files")
+        
+        # PRIORITY 2: Hash mismatches
         if mismatched_files:
-            message_parts.append("\n\n🔍 HASH MISMATCHES:")
-            for i, result in enumerate(mismatched_files[:5], 1):  # Limit to first 5 for readability
+            message_parts.append(f"\n\n🔍 HASH MISMATCHES ({len(mismatched_files)}):")
+            message_parts.append("Files exist in both locations but have different content:")
+            
+            for i, result in enumerate(mismatched_files[:3], 1):  # Limit to first 3 for readability
                 source_hash = result.source_result.hash_value if result.source_result.success else "ERROR"
                 target_hash = result.target_result.hash_value if result.target_result.success else "ERROR"
                 
-                message_parts.append(f"\n{i}. File: {result.source_result.file_path.name}")
+                message_parts.append(f"\n{i}. File: {result.source_result.relative_path.name}")
                 message_parts.append(f"   Source: {source_hash[:16]}...")
                 message_parts.append(f"   Target: {target_hash[:16]}...")
                 
-            # Add note if there are more mismatches
-            if len(mismatched_files) > 5:
-                remaining = len(mismatched_files) - 5
+            if len(mismatched_files) > 3:
+                remaining = len(mismatched_files) - 3
                 message_parts.append(f"\n   ... and {remaining} more mismatched files")
         
-        # Add missing targets information
-        missing_files = [v for v in verification_results if v.target_result is None]
-        if missing_files:
-            message_parts.append("\n\n📂 MISSING TARGET FILES:")
-            for i, result in enumerate(missing_files[:3], 1):  # Limit to first 3
-                message_parts.append(f"\n{i}. {result.source_result.file_path.name}")
-                
-            if len(missing_files) > 3:
-                remaining = len(missing_files) - 3
-                message_parts.append(f"\n   ... and {remaining} more missing files")
-        
-        # Add error files information  
-        error_files = [v for v in verification_results if not v.source_result.success or (v.target_result and not v.target_result.success)]
+        # PRIORITY 3: File access errors
         if error_files:
-            message_parts.append("\n\n⚠️ FILES WITH ERRORS:")
+            message_parts.append(f"\n\n⚠️ FILE ACCESS ERRORS ({len(error_files)}):")
             for i, result in enumerate(error_files[:3], 1):  # Limit to first 3
-                file_name = result.source_result.file_path.name
+                file_name = result.source_result.relative_path.name
                 if not result.source_result.success:
                     message_parts.append(f"\n{i}. {file_name} (source error: {result.source_result.error_message})")
                 elif result.target_result and not result.target_result.success:
@@ -578,12 +673,25 @@ class VerificationWorker(BaseWorkerThread):
                     
             if len(error_files) > 3:
                 remaining = len(error_files) - 3
-                message_parts.append(f"\n   ... and {remaining} more files with errors")
+                message_parts.append(f"\n   ... and {remaining} more files with access errors")
         
-        # Add recommendation
-        if mismatched_files or missing_files:
-            message_parts.append("\n\n💡 RECOMMENDATION:")
-            message_parts.append("Export the verification CSV for complete details and investigate the mismatched/missing files.")
+        # Add actionable bidirectional recommendations
+        message_parts.append("\n\n💡 RECOMMENDED ACTIONS:")
+        
+        if missing_target_files:
+            message_parts.append(f"\n• Check if {len(missing_target_files)} source files were properly copied to target")
+            message_parts.append("• Verify target folder structure matches source structure")
+        
+        if missing_source_files:
+            message_parts.append(f"\n• Investigate {len(missing_source_files)} extra files in target that don't exist in source")
+            message_parts.append("• Determine if extra target files should be removed or if source is incomplete")
+        
+        if mismatched_files:
+            message_parts.append(f"\n• Investigate why {len(mismatched_files)} files have different content")
+            message_parts.append("• Consider re-copying files that don't match")
+        
+        message_parts.append("\n• Export CSV report for complete file-by-file analysis")
+        message_parts.append("• Review file paths and permissions")
         
         return "".join(message_parts)
     

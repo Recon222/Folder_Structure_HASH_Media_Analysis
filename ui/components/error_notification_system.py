@@ -395,7 +395,8 @@ class ErrorDetailsDialog(QDialog):
             if not attr.startswith('_') and not callable(getattr(self.error, attr)):
                 try:
                     value = getattr(self.error, attr)
-                    if attr not in ['args', 'with_traceback']:
+                    # Exclude redundant attributes already shown in other sections
+                    if attr not in ['args', 'with_traceback', 'user_message']:
                         error_attrs[attr] = value
                 except:
                     pass
