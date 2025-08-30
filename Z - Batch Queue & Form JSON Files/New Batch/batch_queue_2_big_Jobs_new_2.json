@@ -1,0 +1,63 @@
+{
+  "version": "1.0",
+  "created_at": "2025-08-29T00:47:51.346826",
+  "total_jobs": 2,
+  "jobs": [
+    {
+      "job_id": "caa661b1-2cfa-4da9-9c8f-3bc9e90e9c1c",
+      "job_name": "Generic-123456 - Shoppers Drug Mart - 12345 Bayview Ave.",
+      "form_data": {
+        "occurrence_number": "Generic-123456",
+        "business_name": "Shoppers Drug Mart",
+        "location_address": "12345 Bayview Ave.",
+        "video_start_datetime": "2025-07-28T00:43:51",
+        "video_end_datetime": "2025-08-29T00:43:51",
+        "time_offset": "DVR is 4min BEHIND of realtime",
+        "dvr_time": "2000-01-01T00:01:00",
+        "real_time": "2000-01-01T00:05:00",
+        "technician_name": "",
+        "badge_number": "",
+        "include_tech_in_offset": true,
+        "upload_timestamp": null
+      },
+      "files": [],
+      "folders": [
+        "D:\\New Folder Structure Testing\\Timeline from Neil - Folder Structure App Test\\PR240359110_SYLVESTER - Test 30gb"
+      ],
+      "output_directory": "D:\\New Folder Structure Testing\\Timeline from Neil - Folder Structure App Test",
+      "status": "failed",
+      "error_message": "File copying failed. Please check permissions and disk space.",
+      "start_time": "2025-08-29T00:46:58.820680",
+      "end_time": "2025-08-29T00:47:08.095555",
+      "template_type": "forensic"
+    },
+    {
+      "job_id": "deeb966a-1741-42ea-8827-7bb71762260d",
+      "job_name": "Generic-654321 - Hooked - 12345 Danforth Ave.",
+      "form_data": {
+        "occurrence_number": "Generic-654321",
+        "business_name": "Hooked",
+        "location_address": "12345 Danforth Ave.",
+        "video_start_datetime": "2025-07-28T00:43:51",
+        "video_end_datetime": "2025-08-29T00:43:51",
+        "time_offset": "DVR is 4min BEHIND of realtime",
+        "dvr_time": "2000-01-01T00:01:00",
+        "real_time": "2000-01-01T00:05:00",
+        "technician_name": "",
+        "badge_number": "",
+        "include_tech_in_offset": true,
+        "upload_timestamp": null
+      },
+      "files": [],
+      "folders": [
+        "D:\\New Folder Structure Testing\\Timeline from Neil - Folder Structure App Test\\PR240359110_SYLVESTER - Test 30gb - Copy"
+      ],
+      "output_directory": "D:\\New Folder Structure Testing\\Timeline from Neil - Folder Structure App Test",
+      "status": "pending",
+      "error_message": "",
+      "start_time": null,
+      "end_time": null,
+      "template_type": "forensic"
+    }
+  ]
+}
