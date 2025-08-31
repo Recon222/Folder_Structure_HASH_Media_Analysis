@@ -60,8 +60,12 @@ class SuccessMessageBuilder:
         # File operation summary
         summary_lines.append(f"✓ Copied {file_result.files_processed} files")
         
-        # Performance summary
-        if file_result.files_processed > 0 and file_result.duration_seconds > 0:
+        # Performance summary (check metadata for duration if needed)
+        duration = file_result.duration_seconds
+        if duration == 0 and hasattr(file_result, 'metadata'):
+            duration = file_result.metadata.get('duration_seconds', 0)
+        
+        if file_result.files_processed > 0 and duration > 0:
             perf_summary = self._build_performance_summary(file_result)
             summary_lines.append(perf_summary)
         
@@ -357,14 +361,24 @@ class SuccessMessageBuilder:
     
     def _build_performance_summary(self, file_result: FileOperationResult) -> str:
         """Build performance summary from file operation result."""
-        if not (file_result.files_processed > 0 and file_result.duration_seconds > 0):
+        # Check for duration in metadata if not in main attributes
+        duration = file_result.duration_seconds
+        if duration == 0 and hasattr(file_result, 'metadata'):
+            duration = file_result.metadata.get('duration_seconds', 0)
+        
+        if not (file_result.files_processed > 0 and duration > 0):
             return ""
+        
+        # Calculate speed if not available
+        avg_speed = file_result.average_speed_mbps
+        if avg_speed == 0 and duration > 0:
+            avg_speed = (file_result.bytes_processed / (1024 * 1024)) / duration
         
         lines = [
             f"Files: {file_result.files_processed}",
             f"Size: {file_result.bytes_processed / (1024 * 1024):.1f} MB",
-            f"Time: {file_result.duration_seconds:.1f} seconds",
-            f"Average Speed: {file_result.average_speed_mbps:.1f} MB/s"
+            f"Time: {duration:.1f} seconds",
+            f"Average Speed: {avg_speed:.1f} MB/s"
         ]
         
         # Add peak speed if available

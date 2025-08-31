@@ -339,9 +339,9 @@ class MainWindow(QMainWindow):
         # Extract thread from successful result
         self.file_thread = workflow_result.value
         
-        # Connect signals (nuclear migration: use unified signals)
+        # Connect signals
         self.file_thread.progress_update.connect(self.update_progress_with_status)
-        self.file_thread.result_ready.connect(self.on_operation_finished_result)
+        self.file_thread.result_ready.connect(self.on_operation_finished)
         
         # Update forensic tab state - pass thread reference for control
         self.forensic_tab.set_processing_state(True, self.file_thread)
@@ -358,13 +358,15 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(value)
         
     def update_progress_with_status(self, percentage, message):
-        """Update progress bar and log status (nuclear migration: unified signal handler)"""
+        """Update progress bar and log status"""
         self.progress_bar.setValue(percentage)
         if message:
             self.log(message)
         
-    def on_operation_finished(self, success, message, results):
-        """Handle operation completion"""
+    def on_operation_finished(self, result):
+        """Handle operation completion using Result objects"""
+        from core.result_types import Result, FileOperationResult
+        
         self.progress_bar.setVisible(False)
         self.process_btn.setEnabled(True)
         self.operation_active = False
@@ -383,43 +385,39 @@ class MainWindow(QMainWindow):
             self.copy_speed_label.setText("Ready")
             self.copy_speed_label.setStyleSheet("padding: 0 10px; font-weight: bold;")
         
-        if success:
-            # Store results for potential PDF generation
-            self.file_operation_results = results
+        if result.success:
+            # Store the Result object (which contains performance data)
+            self.file_operation_result = result
+            self.workflow_controller.store_operation_results(file_result=result)
             
-            # REFACTORED: Use PerformanceFormatterService for formatting
+            # Store the value dict for report generation (contains individual file results)
+            # The value is already a dict with file operation results
+            if hasattr(result, 'value') and result.value:
+                self.file_operation_results = result.value
+            else:
+                self.file_operation_results = {}
+            
+            # Build performance message using service
             completion_message = "Files copied successfully!"
             
-            try:
-                from core.services.service_registry import get_service
-                from core.services.performance_formatter_service import IPerformanceFormatterService
-                
-                perf_service = get_service(IPerformanceFormatterService)
-                performance_stats = results.get('_performance_stats', {})
-                
-                if performance_stats:
-                    # Map to expected keys for the service
-                    stats = {
-                        'files_processed': performance_stats.get('files_processed', 0),
-                        'total_size_mb': performance_stats.get('total_size_mb', 0),
-                        'duration_seconds': performance_stats.get('total_time_seconds', 0),
-                        'average_speed_mbps': performance_stats.get('average_speed_mbps', 0),
-                        'peak_speed_mbps': performance_stats.get('peak_speed_mbps', 0)
-                    }
-                    
-                    summary = perf_service.format_statistics(stats)
-                    mode = performance_stats.get('mode', 'unknown')
-                    
-                    completion_message += f"\n\n📊 Performance Summary:\n{summary}\nMode: {mode.title()}"
-            except:
-                # Fallback if service not available
-                performance_stats = results.get('_performance_stats', {})
-                if performance_stats:
-                    files_count = performance_stats.get('files_processed', 0)
-                    completion_message += f"\n\n{files_count} files processed successfully"
+            from core.services.service_registry import get_service
+            from core.services.performance_formatter_service import IPerformanceFormatterService
             
-            # Store file operation performance for final success dialog
-            self.file_operation_performance = completion_message
+            perf_service = get_service(IPerformanceFormatterService)
+            
+            # Check if the result has performance data (FileOperationResult has these attributes)
+            if hasattr(result, 'files_processed') and result.files_processed > 0:
+                # Build performance summary from the Result object
+                summary = perf_service.build_performance_summary(result)
+                completion_message += f"\n\n{summary}"
+                self.file_operation_performance = completion_message
+            else:
+                # Fallback - just show basic message
+                if hasattr(result, 'files_processed'):
+                    completion_message += f"\n\n{result.files_processed} file(s) processed successfully"
+                self.file_operation_performance = completion_message
+            
+            self.log(completion_message)
             
             # Auto-generate reports based on user settings
             if self.settings.generate_time_offset_pdf or \
@@ -433,100 +431,45 @@ class MainWindow(QMainWindow):
                     try:
                         if self.zip_controller.should_create_zip():
                             # ZIP will handle final completion
-                            file_dest_path = Path(list(self.file_operation_results.values())[0]['dest_path'])
+                            # Get destination path from file operation result
+                            if hasattr(self.file_operation_result, 'dest_path'):
+                                file_dest_path = Path(self.file_operation_result.dest_path)
+                            elif self.file_operation_results and 'dest_path' in self.file_operation_results:
+                                file_dest_path = Path(self.file_operation_results['dest_path'])
+                            else:
+                                # Try to extract from any nested structure
+                                for key, value in self.file_operation_results.items():
+                                    if isinstance(value, dict) and 'dest_path' in value:
+                                        file_dest_path = Path(value['dest_path'])
+                                        break
+                                else:
+                                    raise ValueError("Cannot find destination path for ZIP creation")
+                            
                             original_output_dir = file_dest_path.parent
                             self.create_zip_archives(original_output_dir)
                         else:
                             # No ZIP creation, show final completion now
                             self.show_final_completion_message()
-                    except ValueError:
-                        # ZIP configuration error, show completion without ZIP
+                    except (ValueError, AttributeError, KeyError) as e:
+                        self.log(f"Warning: ZIP creation skipped - {e}")
                         self.show_final_completion_message()
                 else:
                     # No ZIP controller, show final completion
                     self.show_final_completion_message()
         else:
+            # Handle failure
+            if result.error and hasattr(result.error, 'user_message'):
+                message = result.error.user_message
+            else:
+                message = "Operation failed"
+            
             error = UIError(
                 f"Operation failed: {message}",
                 user_message=f"The operation could not be completed:\n\n{message}",
                 component="MainWindow"
             )
             handle_error(error, {'operation': 'forensic_file_processing', 'severity': 'critical'})
-            
-        self.log(message)
-    
-    def on_operation_finished_result(self, result):
-        """Handle operation completion using Result objects with WorkflowController integration"""
-        from core.result_types import Result, FileOperationResult
-        
-        if result.success:
-            # ✅ NEW: Store the actual FileOperationResult, not the Result wrapper
-            # Check if result.value is a FileOperationResult
-            if hasattr(result, 'value') and isinstance(result.value, FileOperationResult):
-                self.file_operation_result = result.value  # Store the actual FileOperationResult
-                self.workflow_controller.store_operation_results(file_result=result.value)
-            elif isinstance(result, FileOperationResult):
-                # Direct FileOperationResult (shouldn't happen but defensive)
-                self.file_operation_result = result
-                self.workflow_controller.store_operation_results(file_result=result)
-            else:
-                # Fallback: store the Result wrapper (for compatibility)
-                self.file_operation_result = result
-                self.workflow_controller.store_operation_results(file_result=result)
-            
-            # ✅ COMPATIBILITY: Still call legacy handler for existing integrations
-            # This ensures existing PDF generation and ZIP creation still work
-            success = True
-            message = "Files copied successfully!"
-            
-            # Extract results from Result object for legacy code
-            if hasattr(result, 'value') and result.value:
-                results = result.value
-            else:
-                results = {}
-                
-            # Add metadata to results if available
-            if hasattr(result, 'metadata') and result.metadata:
-                results.update(result.metadata)
-                
-            # Ensure results has the expected structure for generate_reports()
-            # If results is empty or missing expected keys, we can't generate reports
-            if not results or not any('dest_path' in str(v) for v in results.values() if isinstance(v, dict)):
-                self.log("Warning: Cannot generate reports - missing destination path information")
-                # Skip report generation and proceed to ZIP or completion
-                results = {}
-                
-            # Store performance data as string for legacy compatibility
-            if isinstance(result, FileOperationResult) and result.files_processed > 0:
-                perf_lines = [
-                    f"Files: {result.files_processed}",
-                    f"Size: {result.bytes_processed / (1024 * 1024):.1f} MB",
-                    f"Time: {result.duration_seconds:.1f} seconds",
-                    f"Average Speed: {result.average_speed_mbps:.1f} MB/s"
-                ]
-                
-                # Add peak speed if available  
-                if hasattr(result, 'peak_speed_mbps') and result.peak_speed_mbps:
-                    perf_lines.append(f"Peak Speed: {result.peak_speed_mbps:.1f} MB/s")
-                
-                # Add mode if available
-                if hasattr(result, 'optimization_mode'):
-                    perf_lines.append(f"Mode: {result.optimization_mode}")
-                
-                performance_string = "📊 Performance Summary:\n" + "\n".join(perf_lines)
-                self.file_operation_performance = performance_string
-                
-        else:
-            success = False
-            # Get user-friendly message from error
-            if result.error and hasattr(result.error, 'user_message'):
-                message = result.error.user_message
-            else:
-                message = "Operation failed"
-            results = {}
-            
-        # Call the existing handler with converted data
-        self.on_operation_finished(success, message, results)
+            self.log(f"Operation failed: {message}")
     
     def cleanup_operation_memory(self):
         """
@@ -694,9 +637,9 @@ class MainWindow(QMainWindow):
                 self.form_data
             )
             
-            # Connect signals (nuclear migration: use unified signals)
+            # Connect signals
             self.zip_thread.progress_update.connect(self.update_progress_with_status)
-            self.zip_thread.result_ready.connect(self.on_zip_finished_result)
+            self.zip_thread.result_ready.connect(self.on_zip_finished)
             
             # Show progress and start
             self.progress_bar.setVisible(True)
@@ -711,8 +654,8 @@ class MainWindow(QMainWindow):
             )
             handle_error(error, {'operation': 'zip_start', 'severity': 'critical'})
     
-    def on_zip_finished_result(self, result):
-        """Handle ZIP operation completion with Result object (nuclear migration)"""
+    def on_zip_finished(self, result):
+        """Handle ZIP operation completion with Result object"""
         from core.result_types import Result
         
         self.progress_bar.setVisible(False)
@@ -724,7 +667,7 @@ class MainWindow(QMainWindow):
                 self.log(f"Created {len(created_archives)} ZIP archive(s)")
                 # Store ZIP results for final summary
                 self.zip_archives_created = created_archives
-                # ✅ NEW: Store Result object for success message integration
+                # Store Result object for success message integration
                 self.zip_operation_result = result
                 # Show final completion message that includes everything
                 self.show_final_completion_message()
@@ -732,33 +675,14 @@ class MainWindow(QMainWindow):
                 # Handle error result
                 error_msg = result.error.user_message if result.error else "ZIP creation failed"
                 self.log(f"ZIP creation failed: {error_msg}")
-                # ✅ NEW: Store failed Result object for success message integration
+                # Store failed Result object for success message integration
                 self.zip_operation_result = result
                 # Still show completion message for consistency
                 self.show_final_completion_message()
         else:
-            # Fallback for unexpected result types
+            # Handle unexpected result types
             self.log("ZIP operation completed with unknown result format")
             self.show_final_completion_message()
-
-    def on_zip_finished(self, success: bool, message: str, created_archives: List[Path]):
-        """Handle ZIP operation completion"""
-        self.progress_bar.setVisible(False)
-        
-        if success and created_archives:
-            self.log(f"Created {len(created_archives)} ZIP archive(s)")
-            # Store ZIP results for final summary
-            self.zip_archives_created = created_archives
-            # Show final completion message that includes everything
-            self.show_final_completion_message()
-        else:
-            if not success:
-                # Only show error if ZIP actually failed
-                self.log(f"ZIP creation failed: {message}")
-            else:
-                self.log("No ZIP archives created")
-                # Still show completion message even if no ZIPs
-                self.show_final_completion_message()
     
     def show_final_completion_message(self):
         """Show a single final completion message with all results using service-integrated architecture"""
