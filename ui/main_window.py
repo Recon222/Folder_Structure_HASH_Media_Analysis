@@ -603,9 +603,45 @@ class MainWindow(QMainWindow):
             
             # current_path should now be the occurrence number folder
             occurrence_dir = current_path
-            # Move Documents folder to business/location level instead of occurrence level
-            business_dir = file_dest_path.parent.parent  # Go from datetime -> business level
-            documents_dir = business_dir / "Documents"
+            
+            # Get the template's documentsPlacement setting
+            documents_placement = "location"  # Default fallback
+            try:
+                # Access PathService through workflow controller
+                if hasattr(self.workflow_controller, 'path_service') and self.workflow_controller.path_service:
+                    current_template_id = self.workflow_controller.path_service.get_current_template_id()
+                    if current_template_id:
+                        template_info_result = self.workflow_controller.path_service.get_template_info(current_template_id)
+                        if template_info_result.success:
+                            template_data = template_info_result.value.get('template_data', {})
+                            documents_placement = template_data.get('documentsPlacement', 'location')
+                            self.log(f"Using template documentsPlacement: {documents_placement}")
+            except Exception as e:
+                self.log(f"Could not get template documentsPlacement, using default: {e}")
+            
+            # Determine Documents folder location based on template setting
+            if documents_placement == "occurrence":
+                # Level 1: Occurrence number folder
+                documents_dir = occurrence_dir / "Documents"
+                self.log(f"Creating Documents folder at occurrence level: {documents_dir}")
+            elif documents_placement == "location":
+                # Level 2: Business/location folder  
+                # file_dest_path.parent is the datetime folder
+                # file_dest_path.parent.parent is the business/location folder
+                business_dir = file_dest_path.parent.parent
+                documents_dir = business_dir / "Documents"
+                self.log(f"Creating Documents folder at location level: {documents_dir}")
+            elif documents_placement == "datetime":
+                # Level 3: DateTime folder (where files are)
+                datetime_dir = file_dest_path.parent
+                documents_dir = datetime_dir / "Documents"
+                self.log(f"Creating Documents folder at datetime level: {documents_dir}")
+            else:
+                # Default fallback to location level
+                business_dir = file_dest_path.parent.parent
+                documents_dir = business_dir / "Documents"
+                self.log(f"Creating Documents folder at default location level: {documents_dir}")
+            
             documents_dir.mkdir(parents=True, exist_ok=True)
             
             # Reports go directly into Documents folder
