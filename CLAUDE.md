@@ -27,6 +27,15 @@ pip install -r requirements.txt
 .venv/Scripts/python.exe -m pytest tests/test_files_panel.py -v
 .venv/Scripts/python.exe -m pytest tests/test_performance.py -v
 
+# Run template system tests
+.venv/Scripts/python.exe -m pytest tests/test_template_*.py -v
+
+# Run service layer tests  
+.venv/Scripts/python.exe -m pytest tests/services/ -v
+
+# Run integration tests
+.venv/Scripts/python.exe -m pytest tests/test_*_integration.py -v
+
 # Alternative: Run individual test files directly (for tests with built-in runners)
 .venv/Scripts/python.exe tests/test_files_panel.py
 
@@ -102,19 +111,38 @@ progress_callback(percentage, message)
 - Stores: technician info, ZIP preferences, performance settings
 - Platform-specific storage (Registry/plist/.config)
 
+#### Hybrid Archive System
+- **3-Tier Performance Hierarchy**: Native 7zip (2000-4000 MB/s) > Buffered Python (290 MB/s) > Legacy Python (150 MB/s)
+- **Automatic Fallback**: Ensures compatibility when 7za.exe unavailable
+- **ZipController Session Management**: Three-tier choice priority (current operation > batch operation > session override > settings)
+- **ZipUtility Integration**: Seamless method switching with performance metrics collection
+
+#### Error Handling Infrastructure
+- **ErrorHandler**: Thread-safe error routing from worker threads to main thread via Qt signals
+- **AppLogger**: Qt signal integration for real-time UI logging with singleton pattern
+- **Error Statistics**: Automatic tracking by severity with export capabilities and recent error storage (100 max)
+- **UI Integration**: Callback registry system for error notifications with registration/unregistration support
+
 ### Module Structure
 
 **core/**
 - `models.py`: FormData and BatchJob dataclasses with validation and JSON serialization
 - `path_utils.py`: PathSanitizer and ForensicPathBuilder with enterprise-grade security
 - `buffered_file_ops.py`: High-performance buffered operations with adaptive metrics (file_ops.py removed)
+- `buffered_zip_ops.py`: High-performance ZIP operations with buffered I/O
 - `pdf_gen.py`: Report generation with Result objects (uses reportlab)
 - `batch_queue.py`: Queue management for batch processing with recovery
+- `batch_recovery.py`: Batch job recovery and state persistence
+- `hash_operations.py`: Dedicated hash calculation operations with Result integration
+- `hash_reports.py`: Hash verification CSV report generation
 - `settings_manager.py`: Centralized settings with comprehensive validation
 - `result_types.py`: **Enterprise Result object system** replacing boolean returns
 - `exceptions.py`: **Thread-aware exception hierarchy** with context preservation
-- `error_handler.py`: **Centralized error handling system** with Qt signal routing
-- `logger.py`: Centralized logging configuration
+- `error_handler.py`: **Thread-safe centralized error handling** with Qt signal routing and UI callback registry
+- `logger.py`: **Centralized logging with Qt signal support** and singleton pattern for UI integration
+- `template_validator.py`: Template validation and schema enforcement
+- `template_path_builder.py`: Template-based path construction
+- `template_schema.py`: Template schema definitions and validation rules
 - `workers/`: QThread implementations with unified Result-based architecture
 
 **controllers/**
@@ -130,24 +158,46 @@ progress_callback(percentage, message)
   - `files_panel.py`: **Refactored** with clean FileEntry dataclass and single source of truth
   - `form_panel.py`, `log_console.py`, `batch_queue_widget.py`: Enhanced with Result integration
   - `error_notification_system.py`: **Non-modal error notifications** with auto-dismiss
+  - `elided_label.py`: **Text truncation widgets** preventing UI expansion from long file paths
 - `tabs/`: Tab implementations (ForensicTab, BatchTab, HashingTab)
 - `dialogs/`: Settings and configuration dialogs
   - `success_dialog.py`: **Enterprise success celebrations** with native Result object support
+  - `template_management_dialog.py`: Template management UI with import/export
+  - `template_import_dialog.py`: Template import wizard with validation
+  - `performance_monitor.py`: **Real-time performance monitoring** with metrics export and tabbed interface
+  - `about_dialog.py`: Application information and version display
   - Various settings dialogs with improved error handling
 - `styles/carolina_blue.py`: Theme definition
 
 **core/services/**
+- `service_registry.py`: **Enterprise dependency injection system** with thread-safe service management
+- `base_service.py`: Foundation service class with logging and error handling
+- `file_operation_service.py`: Business logic for file operations and validation
+- `report_service.py`: Report generation service with Result integration
+- `archive_service.py`: Archive creation and management service
+- `path_service.py`: Path building and validation service
+- `validation_service.py`: Comprehensive data validation service
+- `template_management_service.py`: Template import/export and management
 - `success_message_builder.py`: **Business logic service** for constructing success messages from Result objects
 - `success_message_data.py`: **Type-safe data structures** for success message content and operation metadata
+- `interfaces.py`: Service interface definitions and contracts
+- `service_config.py`: Service configuration and initialization
 
 **utils/**
-- `zip_utils.py`: Multi-level ZIP creation with compression settings
+- `zip_utils.py`: **Hybrid archive system** with 3-tier performance hierarchy (Native 7zip > Buffered Python > Legacy fallback)
 
 **core/native_7zip/** (Native 7-Zip Integration)
 - `__init__.py`: Package initialization for native 7zip components
 - `binary_manager.py`: 7za.exe detection, validation, and integrity checking
-- `command_builder.py`: Optimized 7zip commands for forensic workloads with ZIP format output
+- `command_builder.py`: **System-aware 7zip command optimization** for Windows forensic workloads with hardware analysis
 - `controller.py`: Main controller for native 7zip operations with subprocess management
+
+**templates/**
+- `folder_templates.json`: **Built-in template configurations** (default_forensic, rcmp_basic, agency_basic)
+- `samples/`: Template examples for advanced features and agency-specific configurations
+
+**Project Dependencies**
+- `requirements.txt`: **Core dependencies** - PySide6>=6.4.0, reportlab>=3.6.12, psutil>=5.9.0, hashwise>=0.1.0
 
 ### Important Implementation Details
 
@@ -254,6 +304,14 @@ def operation() -> Result[DataType]:
 - **Rich Content Display**: Performance metrics, file counts, report summaries, ZIP archive details
 - **Modal Celebrations**: Prominent success dialogs with Carolina Blue theming and celebration emojis
 
+#### Template Management System
+- **Template Import/Export**: JSON-based template sharing and backup with comprehensive validation
+- **Template Validation**: Schema-based validation with comprehensive error reporting and user feedback
+- **Template Path Building**: Dynamic path construction from template definitions with format string support
+- **UI Integration**: Management dialog with import/export capabilities and template preview
+- **Service Architecture**: Dedicated TemplateManagementService with full Result object integration
+- **Schema Enforcement**: Template schema validation ensures data integrity and compatibility
+
 ### Common Development Tasks
 
 #### Adding a New Report Type
@@ -330,3 +388,9 @@ def operation() -> Result[DataType]:
 - **Type safety must be enforced** - Result objects should prevent runtime errors
 - **User experience matters** - error messages must be actionable and clear
 - **Performance testing should use realistic data sizes** and scenarios
+- As you create each feature or document use Memory MCP to:
+  1. Add discovered components to the memory graph
+  2. Track service interfaces and their implementations
+  3. Record plugin conversion decisions and rationale
+  4. Build a comprehensive dependency map
+  5. Make sure the addition is not redundant and already included in the graph
