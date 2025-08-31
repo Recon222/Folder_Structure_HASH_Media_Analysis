@@ -387,28 +387,36 @@ class MainWindow(QMainWindow):
             # Store results for potential PDF generation
             self.file_operation_results = results
             
-            # Format completion message with performance stats
+            # REFACTORED: Use PerformanceFormatterService for formatting
             completion_message = "Files copied successfully!"
-            performance_stats = results.get('_performance_stats', {})
             
-            if performance_stats:
-                files_count = performance_stats.get('files_processed', 0)
-                total_mb = performance_stats.get('total_size_mb', 0)
-                total_time = performance_stats.get('total_time_seconds', 0)
-                avg_speed = performance_stats.get('average_speed_mbps', 0)
-                peak_speed = performance_stats.get('peak_speed_mbps', 0)
-                mode = performance_stats.get('mode', 'unknown')
+            try:
+                from core.services.service_registry import get_service
+                from core.services.performance_formatter_service import IPerformanceFormatterService
                 
-                stats_text = f"\n\n📊 Performance Summary:\n"
-                stats_text += f"Files: {files_count}\n"
-                stats_text += f"Size: {total_mb:.1f} MB\n"
-                stats_text += f"Time: {total_time:.1f} seconds\n"
-                stats_text += f"Average Speed: {avg_speed:.1f} MB/s\n"
-                if peak_speed > avg_speed:
-                    stats_text += f"Peak Speed: {peak_speed:.1f} MB/s\n"
-                stats_text += f"Mode: {mode.title()}"
+                perf_service = get_service(IPerformanceFormatterService)
+                performance_stats = results.get('_performance_stats', {})
                 
-                completion_message += stats_text
+                if performance_stats:
+                    # Map to expected keys for the service
+                    stats = {
+                        'files_processed': performance_stats.get('files_processed', 0),
+                        'total_size_mb': performance_stats.get('total_size_mb', 0),
+                        'duration_seconds': performance_stats.get('total_time_seconds', 0),
+                        'average_speed_mbps': performance_stats.get('average_speed_mbps', 0),
+                        'peak_speed_mbps': performance_stats.get('peak_speed_mbps', 0)
+                    }
+                    
+                    summary = perf_service.format_statistics(stats)
+                    mode = performance_stats.get('mode', 'unknown')
+                    
+                    completion_message += f"\n\n📊 Performance Summary:\n{summary}\nMode: {mode.title()}"
+            except:
+                # Fallback if service not available
+                performance_stats = results.get('_performance_stats', {})
+                if performance_stats:
+                    files_count = performance_stats.get('files_processed', 0)
+                    completion_message += f"\n\n{files_count} files processed successfully"
             
             # Store file operation performance for final success dialog
             self.file_operation_performance = completion_message
@@ -452,11 +460,19 @@ class MainWindow(QMainWindow):
         from core.result_types import Result, FileOperationResult
         
         if result.success:
-            # ✅ NEW: Store Result object directly for new architecture
-            self.file_operation_result = result
-            
-            # ✅ NEW: Also store in workflow controller for success message integration
-            self.workflow_controller.store_operation_results(file_result=result)
+            # ✅ NEW: Store the actual FileOperationResult, not the Result wrapper
+            # Check if result.value is a FileOperationResult
+            if hasattr(result, 'value') and isinstance(result.value, FileOperationResult):
+                self.file_operation_result = result.value  # Store the actual FileOperationResult
+                self.workflow_controller.store_operation_results(file_result=result.value)
+            elif isinstance(result, FileOperationResult):
+                # Direct FileOperationResult (shouldn't happen but defensive)
+                self.file_operation_result = result
+                self.workflow_controller.store_operation_results(file_result=result)
+            else:
+                # Fallback: store the Result wrapper (for compatibility)
+                self.file_operation_result = result
+                self.workflow_controller.store_operation_results(file_result=result)
             
             # ✅ COMPATIBILITY: Still call legacy handler for existing integrations
             # This ensures existing PDF generation and ZIP creation still work
@@ -514,60 +530,41 @@ class MainWindow(QMainWindow):
     
     def cleanup_operation_memory(self):
         """
-        MEMORY LEAK FIX: Clean up large objects and references after operation completion
+        REFACTORED: Delegate memory cleanup to WorkflowController
         
-        This addresses the 40-second performance gap by preventing memory accumulation
-        that causes garbage collection overhead and memory pressure.
+        This method now simply delegates to the WorkflowController's
+        cleanup_operation_resources method, which handles all the complex
+        cleanup logic in the service layer.
         """
-        # Clear large result dictionaries that can contain hundreds of MB for large operations
+        # Collect references to clean up
+        file_thread = getattr(self, 'file_thread', None)
+        zip_thread = getattr(self, 'zip_thread', None)
+        operation_results = getattr(self, 'file_operation_results', None)
+        performance_data = getattr(self, 'file_operation_performance', None)
+        
+        # Use WorkflowController for cleanup
+        if hasattr(self, 'workflow_controller') and self.workflow_controller:
+            cleanup_result = self.workflow_controller.cleanup_operation_resources(
+                file_thread=file_thread,
+                zip_thread=zip_thread,
+                operation_results=operation_results,
+                performance_data=performance_data
+            )
+            
+            if not cleanup_result.success:
+                self.log(f"Note: Cleanup had minor issues: {cleanup_result.error.user_message}")
+        
+        # Clear UI-specific references
         if hasattr(self, 'file_operation_results'):
             self.file_operation_results = None
-            
         if hasattr(self, 'file_operation_result'):
             self.file_operation_result = None
-            
         if hasattr(self, 'file_operation_performance'):
             self.file_operation_performance = None
-        
-        # Disconnect thread signals to break reference cycles and clear thread reference
-        if hasattr(self, 'file_thread') and self.file_thread:
-            try:
-                # Disconnect all signals to break Qt reference cycles
-                self.file_thread.progress_update.disconnect()
-                self.file_thread.result_ready.disconnect()
-                
-                # Wait for thread to finish if it's still running
-                if self.file_thread.isRunning():
-                    self.file_thread.wait(1000)  # Wait up to 1 second
-                    
-                # Clear the thread reference
-                self.file_thread = None
-                
-            except Exception as e:
-                # Don't let cleanup errors break the application
-                self.log(f"Note: Thread cleanup had minor issues: {e}")
-        
-        # Clear WorkflowController stored results to prevent memory leaks
-        if hasattr(self, 'workflow_controller') and self.workflow_controller:
-            try:
-                self.workflow_controller.clear_stored_results()
-            except Exception as e:
-                self.log(f"Note: Workflow controller cleanup had minor issues: {e}")
-        
-        # Clear ZIP thread if it exists
-        if hasattr(self, 'zip_thread') and self.zip_thread:
-            try:
-                self.zip_thread.progress_update.disconnect()
-                self.zip_thread.result_ready.disconnect()
-                if self.zip_thread.isRunning():
-                    self.zip_thread.wait(1000)
-                self.zip_thread = None
-            except Exception:
-                pass  # ZIP thread cleanup is optional
-                
-        # Force garbage collection to clean up any remaining cycles
-        import gc
-        gc.collect()
+        if hasattr(self, 'file_thread'):
+            self.file_thread = None
+        if hasattr(self, 'zip_thread'):
+            self.zip_thread = None
         
         self.log("Memory cleanup completed - optimized for next operation")
         
@@ -592,57 +589,23 @@ class MainWindow(QMainWindow):
                 self.show_final_completion_message()
                 return
             
-            # Navigate to root folder (occurrence number level)
-            # Current structure might be: output_base/OccurrenceNumber/Business @ Address/DateTime/
-            # We want: output_base/OccurrenceNumber/Documents/Address/
+            # REFACTORED: Use PathService to determine documents location
+            documents_location_result = self.workflow_controller.path_service.determine_documents_location(
+                file_dest_path,
+                self.output_directory
+            )
             
-            # Find the occurrence number folder by going up until we find the output directory
-            current_path = file_dest_path.parent
-            while current_path != self.output_directory and current_path.parent != self.output_directory:
-                current_path = current_path.parent
+            if not documents_location_result.success:
+                error = UIError(
+                    f"Failed to determine documents location: {documents_location_result.error.message}",
+                    user_message=documents_location_result.error.user_message,
+                    component="MainWindow"
+                )
+                handle_error(error, {'operation': 'documents_location', 'severity': 'critical'})
+                return
             
-            # current_path should now be the occurrence number folder
-            occurrence_dir = current_path
-            
-            # Get the template's documentsPlacement setting
-            documents_placement = "location"  # Default fallback
-            try:
-                # Access PathService through workflow controller
-                if hasattr(self.workflow_controller, 'path_service') and self.workflow_controller.path_service:
-                    current_template_id = self.workflow_controller.path_service.get_current_template_id()
-                    if current_template_id:
-                        template_info_result = self.workflow_controller.path_service.get_template_info(current_template_id)
-                        if template_info_result.success:
-                            template_data = template_info_result.value.get('template_data', {})
-                            documents_placement = template_data.get('documentsPlacement', 'location')
-                            self.log(f"Using template documentsPlacement: {documents_placement}")
-            except Exception as e:
-                self.log(f"Could not get template documentsPlacement, using default: {e}")
-            
-            # Determine Documents folder location based on template setting
-            if documents_placement == "occurrence":
-                # Level 1: Occurrence number folder
-                documents_dir = occurrence_dir / "Documents"
-                self.log(f"Creating Documents folder at occurrence level: {documents_dir}")
-            elif documents_placement == "location":
-                # Level 2: Business/location folder  
-                # file_dest_path.parent is the datetime folder
-                # file_dest_path.parent.parent is the business/location folder
-                business_dir = file_dest_path.parent.parent
-                documents_dir = business_dir / "Documents"
-                self.log(f"Creating Documents folder at location level: {documents_dir}")
-            elif documents_placement == "datetime":
-                # Level 3: DateTime folder (where files are)
-                datetime_dir = file_dest_path.parent
-                documents_dir = datetime_dir / "Documents"
-                self.log(f"Creating Documents folder at datetime level: {documents_dir}")
-            else:
-                # Default fallback to location level
-                business_dir = file_dest_path.parent.parent
-                documents_dir = business_dir / "Documents"
-                self.log(f"Creating Documents folder at default location level: {documents_dir}")
-            
-            documents_dir.mkdir(parents=True, exist_ok=True)
+            documents_dir = documents_location_result.value
+            self.log(f"Documents folder location: {documents_dir}")
             
             # Reports go directly into Documents folder
             reports_output_dir = documents_dir
@@ -707,13 +670,22 @@ class MainWindow(QMainWindow):
     def create_zip_archives(self, base_path: Path):
         """Create ZIP archives using ZipController"""
         try:
-            # Find the occurrence folder for zipping
-            current_path = base_path
-            while current_path != self.output_directory and current_path.parent != self.output_directory:
-                current_path = current_path.parent
+            # REFACTORED: Use PathService to find occurrence folder
+            occurrence_result = self.workflow_controller.path_service.find_occurrence_folder(
+                base_path,
+                self.output_directory
+            )
             
-            # current_path should now be the occurrence number folder
-            occurrence_folder = current_path
+            if not occurrence_result.success:
+                error = UIError(
+                    f"Failed to find occurrence folder: {occurrence_result.error.message}",
+                    user_message=occurrence_result.error.user_message,
+                    component="MainWindow"
+                )
+                handle_error(error, {'operation': 'zip_occurrence_folder', 'severity': 'critical'})
+                return
+            
+            occurrence_folder = occurrence_result.value
             
             # Create ZIP thread using controller
             self.zip_thread = self.zip_controller.create_zip_thread(
@@ -799,6 +771,19 @@ class MainWindow(QMainWindow):
             report_results = getattr(self, 'reports_generated', None)
             zip_result = getattr(self, 'zip_operation_result', None)
             
+            # DEBUG: Log what types we're working with
+            logger.debug(f"DEBUG: file_result type: {type(file_result)}, value: {file_result}")
+            logger.debug(f"DEBUG: report_results type: {type(report_results)}")
+            logger.debug(f"DEBUG: zip_result type: {type(zip_result)}")
+            
+            # Check if file_result has attributes we expect
+            if file_result:
+                logger.debug(f"DEBUG: file_result attributes: {dir(file_result)[:10]}...")  # First 10 attrs
+                if hasattr(file_result, 'files_processed'):
+                    logger.debug(f"DEBUG: file_result.files_processed = {file_result.files_processed}")
+                if hasattr(file_result, 'value'):
+                    logger.debug(f"DEBUG: file_result.value type = {type(file_result.value)}")
+            
             # Store results in workflow controller for success message building
             self.workflow_controller.store_operation_results(
                 file_result=file_result,
@@ -815,184 +800,15 @@ class MainWindow(QMainWindow):
             
         except Exception as e:
             logger.error(f"Success message integration failed: {e}")
-            # ✅ FALLBACK: Use legacy business logic service directly
-            try:
-                from core.services.success_message_builder import SuccessMessageBuilder
-                message_builder = SuccessMessageBuilder()
-                
-                # Reconstruct file result data from legacy attributes
-                file_result_data = self._reconstruct_file_result_data()
-                report_results_data = getattr(self, 'reports_generated', {})
-                zip_result_data = self._reconstruct_zip_result_data()
-                
-                # Build message using service
-                message_data = message_builder.build_forensic_success_message(
-                    file_result_data, report_results_data, zip_result_data
-                )
-                
-                # Show using new dialog method
-                SuccessDialog.show_success_message(message_data, self)
-                
-            except Exception as fallback_error:
-                # ✅ GRACEFUL FALLBACK: If new system fails completely, use legacy approach
-                self.log(f"Warning: New success system failed ({str(fallback_error)}), using legacy approach")
-                self._show_legacy_completion_message()
+            # DEBUG: Add full traceback
+            import traceback
+            logger.error(f"DEBUG: Full traceback:\n{traceback.format_exc()}")
+            # Show simple error message if success dialog fails
+            self.log("Operation completed successfully, but could not show detailed summary")
         
         # MEMORY LEAK FIX: Comprehensive cleanup to prevent memory accumulation
         self.cleanup_operation_memory()
     
-    def _reconstruct_file_result_data(self):
-        """Reconstruct file result data from legacy attributes for migration"""
-        from core.result_types import FileOperationResult
-        
-        # Try to create a FileOperationResult-like object from legacy data
-        if hasattr(self, 'file_operation_results') and self.file_operation_results:
-            file_count = len([r for r in self.file_operation_results.values() 
-                            if isinstance(r, dict) and 'verified' in r])
-            
-            # Extract performance data if available
-            perf_data = getattr(self, 'file_operation_performance', {})
-            
-            # Create a minimal FileOperationResult for compatibility
-            result = FileOperationResult()
-            result.success = True
-            result.files_processed = file_count
-            result.value = self.file_operation_results
-            
-            # Add performance data if available
-            if isinstance(perf_data, dict):
-                result.bytes_processed = perf_data.get('bytes_processed', 0)
-                result.duration_seconds = perf_data.get('total_time_seconds', 0)
-                result.average_speed_mbps = perf_data.get('average_speed_mbps', 0)
-            elif isinstance(perf_data, str):
-                # Legacy: performance data as string
-                result._legacy_performance_string = perf_data
-            
-            # Add output directory
-            if hasattr(self, 'output_directory'):
-                result.output_directory = self.output_directory
-                
-            return result
-            
-        return None
-    
-    def _reconstruct_zip_result_data(self):
-        """Reconstruct ZIP result data from legacy attributes"""
-        from core.result_types import ArchiveOperationResult
-        
-        if hasattr(self, 'zip_archives_created') and self.zip_archives_created:
-            result = ArchiveOperationResult()
-            result.success = True
-            result.archives_created = self.zip_archives_created
-            
-            # Calculate total size
-            total_size = 0
-            try:
-                for zip_path in self.zip_archives_created:
-                    if hasattr(zip_path, 'stat') and zip_path.exists():
-                        total_size += zip_path.stat().st_size
-                result.total_compressed_size = total_size
-            except:
-                pass
-                
-            return result
-            
-        return None
-    
-    def _show_legacy_completion_message(self):
-        """Legacy completion message method as fallback"""
-        # Build comprehensive success message (original logic)
-        message_parts = ["Operation Complete!\n"]
-        
-        # Add file copy summary with performance data
-        if hasattr(self, 'file_operation_results') and self.file_operation_results:
-            file_count = len([r for r in self.file_operation_results.values() 
-                            if isinstance(r, dict) and 'verified' in r])
-            
-            # Include performance stats if available
-            if hasattr(self, 'file_operation_performance') and self.file_operation_performance:
-                message_parts.append(f"✓ Copied {file_count} files")
-                message_parts.append(f"{self.file_operation_performance}")
-            else:
-                message_parts.append(f"✓ Copied {file_count} files")
-        
-        # Add detailed report summary with file sizes
-        if hasattr(self, 'reports_generated') and self.reports_generated:
-            from core.result_types import ReportGenerationResult
-            successful_reports = []
-            
-            for report_type, result in self.reports_generated.items():
-                if isinstance(result, ReportGenerationResult) and result.success:
-                    # Get file size in KB
-                    file_size_kb = result.file_size_bytes / 1024 if result.file_size_bytes > 0 else 0
-                    report_name = self._get_report_display_name(report_type)
-                    if file_size_kb > 0:
-                        successful_reports.append(f"  • {report_name} ({file_size_kb:.0f} KB)")
-                    else:
-                        successful_reports.append(f"  • {report_name}")
-                elif hasattr(result, 'name'):  # Fallback for Path objects
-                    report_name = self._get_report_display_name(report_type)
-                    successful_reports.append(f"  • {report_name}")
-            
-            if successful_reports:
-                message_parts.append(f"✓ Generated {len(successful_reports)} reports")
-                message_parts.extend(successful_reports)
-        
-        # Add ZIP summary with file sizes
-        if hasattr(self, 'zip_archives_created') and self.zip_archives_created:
-            zip_count = len(self.zip_archives_created)
-            total_zip_size = 0
-            
-            try:
-                for zip_path in self.zip_archives_created:
-                    if hasattr(zip_path, 'stat') and zip_path.exists():
-                        total_zip_size += zip_path.stat().st_size
-                
-                if total_zip_size > 0:
-                    zip_size_mb = total_zip_size / (1024 * 1024)
-                    message_parts.append(f"✓ Created {zip_count} ZIP archive(s) ({zip_size_mb:.1f} MB)")
-                else:
-                    message_parts.append(f"✓ Created {zip_count} ZIP archive(s)")
-            except:
-                message_parts.append(f"✓ Created {zip_count} ZIP archive(s)")
-        
-        # Extract output location for details section
-        output_location = ""
-        if hasattr(self, 'output_directory'):
-            output_location = str(self.output_directory)
-        
-        # Show modal success dialog for final completion (legacy method)
-        SuccessDialog.show_forensic_success(
-            "Operation Complete!",
-            "\n".join(message_parts),
-            f"📁 Output: {output_location}" if output_location else "",
-            self
-        )
-    
-    def _cleanup_operation_attributes(self):
-        """Clean up temporary operation attributes after success display - ENHANCED for memory optimization"""
-        attrs_to_clean = [
-            'zip_archives_created',
-            'reports_generated', 
-            'reports_output_dir',
-            'file_operation_performance',
-            'file_operation_result',
-            'zip_operation_result',
-            # MEMORY LEAK FIX: Add missing large objects that were causing memory accumulation
-            'file_operation_results',  # Large dictionary that can contain hundreds of MB
-        ]
-        
-        for attr in attrs_to_clean:
-            if hasattr(self, attr):
-                delattr(self, attr)
-        
-        # MEMORY LEAK FIX: Also clear WorkflowController results if not already cleared
-        if hasattr(self, 'workflow_controller') and self.workflow_controller:
-            try:
-                self.workflow_controller.clear_stored_results()
-            except:
-                pass  # Already cleared or error - continue cleanup
-        
     def _get_report_display_name(self, report_type: str) -> str:
         """Get user-friendly report display name"""
         display_names = {
@@ -1003,28 +819,38 @@ class MainWindow(QMainWindow):
         return display_names.get(report_type, report_type.replace('_', ' ').title())
     
     def _on_template_changed(self, template_id: str):
-        """Handle template change from forensic tab"""
-        # Template change is already handled by PathService
-        # This method provides a hook for any additional UI updates if needed
-        self.log(f"Folder structure template changed: {template_id}")
-            
+        """Handle template selection changes"""
+        try:
+            # Update the path service with the new template
+            if hasattr(self, 'workflow_controller') and self.workflow_controller:
+                result = self.workflow_controller.path_service.set_current_template(template_id)
+                if result.success:
+                    self.log(f"Template changed to: {template_id}")
+                else:
+                    self.log(f"Failed to change template: {result.error.user_message}")
+        except Exception as e:
+            self.log(f"Error changing template: {e}")
+    
     def log(self, message):
         """Add message to log console"""
         if hasattr(self, 'log_console'):
             self.log_console.log(message)
         self.status_bar.showMessage(message, 3000)
         
-        # Extract speed information from status messages for performance monitoring
-        if self.operation_active and " @ " in message:
+        # REFACTORED: Use PerformanceFormatterService to extract speed
+        if self.operation_active:
             try:
-                speed_part = message.split(" @ ")[1]
-                if "MB/s" in speed_part:
-                    speed_str = speed_part.split("MB/s")[0].strip()
-                    self.current_copy_speed = float(speed_str)
-            except (ValueError, IndexError):
-                # Speed parsing failed, use default speed value
+                from core.services.service_registry import get_service
+                from core.services.performance_formatter_service import IPerformanceFormatterService
+                
+                perf_service = get_service(IPerformanceFormatterService)
+                speed = perf_service.extract_speed_from_message(message)
+                if speed is not None:
+                    self.current_copy_speed = speed
+            except:
+                # Service not available or parsing failed
                 pass
-        
+    
     def load_json(self):
         """Load form data from JSON"""
         file, _ = QFileDialog.getOpenFileName(self, "Load JSON", "", "JSON Files (*.json)")
@@ -1195,89 +1021,45 @@ class MainWindow(QMainWindow):
             logger.error(f"Error refreshing templates: {e}")
         
     def closeEvent(self, event):
-        """Properly clean up all threads before closing
-        
-        This method:
-        1. Identifies all running threads
-        2. Asks user confirmation if threads are active
-        3. Cancels threads with proper timeout handling
-        4. Logs all thread lifecycle events
-        """
+        """Properly clean up all threads before closing using ThreadManagementService"""
         from core.logger import logger
+        from core.services.service_registry import get_service
+        from core.services.thread_management_service import IThreadManagementService
         
-        # Collect all active threads
-        threads_to_stop = []
+        # Get thread management service
+        try:
+            thread_service = get_service(IThreadManagementService)
+        except:
+            thread_service = None
+            logger.warning("ThreadManagementService not available, using legacy shutdown")
         
-        # Check file operation thread
-        if hasattr(self, 'file_thread') and self.file_thread and self.file_thread.isRunning():
-            threads_to_stop.append(('File operations', self.file_thread))
+        if thread_service:
+            # REFACTORED: Use ThreadManagementService for clean shutdown
+            app_components = {
+                'main_window': self,
+                'batch_tab': getattr(self, 'batch_tab', None),
+                'hashing_tab': getattr(self, 'hashing_tab', None)
+            }
             
-        # Check folder operation thread
-        if hasattr(self, 'folder_thread') and self.folder_thread and self.folder_thread.isRunning():
-            threads_to_stop.append(('Folder operations', self.folder_thread))
-            
-        # Check ZIP operation thread
-        if hasattr(self, 'zip_thread') and self.zip_thread and self.zip_thread.isRunning():
-            threads_to_stop.append(('ZIP operations', self.zip_thread))
-            
-        # Check batch processor thread
-        if hasattr(self, 'batch_tab') and self.batch_tab:
-            # Access the batch queue widget within the batch tab
-            if hasattr(self.batch_tab, 'queue_widget'):
-                batch_widget = self.batch_tab.queue_widget
-                if hasattr(batch_widget, 'processor_thread') and batch_widget.processor_thread:
-                    if batch_widget.processor_thread.isRunning():
-                        threads_to_stop.append(('Batch processing', batch_widget.processor_thread))
-        
-        # Check hashing operations thread
-        if hasattr(self, 'hashing_tab') and self.hashing_tab:
-            if self.hashing_tab.hash_controller.is_operation_running():
-                current_op = self.hashing_tab.hash_controller.get_current_operation()
-                if current_op:
-                    threads_to_stop.append(('Hash operations', current_op))
-        
-        # If there are active operations, show warning and proceed with graceful shutdown
-        if threads_to_stop:
-            thread_names = [name for name, _ in threads_to_stop]
-            
-            # Nuclear migration: Auto-proceed with graceful shutdown and show warning
-            warning_error = UIError(
-                f"Closing application with {len(threads_to_stop)} active operation(s)",
-                user_message=f"The following operations will be cancelled:\n\n• " + "\n• ".join(thread_names) + "\n\nShutting down gracefully...",
-                component="MainWindow",
-                severity=ErrorSeverity.WARNING
+            # Perform complete shutdown sequence
+            shutdown_result = thread_service.shutdown_all_threads(
+                app_components,
+                graceful_timeout_ms=5000,
+                force_terminate_stuck=True
             )
-            handle_error(warning_error, {'operation': 'app_exit_with_active_threads', 'thread_count': len(threads_to_stop)})
             
-            # User confirmed or confirmation disabled - proceed with cleanup
-            logger.info(f"Shutting down with {len(threads_to_stop)} active threads")
-            
-            # First, send cancel signal to all threads
-            for name, thread in threads_to_stop:
-                logger.info(f"Cancelling {name}")
-                try:
-                    if hasattr(thread, 'cancel'):
-                        thread.cancel()
-                    elif hasattr(thread, 'cancelled'):
-                        # Some threads use a flag instead of method
-                        thread.cancelled = True
-                except Exception as e:
-                    logger.error(f"Error cancelling {name}: {e}")
-            
-            # Then wait for threads with timeout
-            for name, thread in threads_to_stop:
-                logger.info(f"Waiting for {name} to stop...")
-                try:
-                    if not thread.wait(5000):  # 5 second timeout
-                        logger.warning(f"{name} did not stop gracefully, terminating...")
-                        thread.terminate()
-                        # Give it a moment to terminate
-                        if not thread.wait(1000):  # 1 more second
-                            logger.error(f"{name} failed to terminate properly")
-                    else:
-                        logger.info(f"{name} stopped successfully")
-                except Exception as e:
-                    logger.error(f"Error stopping {name}: {e}")
+            if not shutdown_result.success:
+                logger.error(f"Thread shutdown had issues: {shutdown_result.error.message}")
+                # Show warning to user
+                warning_error = UIError(
+                    "Some operations could not be stopped cleanly",
+                    user_message="Some background operations may not have stopped properly. The application will close anyway.",
+                    component="MainWindow",
+                    severity=ErrorSeverity.WARNING
+                )
+                handle_error(warning_error, {'operation': 'app_exit_thread_shutdown_incomplete'})
+            else:
+                logger.info("All threads shutdown successfully")
         
         # Clean up error notifications
         if hasattr(self, 'error_notification_manager') and self.error_notification_manager:

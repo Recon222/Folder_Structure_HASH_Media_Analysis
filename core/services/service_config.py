@@ -13,6 +13,8 @@ from .report_service import ReportService
 from .archive_service import ArchiveService
 from .validation_service import ValidationService
 from .success_message_builder import SuccessMessageBuilder
+from .thread_management_service import ThreadManagementService, IThreadManagementService
+from .performance_formatter_service import PerformanceFormatterService, IPerformanceFormatterService
 
 def configure_services(zip_controller=None):
     """Configure and register all application services"""
@@ -28,6 +30,12 @@ def configure_services(zip_controller=None):
         
         # ✅ SUCCESS MESSAGE SERVICE: Integrates existing SuccessMessageBuilder
         register_service(ISuccessMessageService, SuccessMessageBuilder())
+        
+        # ✅ THREAD MANAGEMENT SERVICE: Centralized thread lifecycle management
+        register_service(IThreadManagementService, ThreadManagementService())
+        
+        # ✅ PERFORMANCE FORMATTER SERVICE: Performance data formatting and extraction
+        register_service(IPerformanceFormatterService, PerformanceFormatterService())
         
         # Optional: Log successful configuration
         import logging
@@ -49,7 +57,9 @@ def get_configured_services():
         IReportService,
         IArchiveService,
         IValidationService,
-        ISuccessMessageService
+        ISuccessMessageService,
+        IThreadManagementService,
+        IPerformanceFormatterService
     ]
 
 def verify_service_configuration():

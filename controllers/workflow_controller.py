@@ -263,6 +263,13 @@ class WorkflowController(BaseController):
         report_results = report_results or self._last_report_results
         zip_result = zip_result or self._last_zip_result
         
+        # DEBUG: Log what we're passing to the service
+        self.logger.debug(f"DEBUG WorkflowController: file_result type = {type(file_result)}")
+        self.logger.debug(f"DEBUG WorkflowController: report_results type = {type(report_results)}")
+        self.logger.debug(f"DEBUG WorkflowController: zip_result type = {type(zip_result)}")
+        if file_result:
+            self.logger.debug(f"DEBUG WorkflowController: file_result has files_processed? {hasattr(file_result, 'files_processed')}")
+        
         return self.success_message_service.build_forensic_success_message(
             file_result, report_results, zip_result
         )
@@ -272,3 +279,83 @@ class WorkflowController(BaseController):
         self._last_file_result = None
         self._last_report_results = None
         self._last_zip_result = None
+        self._log_operation("results_cleared", "Stored operation results cleared")
+    
+    def cleanup_operation_resources(
+        self,
+        file_thread=None,
+        zip_thread=None,
+        operation_results=None,
+        performance_data=None
+    ) -> Result[None]:
+        """
+        Clean up all operation resources and memory
+        
+        This method encapsulates the memory cleanup logic previously in MainWindow.
+        It handles thread cleanup, result clearing, and garbage collection.
+        
+        Args:
+            file_thread: File operation thread to clean up
+            zip_thread: ZIP operation thread to clean up
+            operation_results: Dictionary of operation results to clear
+            performance_data: Performance data to clear
+            
+        Returns:
+            Result indicating success or failure
+        """
+        try:
+            self._log_operation("cleanup_operation_resources", "Starting comprehensive cleanup")
+            
+            # Clean up thread references and disconnect signals
+            if file_thread:
+                try:
+                    # Disconnect all signals to break Qt reference cycles
+                    if hasattr(file_thread, 'progress_update'):
+                        file_thread.progress_update.disconnect()
+                    if hasattr(file_thread, 'result_ready'):
+                        file_thread.result_ready.disconnect()
+                    
+                    # Wait for thread to finish if still running
+                    if file_thread.isRunning():
+                        file_thread.wait(1000)  # Wait up to 1 second
+                        
+                    self._log_operation("file_thread_cleaned", "File thread cleaned up")
+                except Exception as e:
+                    self._log_operation("file_thread_cleanup_error", str(e), "warning")
+            
+            if zip_thread:
+                try:
+                    if hasattr(zip_thread, 'progress_update'):
+                        zip_thread.progress_update.disconnect()
+                    if hasattr(zip_thread, 'result_ready'):
+                        zip_thread.result_ready.disconnect()
+                        
+                    if zip_thread.isRunning():
+                        zip_thread.wait(1000)
+                        
+                    self._log_operation("zip_thread_cleaned", "ZIP thread cleaned up")
+                except Exception as e:
+                    self._log_operation("zip_thread_cleanup_error", str(e), "warning")
+            
+            # Clear stored results in controller
+            self.clear_stored_results()
+            
+            # Clear current operation reference
+            if self.current_operation:
+                self.current_operation = None
+                self._log_operation("current_operation_cleared", "Current operation reference cleared")
+            
+            # Force garbage collection to clean up any remaining cycles
+            import gc
+            gc.collect()
+            
+            self._log_operation("cleanup_complete", "Memory cleanup completed - optimized for next operation")
+            return Result.success(None)
+            
+        except Exception as e:
+            error = FileOperationError(
+                f"Failed to clean up operation resources: {e}",
+                user_message="Warning: Some resources may not have been cleaned up properly."
+            )
+            self._handle_error(error, {'method': 'cleanup_operation_resources'})
+            return Result.error(error)

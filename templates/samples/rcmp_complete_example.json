@@ -13,7 +13,7 @@
             "suffix": ""
           },
           {
-            "pattern": "{location_address}_{business_name}",
+            "pattern": "{business_name} @ {location_address}",
             "conditionals": {
               "business_only": "BUSINESS_{business_name}",
               "location_only": "LOCATION_{location_address}",

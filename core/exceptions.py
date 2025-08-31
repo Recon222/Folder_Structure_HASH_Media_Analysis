@@ -157,6 +157,23 @@ class ReportGenerationError(FSAError):
         return "Report generation failed. Please check output directory permissions."
 
 
+class ThreadManagementError(FSAError):
+    """Thread lifecycle management failures"""
+    
+    def __init__(self, message: str, **kwargs):
+        """
+        Initialize thread management error
+        
+        Args:
+            message: Error message
+            **kwargs: Additional FSAError arguments
+        """
+        super().__init__(message, **kwargs)
+    
+    def _generate_user_message(self) -> str:
+        return "Failed to manage application threads. Some operations may still be running."
+
+
 class BatchProcessingError(FSAError):
     """Batch job processing failures"""
     

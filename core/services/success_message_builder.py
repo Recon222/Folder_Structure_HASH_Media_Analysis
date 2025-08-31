@@ -8,8 +8,9 @@ from operation results, completely separated from UI concerns. It accepts Result
 directly and produces SuccessMessageData objects for UI consumption.
 """
 
-from typing import Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 from pathlib import Path
+import logging
 
 from core.result_types import (
     Result, FileOperationResult, ReportGenerationResult, ArchiveOperationResult
@@ -28,6 +29,9 @@ class SuccessMessageBuilder:
     of constructing appropriate success messages from operation results.
     """
     
+    def __init__(self):
+        self.logger = logging.getLogger(__name__)
+    
     def build_forensic_success_message(
         self,
         file_result: FileOperationResult,
@@ -45,6 +49,12 @@ class SuccessMessageBuilder:
         Returns:
             SuccessMessageData object ready for UI display
         """
+        # DEBUG: Log input types
+        self.logger.debug(f"DEBUG SuccessMessageBuilder: file_result type = {type(file_result)}")
+        self.logger.debug(f"DEBUG SuccessMessageBuilder: file_result value = {file_result}")
+        if file_result:
+            self.logger.debug(f"DEBUG SuccessMessageBuilder: file_result.files_processed = {getattr(file_result, 'files_processed', 'NO ATTR')}")
+        
         summary_lines = []
         
         # File operation summary
@@ -70,12 +80,16 @@ class SuccessMessageBuilder:
         # Extract output location
         output_location = self._extract_output_location(file_result)
         
+        # Extract performance data
+        perf_data = self._extract_performance_dict(file_result)
+        self.logger.debug(f"DEBUG SuccessMessageBuilder: perf_data type = {type(perf_data)}, value = {perf_data}")
+        
         return SuccessMessageData(
             title="Operation Complete!",
             summary_lines=summary_lines,
             output_location=output_location,
             celebration_emoji="✅",
-            performance_data=self._extract_performance_dict(file_result),
+            performance_data=perf_data,
             raw_data={
                 'file_result': file_result,
                 'report_results': report_results,
@@ -391,7 +405,8 @@ class SuccessMessageBuilder:
         if not zip_result.success or not hasattr(zip_result, 'archives_created'):
             return ""
         
-        archive_count = len(zip_result.archives_created) if zip_result.archives_created else 1
+        # archives_created is an int, not a list
+        archive_count = zip_result.archives_created if zip_result.archives_created else 1
         total_size_mb = zip_result.total_compressed_size / (1024 * 1024) if zip_result.total_compressed_size else 0
         
         if total_size_mb > 0:
@@ -413,12 +428,17 @@ class SuccessMessageBuilder:
         
         return None
     
-    def _extract_performance_dict(self, file_result: FileOperationResult) -> Dict[str, any]:
+    def _extract_performance_dict(self, file_result: FileOperationResult) -> Dict[str, Any]:
         """Extract performance data as dictionary for compatibility."""
+        # DEBUG: Log what we're extracting from
+        self.logger.debug(f"DEBUG _extract_performance_dict: file_result type = {type(file_result)}")
+        self.logger.debug(f"DEBUG _extract_performance_dict: file_result = {file_result}")
+        
         if not (file_result.files_processed > 0 and file_result.duration_seconds > 0):
+            self.logger.debug("DEBUG _extract_performance_dict: Returning empty dict (no files or duration)")
             return {}
         
-        return {
+        result = {
             'files_processed': file_result.files_processed,
             'bytes_processed': file_result.bytes_processed,
             'total_time_seconds': file_result.duration_seconds,
@@ -427,6 +447,8 @@ class SuccessMessageBuilder:
             'peak_speed_mbps': getattr(file_result, 'peak_speed_mbps', file_result.average_speed_mbps),
             'mode': getattr(file_result, 'optimization_mode', 'Balanced')
         }
+        self.logger.debug(f"DEBUG _extract_performance_dict: Returning dict with {len(result)} keys")
+        return result
     
     def _get_report_display_name(self, report_type: str) -> str:
         """Convert report type to display-friendly name."""

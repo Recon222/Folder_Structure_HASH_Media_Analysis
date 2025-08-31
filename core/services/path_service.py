@@ -401,3 +401,164 @@ class PathService(BaseService, IPathService):
         except Exception as e:
             self._log_operation("get_template_sources_failed", str(e), "warning")
             return []
+    
+    def determine_documents_location(
+        self, 
+        file_dest_path: Path,
+        output_directory: Path
+    ) -> Result[Path]:
+        """
+        Determine where to place the Documents folder based on template settings
+        
+        This encapsulates the business logic for document folder placement that was
+        previously in MainWindow.generate_reports()
+        
+        Args:
+            file_dest_path: Path where files were copied to
+            output_directory: Base output directory
+            
+        Returns:
+            Result containing the Documents folder path
+        """
+        try:
+            self._log_operation("determine_documents_location", f"dest: {file_dest_path}")
+            
+            # Find the occurrence folder first
+            occurrence_result = self.find_occurrence_folder(file_dest_path, output_directory)
+            if not occurrence_result.success:
+                return occurrence_result
+            
+            occurrence_dir = occurrence_result.value
+            
+            # Get the template's documentsPlacement setting
+            documents_placement = "location"  # Default fallback
+            
+            try:
+                template = self._templates.get(self._current_template_id)
+                if template:
+                    documents_placement = template.get('documentsPlacement', 'location')
+                    self._log_operation("documents_placement", f"Using template setting: {documents_placement}")
+            except Exception as e:
+                self._log_operation("documents_placement_error", str(e), "warning")
+            
+            # Determine Documents folder location based on template setting
+            if documents_placement == "occurrence":
+                # Level 1: Occurrence number folder
+                documents_dir = occurrence_dir / "Documents"
+                self._log_operation("documents_location", f"Occurrence level: {documents_dir}")
+                
+            elif documents_placement == "location":
+                # Level 2: Business/location folder
+                # file_dest_path.parent is the datetime folder
+                # file_dest_path.parent.parent is the business/location folder
+                business_dir = file_dest_path.parent.parent
+                documents_dir = business_dir / "Documents"
+                self._log_operation("documents_location", f"Location level: {documents_dir}")
+                
+            elif documents_placement == "datetime":
+                # Level 3: DateTime folder (where files are)
+                datetime_dir = file_dest_path.parent
+                documents_dir = datetime_dir / "Documents"
+                self._log_operation("documents_location", f"DateTime level: {documents_dir}")
+                
+            else:
+                # Default fallback to location level
+                business_dir = file_dest_path.parent.parent
+                documents_dir = business_dir / "Documents"
+                self._log_operation("documents_location", f"Default location level: {documents_dir}")
+            
+            # Create the Documents directory
+            try:
+                documents_dir.mkdir(parents=True, exist_ok=True)
+                return Result.success(documents_dir)
+            except Exception as e:
+                error = FileOperationError(
+                    f"Failed to create Documents folder: {e}",
+                    user_message="Failed to create Documents folder. Please check permissions."
+                )
+                self._handle_error(error, {'method': 'determine_documents_location'})
+                return Result.error(error)
+                
+        except Exception as e:
+            error = FileOperationError(
+                f"Failed to determine documents location: {e}",
+                user_message="Failed to determine where to place documents."
+            )
+            self._handle_error(error, {'method': 'determine_documents_location'})
+            return Result.error(error)
+    
+    def find_occurrence_folder(
+        self,
+        path: Path,
+        output_directory: Path
+    ) -> Result[Path]:
+        """
+        Find the occurrence number folder by navigating up the directory tree
+        
+        This encapsulates the path navigation logic that was previously in MainWindow
+        
+        Args:
+            path: Current path to start from
+            output_directory: Base output directory to stop at
+            
+        Returns:
+            Result containing the occurrence folder path
+        """
+        try:
+            self._log_operation("find_occurrence_folder", f"path: {path}, root: {output_directory}")
+            
+            # Navigate to root folder (occurrence number level)
+            current_path = path if path.is_dir() else path.parent
+            
+            # Check if we're at or above the output directory (invalid structure)
+            if current_path == output_directory:
+                error = FileOperationError(
+                    f"Path {path} is at the output directory level - no occurrence folder found",
+                    user_message="Invalid folder structure - no occurrence folder found."
+                )
+                self._handle_error(error, {'method': 'find_occurrence_folder'})
+                return Result.error(error)
+            
+            # Keep going up until we find the occurrence folder
+            # (direct child of output_directory)
+            while current_path != output_directory and current_path.parent != output_directory:
+                if current_path.parent == current_path:
+                    # Reached filesystem root without finding occurrence folder
+                    error = FileOperationError(
+                        f"Could not find occurrence folder from {path}",
+                        user_message="Could not locate the occurrence folder in the directory structure."
+                    )
+                    self._handle_error(error, {'method': 'find_occurrence_folder'})
+                    return Result.error(error)
+                current_path = current_path.parent
+            
+            # current_path should now be the occurrence number folder
+            self._log_operation("occurrence_folder_found", str(current_path))
+            return Result.success(current_path)
+            
+        except Exception as e:
+            error = FileOperationError(
+                f"Failed to find occurrence folder: {e}",
+                user_message="Failed to navigate to occurrence folder."
+            )
+            self._handle_error(error, {'method': 'find_occurrence_folder'})
+            return Result.error(error)
+    
+    def navigate_to_occurrence_folder(
+        self,
+        current_path: Path,
+        root_directory: Path
+    ) -> Result[Path]:
+        """
+        Navigate to the occurrence folder from any path in the structure
+        
+        This is an alias for find_occurrence_folder for clearer API
+        
+        Args:
+            current_path: Current path to navigate from
+            root_directory: Root output directory
+            
+        Returns:
+            Result containing the occurrence folder path
+        """
+        return self.find_occurrence_folder(current_path, root_directory)

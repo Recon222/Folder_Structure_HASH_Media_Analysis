@@ -58,6 +58,7 @@ class SuccessMessageData:
     def has_performance_data(self) -> bool:
         """Check if performance data is available for display."""
         return (self.performance_data is not None and 
+                isinstance(self.performance_data, dict) and
                 len(self.performance_data) > 0)
     
     def get_performance_summary(self) -> str:
