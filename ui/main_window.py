@@ -469,9 +469,9 @@ class MainWindow(QMainWindow):
     
     def cleanup_operation_memory(self):
         """
-        REFACTORED: Delegate memory cleanup to WorkflowController
+        Delegate memory cleanup to WorkflowController
         
-        This method now simply delegates to the WorkflowController's
+        This method simply delegates to the WorkflowController's
         cleanup_operation_resources method, which handles all the complex
         cleanup logic in the service layer.
         """
@@ -528,7 +528,7 @@ class MainWindow(QMainWindow):
                 self.show_final_completion_message()
                 return
             
-            # REFACTORED: Use PathService to determine documents location
+            # Use PathService to determine documents location
             documents_location_result = self.workflow_controller.path_service.determine_documents_location(
                 file_dest_path,
                 self.output_directory
@@ -609,7 +609,7 @@ class MainWindow(QMainWindow):
     def create_zip_archives(self, base_path: Path):
         """Create ZIP archives using ZipController"""
         try:
-            # REFACTORED: Use PathService to find occurrence folder
+            # Use PathService to find occurrence folder
             occurrence_result = self.workflow_controller.path_service.find_occurrence_folder(
                 base_path,
                 self.output_directory
@@ -757,7 +757,7 @@ class MainWindow(QMainWindow):
             self.log_console.log(message)
         self.status_bar.showMessage(message, 3000)
         
-        # REFACTORED: Use PerformanceFormatterService to extract speed
+        # Use PerformanceFormatterService to extract speed
         if self.operation_active:
             try:
                 from core.services.service_registry import get_service
@@ -947,39 +947,34 @@ class MainWindow(QMainWindow):
         from core.services.thread_management_service import IThreadManagementService
         
         # Get thread management service
-        try:
-            thread_service = get_service(IThreadManagementService)
-        except:
-            thread_service = None
-            logger.warning("ThreadManagementService not available, using legacy shutdown")
+        thread_service = get_service(IThreadManagementService)
         
-        if thread_service:
-            # REFACTORED: Use ThreadManagementService for clean shutdown
-            app_components = {
-                'main_window': self,
-                'batch_tab': getattr(self, 'batch_tab', None),
-                'hashing_tab': getattr(self, 'hashing_tab', None)
-            }
-            
-            # Perform complete shutdown sequence
-            shutdown_result = thread_service.shutdown_all_threads(
-                app_components,
-                graceful_timeout_ms=5000,
-                force_terminate_stuck=True
+        # Use ThreadManagementService for clean shutdown
+        app_components = {
+            'main_window': self,
+            'batch_tab': getattr(self, 'batch_tab', None),
+            'hashing_tab': getattr(self, 'hashing_tab', None)
+        }
+        
+        # Perform complete shutdown sequence
+        shutdown_result = thread_service.shutdown_all_threads(
+            app_components,
+            graceful_timeout_ms=5000,
+            force_terminate_stuck=True
+        )
+        
+        if not shutdown_result.success:
+            logger.error(f"Thread shutdown had issues: {shutdown_result.error.message}")
+            # Show warning to user
+            warning_error = UIError(
+                "Some operations could not be stopped cleanly",
+                user_message="Some background operations may not have stopped properly. The application will close anyway.",
+                component="MainWindow",
+                severity=ErrorSeverity.WARNING
             )
-            
-            if not shutdown_result.success:
-                logger.error(f"Thread shutdown had issues: {shutdown_result.error.message}")
-                # Show warning to user
-                warning_error = UIError(
-                    "Some operations could not be stopped cleanly",
-                    user_message="Some background operations may not have stopped properly. The application will close anyway.",
-                    component="MainWindow",
-                    severity=ErrorSeverity.WARNING
-                )
-                handle_error(warning_error, {'operation': 'app_exit_thread_shutdown_incomplete'})
-            else:
-                logger.info("All threads shutdown successfully")
+            handle_error(warning_error, {'operation': 'app_exit_thread_shutdown_incomplete'})
+        else:
+            logger.info("All threads shutdown successfully")
         
         # Clean up error notifications
         if hasattr(self, 'error_notification_manager') and self.error_notification_manager:
