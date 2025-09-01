@@ -1,8 +1,24 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-High-performance buffered file operations with streaming support
-Phase 5 Performance Optimization
+High-performance buffered file operations with streaming support and forensic integrity
+
+BUFFER REUSE OPTIMIZATION:
+This module implements a 2-read optimization for hash-verified file copies:
+- Previous approach: 3 separate reads (source hash, copy, destination hash)
+- Optimized approach: 2 reads (combined source read/hash/copy, then destination verification)
+- Performance improvement: 33% reduction in disk I/O operations
+
+FORENSIC INTEGRITY GUARANTEE:
+For law enforcement and legal compliance, destination hashes are ALWAYS calculated
+by reading the actual file from disk, not from memory buffers. This ensures:
+1. The hash represents what's physically stored on disk
+2. Legal defensibility in court proceedings
+3. Detection of any storage-level corruption
+4. Compliance with evidence handling requirements
+
+The performance trade-off (2 reads vs theoretical 1 read) is accepted to maintain
+cryptographic proof of accurate disk storage.
 """
 
 import shutil
@@ -57,6 +73,10 @@ class PerformanceMetrics:
     
     # Performance samples for graph
     speed_samples: List[Tuple[float, float]] = field(default_factory=list)  # (timestamp, speed_mbps)
+    
+    # Buffer reuse optimization tracking
+    optimization_used: bool = True  # Now enabled by default
+    disk_reads_saved: int = 0  # Number of disk reads eliminated by optimization
     
     def calculate_summary(self):
         """Calculate summary statistics"""
@@ -170,48 +190,80 @@ class BufferedFileOperations:
             else:
                 self.metrics.large_files_count += 1
             
-            # Calculate source hash if needed (before copy)
-            source_hash = ""
-            if calculate_hash:
-                source_hash = self._calculate_hash_streaming(source, buffer_size)
-                result['source_hash'] = source_hash
-            
             # Choose copy strategy based on file size
             if file_size < self.SMALL_FILE_THRESHOLD:
-                # Small files: copy at once (fastest for small files)
-                shutil.copy2(source, dest)
-                bytes_copied = file_size
+                # Small files: Direct copy with separate hashing for simplicity
+                # For small files, the optimization provides minimal benefit
                 
-                # Force flush to disk to ensure complete write (fixes VLC playback issue)
-                with open(dest, 'rb+') as f:
+                # Read file once for both copy and source hash
+                with open(source, 'rb') as f:
+                    data = f.read()
+                
+                # Calculate source hash if needed
+                source_hash = ""
+                if calculate_hash:
+                    source_hash = hashlib.sha256(data).hexdigest()
+                    result['source_hash'] = source_hash
+                
+                # Write data to destination
+                with open(dest, 'wb') as f:
+                    f.write(data)
+                    f.flush()
                     os.fsync(f.fileno())
                 
+                bytes_copied = file_size
+                
+                # Verify destination hash for forensic integrity
+                if calculate_hash:
+                    dest_hash = self._calculate_hash_streaming(dest, buffer_size)
+                    result['dest_hash'] = dest_hash
+                    result['verified'] = source_hash == dest_hash
+                    
+                    if not result['verified']:
+                        error = HashVerificationError(
+                            f"Hash verification failed for {source}: source={source_hash}, dest={dest_hash}",
+                            user_message="File integrity check failed. The copied file may be corrupted.",
+                            file_path=str(dest),
+                            expected_hash=source_hash,
+                            actual_hash=dest_hash
+                        )
+                        return Result.error(error)
+                else:
+                    result['verified'] = True
+                
             else:
-                # Medium/Large files: stream with buffer
-                bytes_copied = self._stream_copy(source, dest, buffer_size, file_size)
+                # Medium/Large files: Use OPTIMIZED streaming with integrated source hashing
+                # This is where we get the major performance benefit (33% reduction in reads)
+                logger.info(f"[BUFFERED OPS OPTIMIZED] Using 2-read optimization for {source.name}")
+                
+                bytes_copied, source_hash, dest_hash = self._stream_copy_with_hash(
+                    source, dest, buffer_size, file_size, calculate_hash
+                )
+                
+                # Track optimization benefit
+                if calculate_hash:
+                    self.metrics.disk_reads_saved += 1  # Saved 1 read (combined source hash+copy)
+                
+                if calculate_hash:
+                    result['source_hash'] = source_hash
+                    result['dest_hash'] = dest_hash
+                    result['verified'] = source_hash == dest_hash
+                    
+                    # Handle hash verification failure
+                    if not result['verified']:
+                        error = HashVerificationError(
+                            f"Hash verification failed for {source}: source={source_hash}, dest={dest_hash}",
+                            user_message="File integrity check failed. The copied file may be corrupted.",
+                            file_path=str(dest),
+                            expected_hash=source_hash,
+                            actual_hash=dest_hash
+                        )
+                        return Result.error(error)
+                else:
+                    result['verified'] = True
             
             # Preserve metadata
             shutil.copystat(source, dest)
-            
-            # Calculate destination hash if needed
-            if calculate_hash:
-                dest_hash = self._calculate_hash_streaming(dest, buffer_size)
-                result['dest_hash'] = dest_hash
-                hash_match = source_hash == dest_hash
-                result['verified'] = hash_match
-                
-                # Handle hash verification failure
-                if not hash_match:
-                    error = HashVerificationError(
-                        f"Hash verification failed for {source}: source={source_hash}, dest={dest_hash}",
-                        user_message="File integrity check failed. The copied file may be corrupted.",
-                        file_path=str(dest),
-                        expected_hash=source_hash,
-                        actual_hash=dest_hash
-                    )
-                    return Result.error(error)
-            else:
-                result['verified'] = True
             
             # Calculate metrics
             result['end_time'] = time.time()
@@ -354,6 +406,117 @@ class BufferedFileOperations:
                     raise InterruptedError("Hash calculation cancelled")
         
         return hash_obj.hexdigest()
+    
+    def _stream_copy_with_hash(self, source: Path, dest: Path, buffer_size: int,
+                               total_size: int, calculate_hash: bool = True) -> Tuple[int, str, str]:
+        """
+        Optimized stream copy with integrated source hashing.
+        
+        FORENSIC INTEGRITY NOTE:
+        This method performs a 2-read optimization for forensic applications:
+        1. Reads source file ONCE, hashing while reading and copying
+        2. Reads destination file separately to verify actual disk content
+        
+        This ensures the destination hash represents what's actually on disk,
+        not just what was in memory, which is critical for legal defensibility.
+        
+        Performance: 33% reduction in disk reads vs. the previous 3-read approach.
+        
+        Args:
+            source: Source file path
+            dest: Destination file path  
+            buffer_size: Buffer size for streaming
+            total_size: Total file size for progress reporting
+            calculate_hash: Whether to calculate SHA-256 hashes
+            
+        Returns:
+            Tuple of (bytes_copied, source_hash, dest_hash)
+        """
+        bytes_copied = 0
+        last_update_time = time.time()
+        last_copied_bytes = 0
+        
+        # Initialize source hash object if needed
+        source_hash_obj = hashlib.sha256() if calculate_hash else None
+        
+        with open(source, 'rb') as src:
+            with open(dest, 'wb') as dst:
+                while not self.cancelled:
+                    # Check for pause
+                    if self.pause_check:
+                        self.pause_check()
+                    
+                    # Read chunk once
+                    chunk = src.read(buffer_size)
+                    if not chunk:
+                        break
+                    
+                    # Hash source data during read (OPTIMIZATION)
+                    if source_hash_obj:
+                        source_hash_obj.update(chunk)
+                    
+                    # Write chunk to destination
+                    bytes_written = dst.write(chunk)
+                    
+                    # Verify complete write
+                    if bytes_written != len(chunk):
+                        raise IOError(f"Incomplete write: {bytes_written} of {len(chunk)} bytes")
+                    
+                    bytes_copied += bytes_written
+                    
+                    # Progress reporting
+                    current_time = time.time()
+                    time_delta = current_time - last_update_time
+                    
+                    if time_delta >= 0.1:  # Update every 100ms
+                        bytes_delta = bytes_copied - last_copied_bytes
+                        current_speed_mbps = (bytes_delta / time_delta) / (1024 * 1024) if time_delta > 0 else 0
+                        
+                        # Update metrics
+                        self.metrics.current_speed_mbps = current_speed_mbps
+                        self.metrics.add_speed_sample(current_speed_mbps)
+                        
+                        # Calculate progress percentage
+                        file_progress_pct = int((bytes_copied / total_size * 100)) if total_size > 0 else 0
+                        
+                        # Report progress with appropriate message
+                        status_msg = f"Copying & analyzing {source.name} @ {current_speed_mbps:.1f} MB/s"
+                        
+                        # Use overall progress if available, otherwise file progress
+                        if self.metrics.total_bytes > 0:
+                            overall_bytes = self.metrics.bytes_copied + bytes_copied
+                            overall_progress_pct = int((overall_bytes / self.metrics.total_bytes * 100))
+                            self._report_progress(overall_progress_pct, status_msg)
+                        else:
+                            self._report_progress(file_progress_pct, status_msg)
+                        
+                        # Call metrics callback if provided
+                        if self.metrics_callback:
+                            self.metrics_callback(self.metrics)
+                        
+                        last_update_time = current_time
+                        last_copied_bytes = bytes_copied
+                    
+                    # Check for cancellation
+                    if self.cancel_event.is_set():
+                        raise InterruptedError("Operation cancelled")
+                
+                # Force flush to disk
+                dst.flush()
+                os.fsync(dst.fileno())
+        
+        # Calculate source hash from the read operation
+        source_hash = source_hash_obj.hexdigest() if source_hash_obj else ""
+        
+        # CRITICAL FOR FORENSICS: Hash the destination file from disk
+        # This ensures we're verifying what's actually stored, not what's in memory
+        dest_hash = ""
+        if calculate_hash:
+            # Report verification progress
+            self._report_progress(100, f"Verifying {dest.name} integrity...")
+            dest_hash = self._calculate_hash_streaming(dest, buffer_size)
+        
+        return bytes_copied, source_hash, dest_hash
     
     def copy_files(self, files: List[Path], destination: Path,
                    calculate_hash: bool = True) -> FileOperationResult:
