@@ -410,12 +410,8 @@ class MainWindow(QMainWindow):
                 # Build performance summary from the Result object
                 summary = perf_service.build_performance_summary(result)
                 completion_message += f"\n\n{summary}"
-                self.file_operation_performance = completion_message
-            else:
-                # Fallback - just show basic message
-                if hasattr(result, 'files_processed'):
-                    completion_message += f"\n\n{result.files_processed} file(s) processed successfully"
-                self.file_operation_performance = completion_message
+            
+            self.file_operation_performance = completion_message
             
             self.log(completion_message)
             
