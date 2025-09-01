@@ -391,11 +391,8 @@ class MainWindow(QMainWindow):
             self.workflow_controller.store_operation_results(file_result=result)
             
             # Store the value dict for report generation (contains individual file results)
-            # The value is already a dict with file operation results
-            if hasattr(result, 'value') and result.value:
-                self.file_operation_results = result.value
-            else:
-                self.file_operation_results = {}
+            # Result objects always have a value property
+            self.file_operation_results = result.value if result.value else {}
             
             # Build performance message using service
             completion_message = "Files copied successfully!"
@@ -405,8 +402,8 @@ class MainWindow(QMainWindow):
             
             perf_service = get_service(IPerformanceFormatterService)
             
-            # Check if the result has performance data (FileOperationResult has these attributes)
-            if hasattr(result, 'files_processed') and result.files_processed > 0:
+            # FileOperationResult always has files_processed attribute
+            if result.files_processed > 0:
                 # Build performance summary from the Result object
                 summary = perf_service.build_performance_summary(result)
                 completion_message += f"\n\n{summary}"
@@ -427,19 +424,8 @@ class MainWindow(QMainWindow):
                     try:
                         if self.zip_controller.should_create_zip():
                             # ZIP will handle final completion
-                            # Get destination path from file operation result
-                            if hasattr(self.file_operation_result, 'dest_path'):
-                                file_dest_path = Path(self.file_operation_result.dest_path)
-                            elif self.file_operation_results and 'dest_path' in self.file_operation_results:
-                                file_dest_path = Path(self.file_operation_results['dest_path'])
-                            else:
-                                # Try to extract from any nested structure
-                                for key, value in self.file_operation_results.items():
-                                    if isinstance(value, dict) and 'dest_path' in value:
-                                        file_dest_path = Path(value['dest_path'])
-                                        break
-                                else:
-                                    raise ValueError("Cannot find destination path for ZIP creation")
+                            # FileOperationResult always has dest_path attribute
+                            file_dest_path = Path(self.file_operation_result.dest_path)
                             
                             original_output_dir = file_dest_path.parent
                             self.create_zip_archives(original_output_dir)
@@ -453,11 +439,8 @@ class MainWindow(QMainWindow):
                     # No ZIP controller, show final completion
                     self.show_final_completion_message()
         else:
-            # Handle failure
-            if result.error and hasattr(result.error, 'user_message'):
-                message = result.error.user_message
-            else:
-                message = "Operation failed"
+            # Handle failure - FSAError objects always have user_message
+            message = result.error.user_message if result.error else "Operation failed"
             
             error = UIError(
                 f"Operation failed: {message}",
@@ -696,13 +679,11 @@ class MainWindow(QMainWindow):
             logger.debug(f"DEBUG: report_results type: {type(report_results)}")
             logger.debug(f"DEBUG: zip_result type: {type(zip_result)}")
             
-            # Check if file_result has attributes we expect
+            # Log file_result attributes for debugging
             if file_result:
                 logger.debug(f"DEBUG: file_result attributes: {dir(file_result)[:10]}...")  # First 10 attrs
-                if hasattr(file_result, 'files_processed'):
-                    logger.debug(f"DEBUG: file_result.files_processed = {file_result.files_processed}")
-                if hasattr(file_result, 'value'):
-                    logger.debug(f"DEBUG: file_result.value type = {type(file_result.value)}")
+                logger.debug(f"DEBUG: file_result.files_processed = {file_result.files_processed}")
+                logger.debug(f"DEBUG: file_result.value type = {type(file_result.value)}")
             
             # Store results in workflow controller for success message building
             self.workflow_controller.store_operation_results(
