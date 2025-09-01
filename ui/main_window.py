@@ -272,11 +272,7 @@ class MainWindow(QMainWindow):
             return
             
         # Get files
-        logger.debug(f"Using files_panel {id(self.files_panel)}")
-        logger.debug(f"Forensic tab files_panel {id(self.forensic_tab.files_panel)}")
         files, folders = self.files_panel.get_all_items()
-        logger.debug(f"Retrieved files: {files}")
-        logger.debug(f"Retrieved folders: {folders}")
         
         if not files and not folders:
             error = UIError(
@@ -386,13 +382,10 @@ class MainWindow(QMainWindow):
             self.copy_speed_label.setStyleSheet("padding: 0 10px; font-weight: bold;")
         
         if result.success:
-            # Store the Result object (which contains performance data)
+            # Store the Result object for later use in reports and success message
             self.file_operation_result = result
-            self.workflow_controller.store_operation_results(file_result=result)
-            
             # Store the value dict for report generation (contains individual file results)
-            # Result objects always have a value property
-            self.file_operation_results = result.value if result.value else {}
+            self.file_operation_results = result.value or {}
             
             # Build performance message using service
             completion_message = "Files copied successfully!"
@@ -545,19 +538,14 @@ class MainWindow(QMainWindow):
             # Log generated reports and handle Result objects
             successful_reports = {}
             if generated:
-                from core.result_types import ReportGenerationResult
                 for report_type, result in generated.items():
-                    if isinstance(result, ReportGenerationResult):
-                        if result.success:
-                            self.log(f"Generated: {result.value.name}")
-                            successful_reports[report_type] = result
-                        else:
-                            # Error is already logged by handle_error in PDF generation
-                            self.log(f"Failed to generate {report_type}: {result.error.user_message if result.error else 'Unknown error'}")
-                    else:
-                        # Fallback for unexpected result types
-                        self.log(f"Generated: {result}")
+                    # ReportController always returns ReportGenerationResult objects
+                    if result.success:
+                        self.log(f"Generated: {result.value.name}")
                         successful_reports[report_type] = result
+                    else:
+                        # Error is already logged by handle_error in PDF generation
+                        self.log(f"Failed to generate {report_type}: {result.error.user_message if result.error else 'Unknown error'}")
                         
                 if successful_reports:
                     self.log(f"Documentation saved to: {reports_output_dir}")
@@ -635,32 +623,26 @@ class MainWindow(QMainWindow):
     
     def on_zip_finished(self, result):
         """Handle ZIP operation completion with Result object"""
-        from core.result_types import Result
-        
         self.progress_bar.setVisible(False)
         
-        if isinstance(result, Result):
-            if result.success:
-                # Extract archives from ArchiveOperationResult
-                created_archives = result.value if result.value else []
-                self.log(f"Created {len(created_archives)} ZIP archive(s)")
-                # Store ZIP results for final summary
-                self.zip_archives_created = created_archives
-                # Store Result object for success message integration
-                self.zip_operation_result = result
-                # Show final completion message that includes everything
-                self.show_final_completion_message()
-            else:
-                # Handle error result
-                error_msg = result.error.user_message if result.error else "ZIP creation failed"
-                self.log(f"ZIP creation failed: {error_msg}")
-                # Store failed Result object for success message integration
-                self.zip_operation_result = result
-                # Still show completion message for consistency
-                self.show_final_completion_message()
+        # Result objects are always passed - no need to check type
+        if result.success:
+            # ArchiveOperationResult.value contains the list of created archives
+            created_archives = result.value or []
+            self.log(f"Created {len(created_archives)} ZIP archive(s)")
+            # Store ZIP results for final summary
+            self.zip_archives_created = created_archives
+            # Store Result object for success message integration
+            self.zip_operation_result = result
+            # Show final completion message that includes everything
+            self.show_final_completion_message()
         else:
-            # Handle unexpected result types
-            self.log("ZIP operation completed with unknown result format")
+            # Handle error result
+            error_msg = result.error.user_message if result.error else "ZIP creation failed"
+            self.log(f"ZIP creation failed: {error_msg}")
+            # Store failed Result object for success message integration
+            self.zip_operation_result = result
+            # Still show completion message for consistency
             self.show_final_completion_message()
     
     def show_final_completion_message(self):
@@ -673,17 +655,6 @@ class MainWindow(QMainWindow):
             file_result = getattr(self, 'file_operation_result', None)
             report_results = getattr(self, 'reports_generated', None)
             zip_result = getattr(self, 'zip_operation_result', None)
-            
-            # DEBUG: Log what types we're working with
-            logger.debug(f"DEBUG: file_result type: {type(file_result)}, value: {file_result}")
-            logger.debug(f"DEBUG: report_results type: {type(report_results)}")
-            logger.debug(f"DEBUG: zip_result type: {type(zip_result)}")
-            
-            # Log file_result attributes for debugging
-            if file_result:
-                logger.debug(f"DEBUG: file_result attributes: {dir(file_result)[:10]}...")  # First 10 attrs
-                logger.debug(f"DEBUG: file_result.files_processed = {file_result.files_processed}")
-                logger.debug(f"DEBUG: file_result.value type = {type(file_result.value)}")
             
             # Store results in workflow controller for success message building
             self.workflow_controller.store_operation_results(
@@ -701,9 +672,6 @@ class MainWindow(QMainWindow):
             
         except Exception as e:
             logger.error(f"Success message integration failed: {e}")
-            # DEBUG: Add full traceback
-            import traceback
-            logger.error(f"DEBUG: Full traceback:\n{traceback.format_exc()}")
             # Show simple error message if success dialog fails
             self.log("Operation completed successfully, but could not show detailed summary")
         
