@@ -154,6 +154,109 @@ class ReportController(BaseController):
             self._handle_error(error, {'method': 'create_workflow_archives'})
             return Result.error(error)
     
+    def generate_reports_with_path_determination(
+        self,
+        form_data: FormData,
+        file_operation_result,
+        output_directory: Path,
+        settings
+    ) -> Result[Dict]:
+        """
+        Generate reports with proper path determination
+        
+        This method handles the complete report generation workflow including:
+        1. Extracting the base forensic path from the file operation result
+        2. Determining the correct documents location based on template settings
+        3. Generating all requested reports
+        
+        Args:
+            form_data: Form data with report information
+            file_operation_result: Result object from file operations containing base_forensic_path
+            output_directory: Base output directory
+            settings: Settings object with report generation flags
+            
+        Returns:
+            Result containing generated reports and documents directory
+        """
+        try:
+            self._log_operation("generate_reports_with_path_determination", "Starting report generation with path determination")
+            
+            # Extract base forensic path from result metadata
+            base_forensic_path = None
+            if hasattr(file_operation_result, 'metadata') and file_operation_result.metadata:
+                base_forensic_path = file_operation_result.metadata.get('base_forensic_path')
+            
+            if not base_forensic_path:
+                # Fallback: try to reconstruct the path using PathService
+                from core.services.interfaces import IPathService
+                path_service = self._get_service(IPathService)
+                path_result = path_service.build_forensic_path(form_data, output_directory)
+                if path_result.success:
+                    base_forensic_path = str(path_result.value)
+                    self._log_operation("base_path_reconstructed", f"Reconstructed base path: {base_forensic_path}")
+                else:
+                    error = ReportGenerationError(
+                        "Cannot determine base forensic path for documents placement",
+                        user_message="Cannot determine where to place documents. Please check the folder structure."
+                    )
+                    self._handle_error(error, {'method': 'generate_reports_with_path_determination'})
+                    return Result.error(error)
+            
+            self._log_operation("base_forensic_path", f"Using base path: {base_forensic_path}")
+            
+            # Use PathService to determine documents location
+            from core.services.interfaces import IPathService
+            path_service = self._get_service(IPathService)
+            documents_location_result = path_service.determine_documents_location(
+                Path(base_forensic_path),  # Pass the base forensic path, not a file path
+                output_directory
+            )
+            
+            if not documents_location_result.success:
+                error = ReportGenerationError(
+                    f"Failed to determine documents location: {documents_location_result.error.message}",
+                    user_message=documents_location_result.error.user_message
+                )
+                self._handle_error(error, {'method': 'generate_reports_with_path_determination'})
+                return Result.error(error)
+            
+            documents_dir = documents_location_result.value
+            self._log_operation("documents_location", f"Documents will be placed at: {documents_dir}")
+            
+            # Extract file results from the Result object
+            file_results = {}
+            if hasattr(file_operation_result, 'value') and file_operation_result.value:
+                file_results = file_operation_result.value
+            
+            # Generate reports based on settings
+            generate_time_offset = getattr(settings, 'generate_time_offset_pdf', False)
+            generate_upload_log = getattr(settings, 'generate_upload_log_pdf', False)
+            generate_hash_csv = getattr(settings, 'calculate_hashes', False)
+            
+            generated_reports = self.generate_all_reports(
+                form_data=form_data,
+                file_results=file_results,
+                output_dir=documents_dir,
+                generate_time_offset=generate_time_offset,
+                generate_upload_log=generate_upload_log,
+                generate_hash_csv=generate_hash_csv
+            )
+            
+            # Return success with both reports and documents directory
+            return Result.success({
+                'reports': generated_reports,
+                'documents_dir': documents_dir,
+                'base_forensic_path': base_forensic_path
+            })
+            
+        except Exception as e:
+            error = ReportGenerationError(
+                f"Report generation with path determination failed: {e}",
+                user_message="Failed to generate reports. Please check the logs."
+            )
+            self._handle_error(error, {'method': 'generate_reports_with_path_determination'})
+            return Result.error(error)
+    
     # Legacy compatibility methods
     def should_create_zip(self) -> bool:
         """Legacy method - check if ZIP creation is enabled in settings"""

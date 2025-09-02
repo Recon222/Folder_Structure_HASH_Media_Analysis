@@ -91,7 +91,7 @@ class FolderStructureThread(FileWorkerThread):
                     {},
                     files_processed=0,
                     bytes_processed=0
-                ).add_metadata('analysis', structure_analysis)
+                ).add_metadata('analysis', structure_analysis).add_metadata('base_forensic_path', str(self.destination))
             
             # Check for cancellation and pause after analysis
             self.check_cancellation()
@@ -431,6 +431,8 @@ class FolderStructureThread(FileWorkerThread):
             result.add_metadata('hash_failures', hash_failures)
             result.add_metadata('calculate_hash', self.calculate_hash)
             result.add_metadata('structure_type', 'folder_hierarchy')
+            # Add base forensic path for correct documents placement
+            result.add_metadata('base_forensic_path', str(self.destination))
             
             # Handle hash verification failures
             if hash_failures:

@@ -486,54 +486,40 @@ class MainWindow(QMainWindow):
     def generate_reports(self):
         """Generate PDF reports and hash verification CSV based on user settings"""
         try:
-            # Check if we have valid file operation results
-            if not self.file_operation_results:
-                self.log("Cannot generate reports - no file operation results available")
-                self.show_final_completion_message()
-                return
-                
-            # Find a result entry with dest_path
-            file_dest_path = None
-            for result_value in self.file_operation_results.values():
-                if isinstance(result_value, dict) and 'dest_path' in result_value:
-                    file_dest_path = Path(result_value['dest_path'])
-                    break
-                    
-            if not file_dest_path:
-                self.log("Cannot generate reports - no destination path found in results")
+            # Check if we have valid file operation result
+            if not hasattr(self, 'file_operation_result') or not self.file_operation_result:
+                self.log("Cannot generate reports - no file operation result available")
                 self.show_final_completion_message()
                 return
             
-            # Use PathService to determine documents location
-            documents_location_result = self.workflow_controller.path_service.determine_documents_location(
-                file_dest_path,
-                self.output_directory
+            # Use the new ReportController method that handles path determination
+            report_result = self.report_controller.generate_reports_with_path_determination(
+                form_data=self.form_data,
+                file_operation_result=self.file_operation_result,  # Pass the Result object, not just the dict
+                output_directory=self.output_directory,
+                settings=self.settings
             )
             
-            if not documents_location_result.success:
+            if not report_result.success:
                 error = UIError(
-                    f"Failed to determine documents location: {documents_location_result.error.message}",
-                    user_message=documents_location_result.error.user_message,
+                    f"Report generation failed: {report_result.error.message}",
+                    user_message=report_result.error.user_message,
                     component="MainWindow"
                 )
-                handle_error(error, {'operation': 'documents_location', 'severity': 'critical'})
+                handle_error(error, {'operation': 'report_generation', 'severity': 'critical'})
+                self.show_final_completion_message()
                 return
             
-            documents_dir = documents_location_result.value
+            # Extract results from the successful report generation
+            report_data = report_result.value
+            documents_dir = report_data.get('documents_dir')
+            base_forensic_path = report_data.get('base_forensic_path')
+            generated = report_data.get('reports', {})
+            
             self.log(f"Documents folder location: {documents_dir}")
             
-            # Reports go directly into Documents folder
+            # Reports go directly into Documents folder (for compatibility)
             reports_output_dir = documents_dir
-            
-            # Generate reports based on settings
-            generated = self.report_controller.generate_reports(
-                self.form_data,
-                self.file_operation_results,
-                reports_output_dir,
-                generate_time_offset=self.settings.generate_time_offset_pdf,
-                generate_upload_log=self.settings.generate_upload_log_pdf,
-                generate_hash_csv=self.settings.calculate_hashes
-            )
             
             # Log generated reports and handle Result objects
             successful_reports = {}
@@ -558,7 +544,8 @@ class MainWindow(QMainWindow):
             try:
                 if self.zip_controller.should_create_zip():
                     self.log("Creating ZIP archive(s)...")
-                    original_output_dir = file_dest_path.parent
+                    # Use the base forensic path from report generation
+                    original_output_dir = Path(base_forensic_path) if base_forensic_path else self.output_directory
                     self.create_zip_archives(original_output_dir)
                 else:
                     # No ZIP creation, show final completion now

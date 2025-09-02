@@ -199,6 +199,31 @@ TEMPLATE_SCHEMA: Dict[str, Any] = {
                     },
                     "maxItems": 20,
                     "description": "Template tags for organization"
+                },
+                "exported_date": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "When the template was exported"
+                },
+                "exported_by": {
+                    "type": "string",
+                    "maxLength": 100,
+                    "description": "Application that exported the template"
+                },
+                "original_source": {
+                    "type": "string",
+                    "maxLength": 50,
+                    "description": "Original source of the template (system/user/imported)"
+                },
+                "imported_from": {
+                    "type": "string",
+                    "maxLength": 200,
+                    "description": "Path or source where template was imported from"
+                },
+                "imported_date": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "When the template was imported"
                 }
             },
             "additionalProperties": False

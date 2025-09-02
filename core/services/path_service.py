@@ -404,7 +404,7 @@ class PathService(BaseService, IPathService):
     
     def determine_documents_location(
         self, 
-        file_dest_path: Path,
+        base_forensic_path: Path,
         output_directory: Path
     ) -> Result[Path]:
         """
@@ -414,17 +414,18 @@ class PathService(BaseService, IPathService):
         previously in MainWindow.generate_reports()
         
         Args:
-            file_dest_path: Path where files were copied to
+            base_forensic_path: The base forensic structure path (datetime folder level)
+                               NOT a file path with preserved folder structure
             output_directory: Base output directory
             
         Returns:
             Result containing the Documents folder path
         """
         try:
-            self._log_operation("determine_documents_location", f"dest: {file_dest_path}")
+            self._log_operation("determine_documents_location", f"base_path: {base_forensic_path}")
             
             # Find the occurrence folder first
-            occurrence_result = self.find_occurrence_folder(file_dest_path, output_directory)
+            occurrence_result = self.find_occurrence_folder(base_forensic_path, output_directory)
             if not occurrence_result.success:
                 return occurrence_result
             
@@ -449,22 +450,21 @@ class PathService(BaseService, IPathService):
                 
             elif documents_placement == "location":
                 # Level 2: Business/location folder
-                # file_dest_path.parent is the datetime folder
-                # file_dest_path.parent.parent is the business/location folder
-                business_dir = file_dest_path.parent.parent
-                documents_dir = business_dir / "Documents"
+                # Since base_forensic_path is the datetime folder,
+                # its parent is the location folder
+                location_dir = base_forensic_path.parent
+                documents_dir = location_dir / "Documents"
                 self._log_operation("documents_location", f"Location level: {documents_dir}")
                 
             elif documents_placement == "datetime":
-                # Level 3: DateTime folder (where files are)
-                datetime_dir = file_dest_path.parent
-                documents_dir = datetime_dir / "Documents"
+                # Level 3: DateTime folder
+                documents_dir = base_forensic_path / "Documents"
                 self._log_operation("documents_location", f"DateTime level: {documents_dir}")
                 
             else:
                 # Default fallback to location level
-                business_dir = file_dest_path.parent.parent
-                documents_dir = business_dir / "Documents"
+                location_dir = base_forensic_path.parent
+                documents_dir = location_dir / "Documents"
                 self._log_operation("documents_location", f"Default location level: {documents_dir}")
             
             # Create the Documents directory
