@@ -480,7 +480,7 @@ class BufferedFileOperations:
                         file_progress_pct = int((bytes_copied / total_size * 100)) if total_size > 0 else 0
                         
                         # Report progress with appropriate message
-                        status_msg = f"Copying & analyzing {source.name} @ {current_speed_mbps:.1f} MB/s"
+                        status_msg = f"Copying and hashing source {source.name} @ {current_speed_mbps:.1f} MB/s"
                         
                         # Use overall progress if available, otherwise file progress
                         if self.metrics.total_bytes > 0:
@@ -513,7 +513,7 @@ class BufferedFileOperations:
         dest_hash = ""
         if calculate_hash:
             # Report verification progress
-            self._report_progress(100, f"Verifying {dest.name} integrity...")
+            self._report_progress(100, f"Hashing destination and verifying {dest.name}...")
             dest_hash = self._calculate_hash_streaming(dest, buffer_size)
         
         return bytes_copied, source_hash, dest_hash
