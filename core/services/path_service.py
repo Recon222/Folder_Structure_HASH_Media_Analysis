@@ -154,7 +154,7 @@ class PathService(BaseService, IPathService):
                     }
                 ]
             },
-            "documentsPlacement": "location"
+            "documentsPlacement": 1
         }
     
     def validate_output_path(self, path: Path, base: Path) -> Result[Path]:
@@ -424,52 +424,49 @@ class PathService(BaseService, IPathService):
         try:
             self._log_operation("determine_documents_location", f"base_path: {base_forensic_path}")
             
-            # Find the occurrence folder first
-            occurrence_result = self.find_occurrence_folder(base_forensic_path, output_directory)
-            if not occurrence_result.success:
-                return occurrence_result
-            
-            occurrence_dir = occurrence_result.value
-            
-            # Get the template's documentsPlacement setting
-            documents_placement = "location"  # Default fallback
-            
-            try:
-                template = self._templates.get(self._current_template_id)
-                if template:
-                    documents_placement = template.get('documentsPlacement', 'location')
-                    self._log_operation("documents_placement", f"Using template setting: {documents_placement}")
-            except Exception as e:
-                self._log_operation("documents_placement_error", str(e), "warning")
-            
-            # Determine Documents folder location based on template setting
-            if documents_placement == "occurrence":
-                # Level 1: Occurrence number folder
-                documents_dir = occurrence_dir / "Documents"
-                self._log_operation("documents_location", f"Occurrence level: {documents_dir}")
-                
-            elif documents_placement == "location":
-                # Level 2: Business/location folder
-                # Since base_forensic_path is the datetime folder,
-                # its parent is the location folder
-                location_dir = base_forensic_path.parent
-                documents_dir = location_dir / "Documents"
-                self._log_operation("documents_location", f"Location level: {documents_dir}")
-                
-            elif documents_placement == "datetime":
-                # Level 3: DateTime folder
-                documents_dir = base_forensic_path / "Documents"
-                self._log_operation("documents_location", f"DateTime level: {documents_dir}")
-                
+            # Get the template and its documentsPlacement setting
+            template = self._templates.get(self._current_template_id)
+            if not template:
+                documents_placement = 1  # Default to level 1
             else:
-                # Default fallback to location level
-                location_dir = base_forensic_path.parent
-                documents_dir = location_dir / "Documents"
-                self._log_operation("documents_location", f"Default location level: {documents_dir}")
+                documents_placement = template.get('documentsPlacement', 1)
+                
+                # Auto-convert legacy string values to integers
+                if isinstance(documents_placement, str):
+                    conversion_map = {
+                        "occurrence": 0,  # Level 0
+                        "location": 1,    # Level 1
+                        "datetime": 2     # Level 2
+                    }
+                    original_value = documents_placement
+                    documents_placement = conversion_map.get(documents_placement, 1)
+                    self._log_operation(
+                        "legacy_conversion",
+                        f"Converted '{original_value}' to level {documents_placement}",
+                        "info"
+                    )
+            
+            # Validate it's an integer
+            if not isinstance(documents_placement, int):
+                self._log_operation(
+                    "documents_placement_error",
+                    f"Invalid documentsPlacement type: {type(documents_placement)}, using default level 1",
+                    "warning"
+                )
+                documents_placement = 1
+            
+            # Calculate level-based placement
+            documents_dir = self._calculate_level_placement(
+                base_forensic_path,
+                output_directory,
+                documents_placement,
+                template
+            )
             
             # Create the Documents directory
             try:
                 documents_dir.mkdir(parents=True, exist_ok=True)
+                self._log_operation("documents_location", f"Created at: {documents_dir}")
                 return Result.success(documents_dir)
             except Exception as e:
                 error = FileOperationError(
@@ -486,6 +483,76 @@ class PathService(BaseService, IPathService):
             )
             self._handle_error(error, {'method': 'determine_documents_location'})
             return Result.error(error)
+    
+    def _calculate_level_placement(
+        self,
+        base_forensic_path: Path,
+        output_directory: Path,
+        level_index: int,
+        template: dict
+    ) -> Path:
+        """
+        Calculate documents placement using level index
+        
+        Args:
+            base_forensic_path: Deepest level path (e.g., datetime folder)
+            output_directory: Root output directory
+            level_index: Zero-based index of desired level
+            template: Template configuration (may be None)
+            
+        Returns:
+            Path where Documents folder should be placed
+        """
+        # Get the number of levels in the template
+        if not template:
+            # No template, use default 3-level structure
+            total_levels = 3
+        else:
+            levels = template.get('structure', {}).get('levels', [])
+            total_levels = len(levels)
+        
+        if total_levels == 0:
+            # No levels defined, use output directory
+            self._log_operation("level_placement", "No levels in template, using output directory")
+            return output_directory / "Documents"
+        
+        # Clamp level index to valid range
+        if level_index >= total_levels:
+            self._log_operation(
+                "level_placement_warning",
+                f"Level {level_index} exceeds template levels ({total_levels}), using deepest level",
+                "warning"
+            )
+            return base_forensic_path / "Documents"
+        
+        if level_index < 0:
+            self._log_operation(
+                "level_placement_warning",
+                f"Invalid level {level_index}, using default level 1",
+                "warning"
+            )
+            level_index = min(1, total_levels - 1)
+        
+        # Calculate how many levels up from the base path
+        # base_forensic_path is at level (total_levels - 1)
+        current_level = total_levels - 1
+        steps_up = current_level - level_index
+        
+        self._log_operation(
+            "level_calculation",
+            f"Total levels: {total_levels}, Target level: {level_index}, Steps up: {steps_up}"
+        )
+        
+        # Navigate up from base path
+        target_path = base_forensic_path
+        for _ in range(steps_up):
+            if target_path.parent == target_path:
+                # Reached root, can't go higher
+                self._log_operation("level_placement", f"Reached root at {target_path}")
+                break
+            target_path = target_path.parent
+        
+        return target_path / "Documents"
     
     def find_occurrence_folder(
         self,

@@ -53,10 +53,12 @@ TEMPLATE_SCHEMA: Dict[str, Any] = {
                     "$ref": "#/definitions/structure"
                 },
                 "documentsPlacement": {
-                    "type": "string",
-                    "enum": ["occurrence", "location", "datetime"],
-                    "default": "location",
-                    "description": "Where to place PDF documents"
+                    "oneOf": [
+                        {"type": "integer", "minimum": 0, "maximum": 9},
+                        {"type": "string", "enum": ["occurrence", "location", "datetime"]}
+                    ],
+                    "default": 1,
+                    "description": "Level index (0-based) for documents placement, or legacy string for backward compatibility"
                 },
                 "archiveNaming": {
                     "$ref": "#/definitions/archiveNaming"
@@ -89,6 +91,11 @@ TEMPLATE_SCHEMA: Dict[str, Any] = {
             "description": "Single folder level definition",
             "required": ["pattern"],
             "properties": {
+                "name": {
+                    "type": "string",
+                    "maxLength": 50,
+                    "description": "Optional display name for this level (e.g., 'Case', 'Location', 'Timeline')"
+                },
                 "pattern": {
                     "type": "string",
                     "minLength": 1,

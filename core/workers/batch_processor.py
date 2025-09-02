@@ -622,10 +622,24 @@ class BatchProcessorThread(BaseWorkerThread):
         try:
             # Import PDF generator and use correct API
             from ..pdf_gen import PDFGenerator
+            from core.services.service_registry import get_service
+            from core.services.interfaces import IPathService
             
-            # Create reports directory - move to business/location level instead of occurrence level
-            reports_dir = output_path.parent / "Documents"
-            reports_dir.mkdir(parents=True, exist_ok=True)
+            # Use PathService to determine correct documents location based on template
+            path_service = get_service(IPathService)
+            documents_result = path_service.determine_documents_location(
+                output_path,  # This is the base forensic path (datetime folder)
+                Path(job.output_directory)  # Base output directory
+            )
+            
+            if documents_result.success:
+                reports_dir = documents_result.value
+                logger.info(f"Documents will be placed at: {reports_dir}")
+            else:
+                # Fallback to legacy behavior if PathService fails
+                logger.warning(f"Failed to determine documents location: {documents_result.error}, using legacy placement")
+                reports_dir = output_path.parent / "Documents"
+                reports_dir.mkdir(parents=True, exist_ok=True)
             
             # Create PDFGenerator instance (no constructor params)
             pdf_gen = PDFGenerator()

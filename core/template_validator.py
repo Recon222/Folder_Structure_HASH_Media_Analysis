@@ -356,21 +356,57 @@ class TemplateValidator:
                         suggestion="Remove dateFormat or add datetime field references"
                     ))
             
-            # Check documents placement
-            docs_placement = template.get("documentsPlacement", "location")
-            if docs_placement not in ["occurrence", "location", "datetime"]:
+            # Check documents placement (now supports both integers and legacy strings)
+            docs_placement = template.get("documentsPlacement", 1)
+            
+            # Accept both integers and legacy strings
+            valid_placement = False
+            if isinstance(docs_placement, int):
+                # Integer should be within valid range
+                if 0 <= docs_placement <= 9:
+                    valid_placement = True
+                    # Check if placement exceeds template levels
+                    if docs_placement >= len(levels):
+                        issues.append(ValidationIssue(
+                            ValidationLevel.WARNING,
+                            f"documentsPlacement level {docs_placement} exceeds template levels ({len(levels)})",
+                            path=f"templates.{template_id}.documentsPlacement",
+                            suggestion=f"Use a level between 0 and {len(levels)-1}"
+                        ))
+                else:
+                    issues.append(ValidationIssue(
+                        ValidationLevel.ERROR,
+                        f"Invalid documentsPlacement level {docs_placement} (must be 0-9)",
+                        path=f"templates.{template_id}.documentsPlacement",
+                        suggestion="Use a level index between 0 and 9"
+                    ))
+            elif isinstance(docs_placement, str):
+                # Legacy string values
+                if docs_placement in ["occurrence", "location", "datetime"]:
+                    valid_placement = True
+                    # Convert to level for validation
+                    level_map = {"occurrence": 0, "location": 1, "datetime": 2}
+                    level = level_map[docs_placement]
+                    if level >= len(levels):
+                        issues.append(ValidationIssue(
+                            ValidationLevel.WARNING,
+                            f"documentsPlacement '{docs_placement}' (level {level}) exceeds template levels ({len(levels)})",
+                            path=f"templates.{template_id}.documentsPlacement",
+                            suggestion=f"Consider using a lower level or adding more template levels"
+                        ))
+                else:
+                    issues.append(ValidationIssue(
+                        ValidationLevel.ERROR,
+                        f"Invalid documentsPlacement '{docs_placement}'",
+                        path=f"templates.{template_id}.documentsPlacement",
+                        suggestion="Use a level index (0-9) or legacy values ('occurrence', 'location', 'datetime')"
+                    ))
+            else:
                 issues.append(ValidationIssue(
                     ValidationLevel.ERROR,
-                    f"Invalid documentsPlacement '{docs_placement}'",
+                    f"Invalid documentsPlacement type: {type(docs_placement).__name__}",
                     path=f"templates.{template_id}.documentsPlacement",
-                    suggestion="Use 'occurrence', 'location', or 'datetime'"
-                ))
-            elif docs_placement == "datetime" and len(levels) < 3:
-                issues.append(ValidationIssue(
-                    ValidationLevel.WARNING,
-                    "documentsPlacement is 'datetime' but template has fewer than 3 levels",
-                    path=f"templates.{template_id}.documentsPlacement",
-                    suggestion="Consider using 'location' or add more levels"
+                    suggestion="Use an integer (0-9) or string ('occurrence', 'location', 'datetime')"
                 ))
         
         if not any(issue.level == ValidationLevel.ERROR for issue in issues):

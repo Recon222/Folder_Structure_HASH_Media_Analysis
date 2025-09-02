@@ -63,6 +63,14 @@ class TemplateInfoWidget(QFrame):
         form_layout.addRow("Agency:", self.agency_label)
         form_layout.addRow("Version:", self.version_label)
         
+        # Documents placement info
+        self.documents_label = QLabel("-")
+        self.documents_label.setToolTip(
+            "The level in the folder hierarchy where PDF reports and CSV files will be created.\n"
+            "Level 0 is the first (topmost) folder, Level 1 is the second, etc."
+        )
+        form_layout.addRow("Documents:", self.documents_label)
+        
         layout.addLayout(form_layout)
         
         # Structure preview
@@ -73,6 +81,10 @@ class TemplateInfoWidget(QFrame):
         self.structure_text.setMaximumHeight(150)
         self.structure_text.setFont(self._get_monospace_font())
         self.structure_text.setReadOnly(True)
+        self.structure_text.setToolTip(
+            "Folder structure hierarchy showing where files will be organized.\n"
+            "The [← 📄 Documents] indicator shows where PDF reports and CSV files will be created."
+        )
         structure_layout.addWidget(self.structure_text)
         
         layout.addWidget(structure_group)
@@ -109,13 +121,31 @@ class TemplateInfoWidget(QFrame):
         self.agency_label.setText(metadata.get("agency", "-"))
         self.version_label.setText(metadata.get("version", "-"))
         
+        # Documents placement
+        template_data = template_info.get("template_data", {})
+        documents_placement = template_data.get("documentsPlacement", 1)
+        if isinstance(documents_placement, str):
+            # Convert for display
+            conversion = {"occurrence": 0, "location": 1, "datetime": 2}
+            documents_placement = conversion.get(documents_placement, 1)
+        
+        # Get level name if available
+        levels = template_data.get("structure", {}).get("levels", [])
+        if levels and 0 <= documents_placement < len(levels):
+            level_name = levels[documents_placement].get("name", f"Level {documents_placement}")
+        else:
+            level_name = f"Level {documents_placement}"
+        
+        self.documents_label.setText(f"Level {documents_placement} ({level_name})")
+        
         # Structure preview
-        self._update_structure_preview(template_info.get("template_data", {}))
+        self._update_structure_preview(template_data)
     
     def _clear_info(self):
         """Clear all information"""
         for label in [self.name_label, self.id_label, self.description_label, 
-                     self.source_label, self.author_label, self.agency_label, self.version_label]:
+                     self.source_label, self.author_label, self.agency_label, 
+                     self.version_label, self.documents_label]:
             label.setText("-")
         self.structure_text.clear()
     
@@ -130,22 +160,47 @@ class TemplateInfoWidget(QFrame):
         return colors.get(source, "#666666")
     
     def _update_structure_preview(self, template_data: Dict[str, Any]):
-        """Update structure preview"""
+        """Update structure preview with documents placement indicator"""
         try:
             structure = template_data.get("structure", {})
             levels = structure.get("levels", [])
+            documents_placement = template_data.get("documentsPlacement", 1)
+            
+            # Convert legacy string to int for display
+            if isinstance(documents_placement, str):
+                conversion = {"occurrence": 0, "location": 1, "datetime": 2}
+                documents_placement = conversion.get(documents_placement, 1)
             
             preview_lines = []
             for i, level in enumerate(levels):
                 indent = "  " * i
                 pattern = level.get("pattern", "")
-                preview_lines.append(f"{indent}📁 {pattern}")
+                level_name = level.get("name", f"Level {i}")  # Use name if available
+                
+                # Build level display with optional name
+                if level.get("name"):
+                    level_text = f"📁 {level_name}: {pattern}"
+                else:
+                    level_text = f"📁 {pattern}"
+                
+                # Add documents indicator if this is the placement level
+                if i == documents_placement:
+                    level_text += "  [← 📄 Documents]"
+                
+                preview_lines.append(f"{indent}{level_text}")
                 
                 # Show conditionals if present
                 conditionals = level.get("conditionals", {})
                 if conditionals:
                     for cond_name, cond_pattern in conditionals.items():
                         preview_lines.append(f"{indent}   ↳ {cond_name}: {cond_pattern}")
+            
+            # Add separator and documents placement info
+            if levels:
+                preview_lines.append("")
+                preview_lines.append("📄 Documents Placement:")
+                level_name = levels[min(documents_placement, len(levels)-1)].get("name", f"Level {documents_placement}")
+                preview_lines.append(f"  Level {documents_placement}: {level_name}")
             
             # Add archive naming
             archive_config = template_data.get("archiveNaming", {})
