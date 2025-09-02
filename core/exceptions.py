@@ -11,6 +11,7 @@ from PySide6.QtCore import QThread
 from typing import Dict, Any, Optional
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
 
 
 class ErrorSeverity(Enum):
@@ -399,3 +400,104 @@ class TemplateValidationError(FSAError):
             return f"Template '{self.template_id}' validation failed. Please check the template format."
         else:
             return "Template validation failed. Please check the template format and try again."
+
+
+class MediaAnalysisError(FSAError):
+    """Base class for media analysis errors"""
+    
+    def __init__(self, message: str, file_path: Optional[str] = None, **kwargs):
+        """
+        Initialize media analysis error
+        
+        Args:
+            message: Technical error message
+            file_path: Path to media file that caused error
+            **kwargs: Additional FSAError arguments
+        """
+        context = kwargs.get('context', {})
+        if file_path:
+            context['media_file'] = file_path
+        kwargs['context'] = context
+        
+        # Default to ERROR severity
+        if 'severity' not in kwargs:
+            kwargs['severity'] = ErrorSeverity.ERROR
+        
+        super().__init__(message, **kwargs)
+    
+    def _generate_user_message(self) -> str:
+        return "Failed to analyze media file. Please check the file format and try again."
+
+
+class FFProbeNotFoundError(MediaAnalysisError):
+    """FFprobe binary not available error"""
+    
+    def __init__(self, message: str = "FFprobe not found", **kwargs):
+        """
+        Initialize FFprobe not found error
+        
+        Args:
+            message: Technical error message
+            **kwargs: Additional error arguments
+        """
+        # Set critical severity since this blocks all media analysis
+        kwargs['severity'] = ErrorSeverity.CRITICAL
+        super().__init__(message, **kwargs)
+    
+    def _generate_user_message(self) -> str:
+        return ("FFprobe is required for media analysis but was not found. "
+                "Please download FFmpeg from https://ffmpeg.org/download.html "
+                "and place ffprobe.exe in the 'bin' folder.")
+
+
+class MediaExtractionError(MediaAnalysisError):
+    """Failed to extract metadata from media file"""
+    
+    def __init__(self, message: str, file_path: Optional[str] = None, 
+                 extraction_error: Optional[str] = None, **kwargs):
+        """
+        Initialize media extraction error
+        
+        Args:
+            message: Technical error message
+            file_path: Path to problematic media file
+            extraction_error: Specific extraction error details
+            **kwargs: Additional error arguments
+        """
+        self.extraction_error = extraction_error
+        
+        context = kwargs.get('context', {})
+        if extraction_error:
+            context['extraction_error'] = extraction_error
+        kwargs['context'] = context
+        
+        super().__init__(message, file_path=file_path, **kwargs)
+    
+    def _generate_user_message(self) -> str:
+        if self.context.get('media_file'):
+            file_name = Path(self.context['media_file']).name
+            return f"Failed to extract metadata from '{file_name}'. File may be corrupted or unsupported."
+        return "Failed to extract metadata from media file. File may be corrupted or unsupported."
+
+
+class MediaReportError(MediaAnalysisError):
+    """Failed to generate media analysis report"""
+    
+    def __init__(self, message: str, report_path: Optional[str] = None, **kwargs):
+        """
+        Initialize media report error
+        
+        Args:
+            message: Technical error message
+            report_path: Path where report was supposed to be saved
+            **kwargs: Additional error arguments
+        """
+        context = kwargs.get('context', {})
+        if report_path:
+            context['report_path'] = report_path
+        kwargs['context'] = context
+        
+        super().__init__(message, **kwargs)
+    
+    def _generate_user_message(self) -> str:
+        return "Failed to generate media analysis report. Please check permissions and try again."

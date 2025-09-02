@@ -6,7 +6,7 @@ from .service_registry import register_service
 from .interfaces import (
     IPathService, IFileOperationService, IReportService,
     IArchiveService, IValidationService, ISuccessMessageService,
-    ICopyVerifyService
+    ICopyVerifyService, IMediaAnalysisService
 )
 from .path_service import PathService
 from .file_operation_service import FileOperationService
@@ -15,6 +15,7 @@ from .archive_service import ArchiveService
 from .validation_service import ValidationService
 from .success_message_builder import SuccessMessageBuilder
 from .copy_verify_service import CopyVerifyService
+from .media_analysis_service import MediaAnalysisService
 from .thread_management_service import ThreadManagementService, IThreadManagementService
 from .performance_formatter_service import PerformanceFormatterService, IPerformanceFormatterService
 
@@ -35,6 +36,9 @@ def configure_services(zip_controller=None):
         
         # ✅ COPY VERIFY SERVICE: SOA-compliant copy and verify operations
         register_service(ICopyVerifyService, CopyVerifyService())
+        
+        # ✅ MEDIA ANALYSIS SERVICE: FFprobe-based media metadata extraction
+        register_service(IMediaAnalysisService, MediaAnalysisService())
         
         # ✅ THREAD MANAGEMENT SERVICE: Centralized thread lifecycle management
         register_service(IThreadManagementService, ThreadManagementService())
@@ -64,6 +68,7 @@ def get_configured_services():
         IValidationService,
         ISuccessMessageService,
         ICopyVerifyService,
+        IMediaAnalysisService,
         IThreadManagementService,
         IPerformanceFormatterService
     ]

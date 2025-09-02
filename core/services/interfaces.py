@@ -246,3 +246,88 @@ class ISuccessMessageService(ABC):
     ) -> SuccessMessageData:
         """Build batch operation success message"""
         pass
+
+
+class IMediaAnalysisService(IService):
+    """Interface for media analysis operations"""
+    
+    @abstractmethod
+    def validate_media_files(self, paths: List[Path]) -> Result[List[Path]]:
+        """
+        Validate and filter media files from provided paths
+        
+        Args:
+            paths: List of file/folder paths to validate
+            
+        Returns:
+            Result containing list of valid file paths or error
+        """
+        pass
+    
+    @abstractmethod
+    def analyze_media_files(
+        self, 
+        files: List[Path],
+        settings: Any,  # MediaAnalysisSettings
+        progress_callback: Optional[callable] = None
+    ) -> Result[Any]:  # Result[MediaAnalysisResult]
+        """
+        Analyze media files and extract metadata
+        
+        Args:
+            files: List of media file paths to analyze
+            settings: Analysis settings and field preferences
+            progress_callback: Optional callback for progress updates
+            
+        Returns:
+            Result containing MediaAnalysisResult or error
+        """
+        pass
+    
+    @abstractmethod
+    def generate_analysis_report(
+        self,
+        results: Any,  # MediaAnalysisResult
+        output_path: Path,
+        form_data: Optional[FormData] = None
+    ) -> Result[Path]:
+        """
+        Generate PDF report from analysis results
+        
+        Args:
+            results: Media analysis results to report
+            output_path: Path where report should be saved
+            form_data: Optional form data for case information
+            
+        Returns:
+            Result containing report path or error
+        """
+        pass
+    
+    @abstractmethod
+    def export_to_csv(
+        self,
+        results: Any,  # MediaAnalysisResult
+        output_path: Path
+    ) -> Result[Path]:
+        """
+        Export analysis results to CSV format
+        
+        Args:
+            results: Media analysis results to export
+            output_path: Path where CSV should be saved
+            
+        Returns:
+            Result containing CSV path or error
+        """
+        pass
+    
+    @abstractmethod
+    def get_ffprobe_status(self) -> Dict[str, Any]:
+        """
+        Get FFprobe availability and version status
+        
+        Returns:
+            Dictionary with ffprobe status information
+        """
+        pass

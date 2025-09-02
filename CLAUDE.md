@@ -53,9 +53,9 @@ flake8 . --max-line-length 100
 ### Core Application Flow
 1. **main.py** creates MainWindow with tabs (Forensic, Batch Processing, Hashing, Copy & Verify)
 2. **Service layer configured** with dependency injection during initialization
-3. User inputs are bound to **FormData** model via lambda connections (except Copy & Verify which operates independently)
-4. **WorkflowController** orchestrates operations through service layer (no business logic)
-5. **Services** handle all business logic: PathService, FileOperationService, ReportService, etc.
+3. User inputs are bound to **FormData** model via lambda connections
+4. **Controllers** orchestrate operations through service layer (WorkflowController, CopyVerifyController, etc.)
+5. **Services** handle all business logic: PathService, FileOperationService, CopyVerifyService, etc.
 6. File operations execute in **QThread** subclasses with unified Result-based architecture
 7. **Success messages** built by SuccessMessageService using aggregated operation results
 
@@ -63,8 +63,8 @@ flake8 . --max-line-length 100
 
 #### 3-Tier Service-Oriented Architecture
 - **Presentation Layer**: UI components (MainWindow, tabs, dialogs) handle user interaction
-- **Controller Layer**: Thin orchestration layer (WorkflowController, ReportController, HashController)
-- **Service Layer**: Business logic services with dependency injection (PathService, FileOperationService, etc.)
+- **Controller Layer**: Thin orchestration layer (WorkflowController, ReportController, HashController, CopyVerifyController)
+- **Service Layer**: Business logic services with dependency injection (PathService, FileOperationService, CopyVerifyService, etc.)
 - **Clean separation**: Controllers coordinate, Services implement, UI presents
 - **Dependency injection**: All services discoverable through ServiceRegistry for testing and modularity
 
@@ -95,6 +95,7 @@ progress_update = Signal(int, str)  # ✅ UNIFIED
 - **BatchProcessorThread**: Sequential job processing with Result aggregation
 - **ZipOperationThread**: Multi-level archives with Result-based error reporting
 - **HashWorkers** (SingleHashWorker, VerificationWorker): Dedicated hash calculation threads
+- **CopyVerifyWorker**: Direct copy operations with hash verification and performance tracking
 
 #### Unified Progress Reporting
 All workers use consistent progress reporting:
@@ -151,6 +152,7 @@ progress_callback(percentage, message)
 - `report_controller.py`: **PDF report generation with service layer integration** and backward compatibility
 - `hash_controller.py`: **Enhanced hash operations** with service integration and validation
 - `zip_controller.py`: **ZIP archive management** with session state and settings (preserved)
+- `copy_verify_controller.py`: **Copy & Verify orchestration** with full SOA compliance
 
 **ui/**
 - `main_window.py`: Main window with tab management and error notification system
@@ -159,7 +161,7 @@ progress_callback(percentage, message)
   - `form_panel.py`, `log_console.py`, `batch_queue_widget.py`: Enhanced with Result integration
   - `error_notification_system.py`: **Non-modal error notifications** with auto-dismiss
   - `elided_label.py`: **Text truncation widgets** preventing UI expansion from long file paths
-- `tabs/`: Tab implementations (ForensicTab, BatchTab, HashingTab)
+- `tabs/`: Tab implementations (ForensicTab, BatchTab, HashingTab, CopyVerifyTab)
 - `dialogs/`: Settings and configuration dialogs
   - `success_dialog.py`: **Enterprise success celebrations** with native Result object support
   - `template_management_dialog.py`: Template management UI with import/export
@@ -178,9 +180,10 @@ progress_callback(percentage, message)
 - `path_service.py`: Path building and validation service
 - `validation_service.py`: Comprehensive data validation service
 - `template_management_service.py`: Template import/export and management
+- `copy_verify_service.py`: **Copy & Verify business logic** with path validation and performance metrics
 - `success_message_builder.py`: **Business logic service** for constructing success messages from Result objects
 - `success_message_data.py`: **Type-safe data structures** for success message content and operation metadata
-- `interfaces.py`: Service interface definitions and contracts
+- `interfaces.py`: Service interface definitions and contracts (including ICopyVerifyService)
 - `service_config.py`: Service configuration and initialization
 
 **utils/**

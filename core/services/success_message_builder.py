@@ -546,6 +546,95 @@ class SuccessMessageBuilder:
         }
         return result
     
+    def build_media_analysis_success_message(
+        self, 
+        analysis_data: 'MediaAnalysisOperationData'
+    ) -> SuccessMessageData:
+        """
+        Build success message for media analysis operations.
+        
+        Args:
+            analysis_data: Media analysis operation data
+            
+        Returns:
+            SuccessMessageData configured for media analysis success
+        """
+        # Build primary message
+        primary_message = f"Successfully analyzed {analysis_data.media_files_found} media files"
+        
+        # Build details list
+        details = []
+        
+        # Analysis statistics
+        details.append(f"✓ Analyzed {analysis_data.total_files} total files")
+        details.append(f"✓ Found {analysis_data.media_files_found} media files")
+        
+        if analysis_data.non_media_files > 0:
+            details.append(f"✓ Skipped {analysis_data.non_media_files} non-media files")
+        
+        if analysis_data.failed_files > 0:
+            details.append(f"⚠ {analysis_data.failed_files} files failed to process")
+        
+        # Format statistics
+        if analysis_data.format_counts:
+            top_formats = analysis_data.get_top_formats(3)
+            if top_formats:
+                format_str = ", ".join([f"{fmt}: {count}" for fmt, count in top_formats])
+                details.append(f"✓ Top formats: {format_str}")
+        
+        # Performance metrics
+        if analysis_data.processing_time_seconds > 0:
+            details.append(f"✓ Processing time: {analysis_data.get_processing_time_string()}")
+            
+            if analysis_data.files_per_second > 0:
+                details.append(f"✓ Speed: {analysis_data.files_per_second:.1f} files/second")
+        
+        # Total media duration
+        if analysis_data.total_duration_seconds > 0:
+            details.append(f"✓ Total media duration: {analysis_data.get_total_duration_string()}")
+        
+        # Total file size
+        if analysis_data.total_file_size_bytes > 0:
+            size_gb = analysis_data.get_total_size_gb()
+            if size_gb >= 1.0:
+                details.append(f"✓ Total size: {size_gb:.2f} GB")
+            else:
+                size_mb = analysis_data.total_file_size_bytes / (1024**2)
+                details.append(f"✓ Total size: {size_mb:.1f} MB")
+        
+        # Report generation
+        if analysis_data.report_path:
+            details.append(f"✓ Report saved: {analysis_data.report_path.name}")
+        
+        if analysis_data.csv_path:
+            details.append(f"✓ CSV exported: {analysis_data.csv_path.name}")
+        
+        # Build metadata
+        metadata = {
+            'operation_type': 'media_analysis',
+            'total_files': analysis_data.total_files,
+            'media_files': analysis_data.media_files_found,
+            'success_rate': analysis_data.get_success_rate(),
+            'processing_time': analysis_data.processing_time_seconds
+        }
+        
+        # Add output location if report was generated
+        output_location = None
+        if analysis_data.report_path:
+            output_location = str(analysis_data.report_path.parent)
+        
+        return SuccessMessageData(
+            title="Media Analysis Complete! 🎬",
+            summary_lines=[primary_message] + details,
+            output_location=output_location,
+            celebration_emoji="🎉",
+            performance_data={
+                'files_per_second': analysis_data.files_per_second,
+                'processing_time': analysis_data.processing_time_seconds
+            },
+            raw_data=metadata
+        )
+    
     def _get_report_display_name(self, report_type: str) -> str:
         """Convert report type to display-friendly name."""
         display_names = {

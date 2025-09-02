@@ -36,6 +36,7 @@ from ui.dialogs.success_dialog import SuccessDialog
 from ui.dialogs.zip_prompt import ZipPromptDialog
 from ui.tabs import ForensicTab, HashingTab
 from ui.tabs.batch_tab import BatchTab
+from ui.tabs.media_analysis_tab import MediaAnalysisTab
 from core.error_handler import get_error_handler
 from core.exceptions import FSAError
 
@@ -127,6 +128,12 @@ class MainWindow(QMainWindow):
         self.copy_verify_tab.log_message.connect(self.log)
         self.tabs.addTab(self.copy_verify_tab, "Copy & Verify")
         
+        # Media Analysis tab for metadata extraction
+        self.media_analysis_tab = MediaAnalysisTab(self.form_data)
+        self.media_analysis_tab.log_message.connect(self.log)
+        # Note: status_message will be connected after status_bar is created
+        self.tabs.addTab(self.media_analysis_tab, "Media Analysis")
+        
         # Configure tab widget to prevent content-based expansion
         self.tabs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         
@@ -144,6 +151,9 @@ class MainWindow(QMainWindow):
         
         # Connect batch tab status messages
         self.batch_tab.status_message.connect(self.status_bar.showMessage)
+        
+        # Connect media analysis tab status messages
+        self.media_analysis_tab.status_message.connect(self.status_bar.showMessage)
         
         # Connect hashing tab status messages
         self.hashing_tab.status_message.connect(self.status_bar.showMessage)

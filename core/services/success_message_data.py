@@ -8,7 +8,7 @@ between business logic and UI components, maintaining clean separation of concer
 """
 
 from dataclasses import dataclass, field
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 from pathlib import Path
 from datetime import datetime
 
@@ -278,3 +278,72 @@ class EnhancedBatchOperationData:
     def get_processing_time_minutes(self) -> float:
         """Get processing time in minutes."""
         return self.processing_time_seconds / 60 if self.processing_time_seconds > 0 else 0.0
+
+
+@dataclass
+class MediaAnalysisOperationData:
+    """Data for media analysis operation success messages."""
+    
+    # Analysis Statistics
+    total_files: int = 0
+    media_files_found: int = 0
+    non_media_files: int = 0
+    failed_files: int = 0
+    
+    # Performance Metrics
+    processing_time_seconds: float = 0.0
+    files_per_second: float = 0.0
+    
+    # Format Statistics
+    format_counts: Dict[str, int] = field(default_factory=dict)
+    video_codec_counts: Dict[str, int] = field(default_factory=dict)
+    audio_codec_counts: Dict[str, int] = field(default_factory=dict)
+    
+    # Report Information
+    report_path: Optional[Path] = None
+    csv_path: Optional[Path] = None
+    
+    # Additional Metadata
+    total_duration_seconds: float = 0.0
+    total_file_size_bytes: int = 0
+    
+    def get_success_rate(self) -> float:
+        """Calculate analysis success rate."""
+        if self.total_files == 0:
+            return 0.0
+        return (self.media_files_found / self.total_files) * 100
+    
+    def get_processing_time_string(self) -> str:
+        """Get formatted processing time."""
+        if self.processing_time_seconds < 60:
+            return f"{self.processing_time_seconds:.1f} seconds"
+        else:
+            minutes = self.processing_time_seconds / 60
+            return f"{minutes:.1f} minutes"
+    
+    def get_total_duration_string(self) -> str:
+        """Get formatted total media duration."""
+        hours = int(self.total_duration_seconds // 3600)
+        minutes = int((self.total_duration_seconds % 3600) // 60)
+        seconds = int(self.total_duration_seconds % 60)
+        
+        if hours > 0:
+            return f"{hours}h {minutes}m {seconds}s"
+        elif minutes > 0:
+            return f"{minutes}m {seconds}s"
+        else:
+            return f"{seconds}s"
+    
+    def get_total_size_gb(self) -> float:
+        """Get total size in GB."""
+        return self.total_file_size_bytes / (1024**3) if self.total_file_size_bytes > 0 else 0.0
+    
+    def get_top_formats(self, limit: int = 3) -> List[Tuple[str, int]]:
+        """Get top N most common formats."""
+        sorted_formats = sorted(self.format_counts.items(), key=lambda x: x[1], reverse=True)
+        return sorted_formats[:limit]
+    
+    def get_top_video_codecs(self, limit: int = 3) -> List[Tuple[str, int]]:
+        """Get top N most common video codecs."""
+        sorted_codecs = sorted(self.video_codec_counts.items(), key=lambda x: x[1], reverse=True)
+        return sorted_codecs[:limit]
