@@ -1,0 +1,31 @@
+{
+  "version": "1.0.0",
+  "templates": {
+    "preserve_source_structure": {
+      "templateName": "Preserve Source Structure",
+      "templateDescription": "Maintains original folder structure with minimal wrapping. Creates a single 'Files' folder containing the preserved source structure, with Documents folder placed beside it.",
+      "structure": {
+        "levels": [
+          {
+            "name": "Container",
+            "pattern": "{occurrence_number}_Files",
+            "fallback": "Preserved_Files"
+          }
+        ]
+      },
+      "documentsPlacement": 0,
+      "archiveNaming": {
+        "pattern": "{occurrence_number}_Preserved_{business_name}_{current_datetime}.zip",
+        "fallbackPattern": "{occurrence_number}_Preserved_Structure_{current_datetime}.zip"
+      },
+      "metadata": {
+        "author": "System",
+        "agency": "Universal",
+        "version": "1.0.0",
+        "created": "2024-12-02",
+        "tags": ["preserve", "source", "minimal", "structure", "forensic"],
+        "notes": "This template preserves the exact folder structure of source files without adding any additional organizational layers. Ideal for cases where source material is already well-organized. Documents are placed beside the preserved structure, not within it. ZIP archive creation follows user settings."
+      }
+    }
+  }
+}

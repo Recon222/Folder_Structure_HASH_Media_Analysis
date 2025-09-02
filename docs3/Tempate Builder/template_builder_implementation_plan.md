@@ -9,7 +9,12 @@
 - Template Infrastructure: Template Storage System, Template Security Framework, Template Field System
 - Dialog Architecture: UI Dialog Architecture with validation patterns and Carolina Blue theming
 
-**Key Discovery:** The application already has a **comprehensive template management system** but lacks a **visual template builder interface**. All the underlying infrastructure exists - we only need to build the UI layer.
+**Critical UI Analysis:**
+- **TemplateManagementDialog (653 lines)**: Comprehensive split-pane interface with hierarchical tree, filtering, import/export/delete operations, service integration via IPathService
+- **TemplateImportDialog (558 lines)**: Three-tab validation wizard with ValidationIssueWidget, TemplatePreviewWidget, real-time validation, and Result object patterns
+- **Established UI Patterns**: Color-coded validation, debounced updates (500ms), permission-based button states, context menus, Carolina Blue theming
+
+**Key Discovery:** The application already has a **comprehensive template management system** AND **established UI patterns** for template operations. The Template Builder should **extend the existing dialogs** rather than create separate interfaces.
 
 ## Implementation Overview
 
@@ -38,6 +43,9 @@ Following the design document's pragmatic approach: **simple forms that create e
 - **Dialog Architecture**: Modal patterns, validation frameworks, Carolina Blue theming
 - **Template Management Dialogs**: Existing dialogs for template selection and import
 - **FormData Model**: Available fields for template building ({occurrence_number}, {business_name}, etc.)
+- **ValidationIssueWidget**: Color-coded validation display with severity levels and suggestions (from TemplateImportDialog)
+- **TemplatePreviewWidget**: Live preview with sample data and debounced updates (from TemplateImportDialog)
+- **Service Integration Patterns**: IPathService usage, Result object handling, error display patterns
 
 ## Implementation Plan
 
@@ -69,6 +77,8 @@ class TemplateBuilderDialog(QDialog):
 - Leverages `TemplateValidator` for real-time validation
 - Returns standard JSON template format
 - Integrates with existing `Result[TemplateInfo]` pattern
+- **Reuses ValidationIssueWidget** from TemplateImportDialog for validation display
+- **Follows TemplateManagementDialog styling patterns** (900x700 size, split-pane, Carolina Blue theme)
 
 #### 1.2 Template Properties Panel
 **Components:**
@@ -136,19 +146,30 @@ class DateComponent(ComponentWidget):
 - badge_number
 
 #### 2.2 Live Preview System
+**Reuse Existing TemplatePreviewWidget** from TemplateImportDialog:
+
 ```python
-class TemplatePreviewWidget(QWidget):
-    """Real-time preview of folder structure"""
+# Import and extend existing preview widget
+from ui.dialogs.template_import_dialog import TemplatePreviewWidget
+
+class TemplateBuilderPreviewWidget(TemplatePreviewWidget):
+    """Extended preview widget for template builder"""
     
-    def update_preview(self, template_config: dict):
-        # Uses existing TemplatePathBuilder for preview generation
-        # Shows both sample data and field names
-        # Tree display with folder icons
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        # Inherits: sample data form, tree display, auto-update timer
+        # Inherits: 500ms debounced updates
+        
+    def update_from_builder_config(self, builder_config: dict):
+        # Convert builder UI config to template format
+        # Use inherited update_preview() method
 ```
 
-**Preview Modes:**
-- Sample data preview (default): Shows realistic folder structure
-- Field names preview: Shows {placeholder} syntax
+**Inherited Features:**
+- Sample data form with occurrence/business/location fields
+- Tree display with Template/Preview Path/Archive Name columns  
+- Auto-update with 500ms debounced timer
+- Error handling for preview generation
 
 ### Phase 3: Template Generation (Week 2)
 
@@ -188,27 +209,59 @@ class TemplateJsonBuilder:
 ```
 
 #### 3.2 Template Validation Integration
-- Uses existing `TemplateValidator.validate_template()` 
-- Real-time validation with debounced updates (500ms)
-- Error display with actionable suggestions
-- Warning/error level handling
+**Reuse TemplateImportDialog Validation Patterns:**
+
+```python
+# Import existing validation UI components
+from ui.dialogs.template_import_dialog import ValidationIssueWidget
+
+class TemplateBuilderValidation:
+    """Validation system using existing components"""
+    
+    def display_validation_results(self, issues: List[dict]):
+        # Reuse ValidationIssueWidget for each issue
+        # Same color coding: error/warning/info/success
+        # Same styling and layout patterns
+```
+
+**Inherited Validation Features:**
+- Uses existing `TemplateValidator.validate_template()` with 6-phase validation
+- Real-time validation with debounced updates (500ms) 
+- **ValidationIssueWidget**: Color-coded error display with suggestions
+- Error/warning/info level handling with import controls
+- Progress indication during validation
 
 ### Phase 4: Dialog Integration (Week 2)
 
 #### 4.1 Template Manager Integration
 **Modify:** `ui/dialogs/template_management_dialog.py`
 
+**Exact Integration Point (around line 220):**
 ```python
-# Add "Create Template" button to existing dialog
-def _add_create_button(self):
-    self.create_button = QPushButton("Create Custom Template")
-    self.create_button.clicked.connect(self._open_builder)
+# Add "Create Template" button near existing action buttons
+def _setup_action_buttons(self, button_layout):
+    """Add template builder to existing button layout"""
     
-def _open_builder(self):
+    # Existing buttons: Import, Export, Delete
+    # ... existing button code ...
+    
+    # NEW: Add Template Builder button
+    self.create_template_btn = QPushButton("✏️ Create Custom Template")
+    self.create_template_btn.clicked.connect(self._open_template_builder)
+    self.create_template_btn.setToolTip("Create a new custom template using the visual builder")
+    button_layout.addWidget(self.create_template_btn)
+    
+def _open_template_builder(self):
+    """Open template builder dialog"""
+    from ui.dialogs.template_builder_dialog import TemplateBuilderDialog
+    
     builder = TemplateBuilderDialog(self)
     if builder.exec() == QDialog.Accepted:
-        self._refresh_templates()  # Existing method
+        self._load_templates()  # Existing refresh method
+        self.templates_changed.emit()  # Existing signal
 ```
+
+**Button Placement:** After Import/Export/Delete buttons, before the stretch spacer (maintains existing layout)
 
 #### 4.2 Template Selector Integration  
 **Modify:** `ui/components/template_selector.py`
@@ -301,14 +354,16 @@ def save_template(self) -> Result[TemplateInfo]:
 ```
 ui/dialogs/
 ├── template_builder_dialog.py          # Main builder dialog
-├── template_builder_components.py      # Component widgets
-└── template_test_dialog.py            # Template testing dialog
-
-ui/components/
-└── template_preview_widget.py         # Enhanced preview widget
+└── template_builder_components.py      # Component widgets (FolderLevelCard, ComponentWidget)
 
 core/
-└── template_json_builder.py           # JSON generation utility
+└── template_json_builder.py           # JSON generation utility (converts UI config to template JSON)
+```
+
+**Reused Files (No New Files Needed):**
+```
+ui/dialogs/template_import_dialog.py    # ValidationIssueWidget, TemplatePreviewWidget
+ui/dialogs/template_management_dialog.py # Integration point, styling patterns
 ```
 
 ### Modified Files
@@ -340,9 +395,11 @@ ui/main_window.py                         # Add Tools menu item
 
 ### Low Implementation Risk
 - **No architectural changes**: Uses existing template system
-- **Proven UI patterns**: Follows existing dialog architecture
+- **Proven UI patterns**: **Reuses existing ValidationIssueWidget, TemplatePreviewWidget**
 - **Comprehensive validation**: Leverages existing security framework
 - **Type safety**: Result objects prevent runtime errors
+- **Minimal new code**: Only 3 new files needed, reuses existing UI components
+- **Seamless integration**: Fits naturally into existing TemplateManagementDialog
 
 ### Fallback Strategy
 If advanced features prove complex:
@@ -383,15 +440,18 @@ If advanced features prove complex:
 
 ## Summary
 
-This implementation leverages the existing **comprehensive template management infrastructure** and adds a **pragmatic visual interface** on top. The risk is minimal because:
+This implementation leverages the existing **comprehensive template management infrastructure** and **proven UI components** to create a seamless visual interface. The risk is minimal because:
 
-- No changes to core template architecture
-- Uses established UI patterns and service interfaces
-- Generates standard JSON compatible with existing system
-- Comprehensive validation and security already built-in
+- **No changes to core template architecture**
+- **Reuses established UI components**: ValidationIssueWidget, TemplatePreviewWidget, existing dialog patterns
+- **Minimal new code required**: Only 3 new files vs existing 20+ template system files
+- **Proven integration patterns**: Follows TemplateManagementDialog and TemplateImportDialog patterns
+- **Generates standard JSON compatible with existing system**
+- **Comprehensive validation and security already built-in**
 
-The Template Builder will provide the **user-friendly interface** described in the design document while maintaining the **enterprise-grade architecture** that already exists in the application.
+The Template Builder will provide the **user-friendly interface** described in the design document while maintaining the **enterprise-grade architecture** and **consistent user experience** that already exists in the application.
 
-**Estimated Timeline: 2-3 weeks for complete implementation**
-**Core functionality: 1 week**
-**Polish and integration: 1-2 weeks**
+**Revised Timeline Estimate:**
+- **Core functionality: 4-5 days** (reduced due to component reuse)
+- **Integration and polish: 3-4 days** (minimal changes needed)
+- **Total: 1-2 weeks for complete implementation** (reduced from 2-3 weeks)

@@ -51,9 +51,9 @@ flake8 . --max-line-length 100
 ## Architecture Overview
 
 ### Core Application Flow
-1. **main.py** creates MainWindow with tabs (Forensic, Batch Processing, Hashing)
+1. **main.py** creates MainWindow with tabs (Forensic, Batch Processing, Hashing, Copy & Verify)
 2. **Service layer configured** with dependency injection during initialization
-3. User inputs are bound to **FormData** model via lambda connections
+3. User inputs are bound to **FormData** model via lambda connections (except Copy & Verify which operates independently)
 4. **WorkflowController** orchestrates operations through service layer (no business logic)
 5. **Services** handle all business logic: PathService, FileOperationService, ReportService, etc.
 6. File operations execute in **QThread** subclasses with unified Result-based architecture

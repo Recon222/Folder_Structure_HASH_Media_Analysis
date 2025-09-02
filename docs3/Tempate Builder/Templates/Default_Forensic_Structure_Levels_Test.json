@@ -1,0 +1,40 @@
+{
+  "version": "1.0.0",
+  "templates": {
+    "default_forensic": {
+      "templateName": "Default Forensic Structure Level 0 Test",
+      "templateDescription": "Standard forensic folder structure matching current behavior",
+      "structure": {
+        "levels": [
+          {
+            "pattern": "{occurrence_number}",
+            "fallback": "NO_OCCURRENCE"
+          },
+          {
+            "pattern": "{business_name} @ {location_address}",
+            "conditionals": {
+              "business_only": "{business_name}",
+              "location_only": "{location_address}",
+              "neither": "NO_LOCATION"
+            }
+          },
+          {
+            "pattern": "{video_start_datetime}_to_{video_end_datetime}_DVR_Time",
+            "dateFormat": "military",
+            "fallback": "{current_datetime}"
+          }
+        ]
+      },
+      "documentsPlacement": 2,
+      "archiveNaming": {
+        "pattern": "{occurrence_number} {business_name} @ {location_address} Video Recovery.zip",
+        "fallbackPattern": "{occurrence_number}_Video_Recovery.zip"
+      },
+      "metadata": {
+        "exported_date": "2025-09-02T01:56:28.634362",
+        "exported_by": "FolderStructureApp",
+        "original_source": "system"
+      }
+    }
+  }
+}

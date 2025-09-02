@@ -25,7 +25,7 @@
           }
         ]
       },
-      "documentsPlacement": "location",
+      "documentsPlacement": 1,
       "archiveNaming": {
         "pattern": "{occurrence_number} {business_name} @ {location_address} Video Recovery.zip",
         "fallbackPattern": "{occurrence_number}_Video_Recovery.zip"
@@ -51,7 +51,7 @@
           }
         ]
       },
-      "documentsPlacement": "occurrence",
+      "documentsPlacement": 0,
       "archiveNaming": {
         "pattern": "FILE_{occurrence_number}_{year}_{business_name}_Evidence.zip",
         "fallbackPattern": "FILE_{occurrence_number}_Evidence.zip"
@@ -84,7 +84,7 @@
           }
         ]
       },
-      "documentsPlacement": "occurrence",
+      "documentsPlacement": 0,
       "archiveNaming": {
         "pattern": "RCMP_{occurrence_number}_{year}_{business_name}_Evidence.zip",
         "fallbackPattern": "RCMP_{occurrence_number}_Evidence.zip"
