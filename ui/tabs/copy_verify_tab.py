@@ -20,8 +20,7 @@ from PySide6.QtGui import QFont
 from ui.components import FilesPanel, LogConsole
 from ui.components.elided_label import ElidedLabel
 from ui.dialogs.success_dialog import SuccessDialog
-from core.services.success_message_builder import SuccessMessageBuilder
-from core.services.success_message_data import CopyVerifyOperationData
+from controllers.copy_verify_controller import CopyVerifyController
 from core.settings_manager import settings
 from core.logger import logger
 from core.exceptions import UIError, ErrorSeverity
@@ -39,7 +38,10 @@ class CopyVerifyTab(QWidget):
         """Initialize the Copy & Verify tab"""
         super().__init__(parent)
         
-        # State
+        # Controller for orchestration
+        self.controller = CopyVerifyController()
+        
+        # State management
         self.operation_active = False
         self.current_worker = None
         self.last_results = None
@@ -413,7 +415,7 @@ class CopyVerifyTab(QWidget):
         )
         
     def _start_copy_operation(self):
-        """Start the copy and verify operation"""
+        """Start the copy and verify operation using controller"""
         try:
             # Get source items
             files, folders = self.files_panel.get_all_items()
@@ -435,13 +437,7 @@ class CopyVerifyTab(QWidget):
                     f"Destination folder does not exist:\n{self.destination_path}\n\nCreate it?",
                     QMessageBox.Yes | QMessageBox.No
                 )
-                if reply == QMessageBox.Yes:
-                    try:
-                        self.destination_path.mkdir(parents=True, exist_ok=True)
-                    except Exception as e:
-                        self._show_error(f"Failed to create destination folder: {e}")
-                        return
-                else:
+                if reply == QMessageBox.No:
                     return
                     
             # Get CSV path if specified
@@ -459,11 +455,9 @@ class CopyVerifyTab(QWidget):
                     )
                     if file_path:
                         csv_path = Path(file_path)
-                        
-            # Create and start worker
-            from core.workers.copy_verify_worker import CopyVerifyWorker
             
-            self.current_worker = CopyVerifyWorker(
+            # Execute through controller
+            result = self.controller.execute_copy_operation(
                 source_items=source_items,
                 destination=self.destination_path,
                 preserve_structure=self.preserve_structure_check.isChecked(),
@@ -471,31 +465,38 @@ class CopyVerifyTab(QWidget):
                 csv_path=csv_path
             )
             
-            # Connect signals
-            self.current_worker.progress_update.connect(self._on_progress_update)
-            self.current_worker.result_ready.connect(self._on_operation_complete)
-            
-            # Update UI state
-            self._set_operation_active(True)
-            
-            # Start operation
-            self.current_worker.start()
-            
-            self._log(f"Starting copy operation to {self.destination_path}")
-            
+            if result.success:
+                self.current_worker = result.value
+                
+                # Connect signals
+                self.current_worker.progress_update.connect(self._on_progress_update)
+                self.current_worker.result_ready.connect(self._on_operation_complete)
+                
+                # Update UI state
+                self._set_operation_active(True)
+                
+                # Start operation
+                self.current_worker.start()
+                
+                self._log(f"Starting copy operation to {self.destination_path}")
+            else:
+                # Show error from controller/service validation
+                error_msg = result.error.user_message if result.error else "Failed to start operation"
+                self._show_error(error_msg)
+                
         except Exception as e:
             self._log(f"Error starting operation: {e}")
             self._show_error(f"Failed to start copy operation: {e}")
             self._set_operation_active(False)
             
     def _pause_operation(self):
-        """Pause or resume the current operation"""
+        """Pause or resume the current operation using controller"""
         if not self.current_worker or not self.current_worker.isRunning():
             return
             
         if self.is_paused:
-            # Resume operation
-            self.current_worker.resume()
+            # Resume operation through controller
+            self.controller.resume_operation()
             self.is_paused = False
             self.pause_btn.setText("⏸️ Pause")
             self.pause_btn.setStyleSheet("""
@@ -516,8 +517,8 @@ class CopyVerifyTab(QWidget):
             self.status_indicator.setText("🟡 Processing")
             self.status_indicator.setStyleSheet("color: #ffc107; font-weight: bold;")
         else:
-            # Pause operation
-            self.current_worker.pause()
+            # Pause operation through controller
+            self.controller.pause_operation()
             self.is_paused = True
             self.pause_btn.setText("▶️ Resume")
             self.pause_btn.setStyleSheet("""
@@ -539,10 +540,10 @@ class CopyVerifyTab(QWidget):
             self.status_indicator.setStyleSheet("color: #FF9800; font-weight: bold;")
     
     def _cancel_operation(self):
-        """Cancel the current operation"""
+        """Cancel the current operation using controller"""
         if self.current_worker and self.current_worker.isRunning():
             self._log("Cancelling operation...")
-            self.current_worker.cancel()
+            self.controller.cancel_operation()
             self.cancel_btn.setEnabled(False)
             # Reset pause state if paused
             if self.is_paused:
@@ -559,78 +560,41 @@ class CopyVerifyTab(QWidget):
             self._log(f"Progress: {percentage}% - {message}")
             
     def _on_operation_complete(self, result):
-        """Handle operation completion"""
-        from core.result_types import Result
-        
+        """Handle operation completion - UI updates only"""
         self._set_operation_active(False)
         
         if result.success:
+            # Store the full result for later use
             self.last_results = result.value
             
-            # Extract metrics from result
-            files_processed = getattr(result.value, 'files_processed', 0) if hasattr(result.value, 'files_processed') else getattr(result, 'files_processed', 0)
-            bytes_processed = getattr(result.value, 'bytes_processed', 0) if hasattr(result.value, 'bytes_processed') else getattr(result, 'bytes_processed', 0)
-            
-            # Extract timing and speed info from metadata if available
-            operation_time = 0
-            avg_speed = 0
-            peak_speed = 0
+            # Extract performance stats if available
+            performance_stats = None
             if hasattr(result, 'metadata') and result.metadata:
-                operation_time = result.metadata.get('duration_seconds', 0)
+                performance_stats = result.metadata
+            elif hasattr(result, 'performance_stats'):
+                performance_stats = result.performance_stats
             
-            # Count total files attempted and failures
-            total_attempted = len(self.last_results) if self.last_results else 0
-            failed_count = 0
-            mismatches = 0
-            
-            if isinstance(self.last_results, dict):
-                for file_key, file_data in self.last_results.items():
-                    if isinstance(file_data, dict):
-                        if not file_data.get('success', True):
-                            failed_count += 1
-                        elif file_data.get('verified') is False:
-                            mismatches += 1
-            
-            # Calculate average speed if we have time and bytes
-            if operation_time > 0 and bytes_processed > 0:
-                avg_speed = (bytes_processed / (1024 * 1024)) / operation_time
-            
-            # Build CopyVerifyOperationData
-            copy_data = CopyVerifyOperationData(
-                files_copied=files_processed,
-                bytes_processed=bytes_processed,
-                operation_time_seconds=operation_time,
-                average_speed_mbps=avg_speed,
-                peak_speed_mbps=peak_speed if peak_speed > 0 else avg_speed,
-                hash_verification_enabled=self.calculate_hashes_check.isChecked(),
-                files_with_hash_mismatch=mismatches,
-                files_failed_to_copy=failed_count,
-                csv_generated=False,  # Will be set to True if CSV was generated
-                csv_path=None,  # Will be set if CSV was generated
-                source_items_count=total_attempted,
-                preserve_structure=self.preserve_structure_check.isChecked()
+            # Process results through controller to get success message
+            # Pass the raw result value and let the service extract what it needs
+            message_result = self.controller.process_operation_results(
+                result,  # Pass the full result object
+                self.calculate_hashes_check.isChecked()
             )
             
-            # Check if CSV was generated (if path was specified)
-            if self.csv_path_edit.text():
-                csv_path = Path(self.csv_path_edit.text())
-                if csv_path.exists():
-                    copy_data.csv_generated = True
-                    copy_data.csv_path = csv_path
-            
-            # Use success message builder
-            message_builder = SuccessMessageBuilder()
-            message_data = message_builder.build_copy_verify_success_message(copy_data)
-            
-            # Log the summary
-            self._log(message_data.to_display_message())
-            
-            # Enable CSV export if we have results
-            self.export_csv_btn.setEnabled(bool(self.last_results))
-            
-            # Show success dialog using the success message system
-            SuccessDialog.show_success_message(message_data, self)
-            
+            if message_result.success:
+                message_data = message_result.value
+                
+                # Log the summary
+                self._log(message_data.to_display_message())
+                
+                # Enable CSV export if we have results
+                self.export_csv_btn.setEnabled(bool(self.last_results))
+                
+                # Show success dialog
+                SuccessDialog.show_success_message(message_data, self)
+            else:
+                self._log("Failed to process operation results")
+                
         else:
             error_msg = "Copy operation failed"
             if hasattr(result, 'error') and result.error:
@@ -640,7 +604,7 @@ class CopyVerifyTab(QWidget):
             self._show_error(error_msg)
             
     def _export_csv(self):
-        """Export results to CSV"""
+        """Export results to CSV using controller"""
         if not self.last_results:
             self._show_error("No results available to export")
             return
@@ -654,53 +618,25 @@ class CopyVerifyTab(QWidget):
             )
             
             if file_path:
-                # Generate CSV from results
-                import csv
-                
-                with open(file_path, 'w', newline='', encoding='utf-8') as csvfile:
-                    fieldnames = [
-                        'Source Path', 'Destination Path', 'Size (bytes)',
-                        'Source Hash', 'Destination Hash', 'Match', 'Status'
-                    ]
-                    writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-                    
-                    # Write header
-                    writer.writeheader()
-                    
-                    # Write data
-                    for file_name, file_data in self.last_results.items():
-                        if isinstance(file_data, dict) and file_data.get('success'):
-                            writer.writerow({
-                                'Source Path': file_data.get('source_path', ''),
-                                'Destination Path': file_data.get('dest_path', ''),
-                                'Size (bytes)': file_data.get('size', 0),
-                                'Source Hash': file_data.get('source_hash', 'N/A'),
-                                'Destination Hash': file_data.get('dest_hash', 'N/A'),
-                                'Match': 'Yes' if file_data.get('verified') else 'No',
-                                'Status': 'Success' if file_data.get('verified') else 'Hash Mismatch'
-                            })
-                            
-                self._log(f"CSV report exported to: {file_path}")
-                
-                # Create a simple success message for CSV export
-                export_data = CopyVerifyOperationData(
-                    files_copied=len([d for d in self.last_results.values() if isinstance(d, dict) and d.get('success')]),
-                    bytes_processed=0,
-                    csv_generated=True,
-                    csv_path=Path(file_path)
+                # Export through controller
+                export_result = self.controller.export_results_to_csv(
+                    self.last_results,
+                    Path(file_path)
                 )
                 
-                # Build a simple success message for CSV export
-                export_message_data = SuccessMessageBuilder().build_copy_verify_success_message(export_data)
-                export_message_data.title = "CSV Export Complete!"
-                export_message_data.summary_lines = [
-                    f"✅ Report exported successfully",
-                    f"📄 File: {Path(file_path).name}",
-                    f"📁 Location: {Path(file_path).parent}"
-                ]
-                
-                SuccessDialog.show_success_message(export_message_data, self)
-                
+                if export_result.success:
+                    self._log(f"CSV report exported to: {file_path}")
+                    
+                    # Show simple success message
+                    QMessageBox.information(
+                        self,
+                        "Export Complete",
+                        f"CSV report exported successfully to:\n{Path(file_path).name}"
+                    )
+                else:
+                    error_msg = export_result.error.user_message if export_result.error else "Export failed"
+                    self._show_error(error_msg)
+                    
         except Exception as e:
             self._log(f"Failed to export CSV: {e}")
             self._show_error(f"Failed to export CSV: {e}")

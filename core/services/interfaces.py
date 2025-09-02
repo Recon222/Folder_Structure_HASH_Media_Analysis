@@ -14,7 +14,7 @@ class IService(ABC):
     """Base interface for all services"""
     pass
 
-class IPathService(ABC):
+class IPathService(IService):
     """Interface for path building and validation services"""
     
     @abstractmethod
@@ -76,18 +76,78 @@ class IPathService(ABC):
     def validate_template_file(self, file_path: Path) -> Result[List[Dict[str, Any]]]:
         """Validate template file and return validation issues"""
         pass
-        
+    
     @abstractmethod
     def delete_user_template(self, template_id: str) -> Result[None]:
         """Delete user-imported template"""
         pass
-        
+    
     @abstractmethod
     def get_template_sources(self) -> List[Dict[str, str]]:
         """Get available templates grouped by source"""
         pass
 
-class IFileOperationService(ABC):
+
+class ICopyVerifyService(IService):
+    """Interface for copy and verify operations service"""
+    
+    @abstractmethod
+    def validate_copy_operation(
+        self, 
+        source_items: List[Path], 
+        destination: Path
+    ) -> Result[None]:
+        """Validate copy operation parameters"""
+        pass
+    
+    @abstractmethod
+    def validate_destination_security(
+        self,
+        destination: Path,
+        source_items: List[Path]
+    ) -> Result[None]:
+        """Validate destination path security and prevent path traversal"""
+        pass
+    
+    @abstractmethod
+    def prepare_copy_operation(
+        self,
+        source_items: List[Path],
+        destination: Path,
+        preserve_structure: bool
+    ) -> Result[List[tuple]]:
+        """Prepare file list for copy operation"""
+        pass
+    
+    @abstractmethod
+    def process_operation_results(
+        self,
+        results: Dict[str, Any],
+        calculate_hash: bool
+    ) -> Result[SuccessMessageData]:
+        """Process operation results and build success message data"""
+        pass
+    
+    @abstractmethod
+    def generate_csv_report(
+        self,
+        results: Dict[str, Any],
+        csv_path: Path,
+        calculate_hash: bool
+    ) -> Result[Path]:
+        """Generate CSV report from operation results"""
+        pass
+    
+    @abstractmethod
+    def export_results_to_csv(
+        self,
+        results: Dict[str, Any],
+        csv_path: Path
+    ) -> Result[Path]:
+        """Export existing results to CSV file"""
+        pass
+
+class IFileOperationService(IService):
     """Interface for file operation services"""
     
     @abstractmethod

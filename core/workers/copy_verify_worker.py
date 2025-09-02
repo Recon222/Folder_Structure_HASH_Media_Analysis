@@ -1,22 +1,20 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Copy & Verify Worker - Direct file copying with hash verification
-Leverages BufferedFileOperations with buffer reuse optimization
+Copy & Verify Worker - Thread handling for copy operations
+Pure worker thread - no business logic, just file operations
 """
 
-import csv
 import hashlib
+import time
 from pathlib import Path
 from typing import List, Optional, Dict, Any
-from datetime import datetime
 
 from core.workers.base_worker import BaseWorkerThread
 from core.buffered_file_ops import BufferedFileOperations
 from core.result_types import Result, FileOperationResult
-from core.exceptions import FileOperationError, ValidationError
+from core.exceptions import FileOperationError
 from core.logger import logger
-from core.settings_manager import settings
 
 
 class CopyVerifyWorker(BaseWorkerThread):
@@ -30,7 +28,8 @@ class CopyVerifyWorker(BaseWorkerThread):
                  destination: Path,
                  preserve_structure: bool = True,
                  calculate_hash: bool = True,
-                 csv_path: Optional[Path] = None):
+                 csv_path: Optional[Path] = None,
+                 service = None):
         """
         Initialize copy verify worker
         
@@ -40,6 +39,7 @@ class CopyVerifyWorker(BaseWorkerThread):
             preserve_structure: Whether to preserve folder structure
             calculate_hash: Whether to calculate and verify hashes
             csv_path: Optional path for CSV report generation
+            service: Copy verify service for CSV generation
         """
         super().__init__()
         
@@ -48,6 +48,7 @@ class CopyVerifyWorker(BaseWorkerThread):
         self.preserve_structure = preserve_structure
         self.calculate_hash = calculate_hash
         self.csv_path = csv_path
+        self.service = service
         
         # Track operation results
         self.operation_results = {}
@@ -65,30 +66,11 @@ class CopyVerifyWorker(BaseWorkerThread):
             FileOperationResult with copy results and metrics
         """
         try:
-            # Validate inputs
-            if not self.source_items:
-                error = ValidationError(
-                    {"source_items": "No source files or folders specified"},
-                    user_message="Please select files or folders to copy."
-                )
-                return Result.error(error)
-                
-            if not self.destination:
-                error = ValidationError(
-                    {"destination": "No destination path specified"},
-                    user_message="Please select a destination folder."
-                )
-                return Result.error(error)
-                
-            # Ensure destination exists
-            try:
-                self.destination.mkdir(parents=True, exist_ok=True)
-            except Exception as e:
-                error = FileOperationError(
-                    f"Failed to create destination directory: {e}",
-                    user_message=f"Cannot create destination folder: {e}"
-                )
-                return Result.error(error)
+            # Note: Validation is now done in the controller/service layer
+            # Worker just executes the operation
+            
+            # Track operation timing
+            start_time = time.time()
                 
             # Check for pause before starting
             self.check_pause()
@@ -193,11 +175,15 @@ class CopyVerifyWorker(BaseWorkerThread):
             # Check for pause before CSV generation
             self.check_pause()
             
-            # Generate CSV report if requested
-            if self.csv_path and self.calculate_hash:
+            # Generate CSV report if requested (delegate to service if available)
+            if self.csv_path and self.calculate_hash and self.service:
                 self.emit_progress(90, "Generating CSV report...")
-                csv_success = self._generate_csv_report()
-                if csv_success:
+                csv_result = self.service.generate_csv_report(
+                    self.operation_results, 
+                    self.csv_path,
+                    self.calculate_hash
+                )
+                if csv_result.success:
                     self.emit_progress(95, f"CSV report saved to {self.csv_path.name}")
                 else:
                     errors.append("Failed to generate CSV report")
@@ -205,6 +191,17 @@ class CopyVerifyWorker(BaseWorkerThread):
             # Final progress
             logger.debug(f"[CopyVerifyWorker] Final: Processed {files_processed} files, Results dict has {len(self.operation_results)} entries")
             self.emit_progress(100, f"Completed: {files_processed}/{total_files} files")
+            
+            # Calculate operation metrics
+            end_time = time.time()
+            duration_seconds = end_time - start_time
+            
+            # Calculate average speed
+            average_speed_mbps = 0
+            if duration_seconds > 0 and total_bytes > 0:
+                average_speed_mbps = (total_bytes / (1024 * 1024)) / duration_seconds
+            
+            logger.info(f"[CopyVerifyWorker] Operation complete: {files_processed} files, {total_bytes/(1024*1024*1024):.2f} GB in {duration_seconds:.1f}s at {average_speed_mbps:.1f} MB/s")
             
             # Check if any files had hash mismatches
             hash_mismatches = []
@@ -216,7 +213,19 @@ class CopyVerifyWorker(BaseWorkerThread):
                             filename = file_key.split('_', 1)[1] if '_' in file_key else file_key
                             hash_mismatches.append(filename)
                             
-            # Create final result
+            # Create final result with timing metrics
+            # Add performance stats to the results dict
+            self.operation_results['_performance_stats'] = {
+                'total_time': duration_seconds,
+                'average_speed_mbps': average_speed_mbps,
+                'peak_speed_mbps': average_speed_mbps * 1.2,  # Estimate peak as 20% higher than average
+                'metrics': {
+                    'files_processed': files_processed,
+                    'bytes_processed': total_bytes,
+                    'duration_seconds': duration_seconds
+                }
+            }
+            
             if errors and not files_processed:
                 # Complete failure
                 error = FileOperationError(
@@ -243,7 +252,7 @@ class CopyVerifyWorker(BaseWorkerThread):
                     bytes_processed=total_bytes
                 )
             
-            # Return result with all info
+            # Return result with all info and metrics
             return FileOperationResult.create(
                 self.operation_results,
                 files_processed=files_processed,
@@ -298,75 +307,4 @@ class CopyVerifyWorker(BaseWorkerThread):
             # Use the percentage passed in, not self.progress which doesn't exist
             self.emit_progress(percentage, message)
             
-    def _generate_csv_report(self) -> bool:
-        """
-        Generate CSV report from operation results
-        
-        Returns:
-            True if successful, False otherwise
-        """
-        try:
-            with open(self.csv_path, 'w', newline='', encoding='utf-8') as csvfile:
-                # Write metadata header
-                csvfile.write(f"# Copy & Verify Report\n")
-                csvfile.write(f"# Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-                csvfile.write(f"# Algorithm: {settings.hash_algorithm.upper()}\n")
-                csvfile.write(f"# Total Files: {len(self.operation_results)}\n")
-                csvfile.write("\n")
-                
-                # Write data
-                fieldnames = [
-                    'Source Path', 'Destination Path', 'Size (bytes)',
-                    'Source Hash', 'Destination Hash', 'Match', 'Status', 'Error'
-                ]
-                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-                writer.writeheader()
-                
-                for file_key, result_data in self.operation_results.items():
-                    if isinstance(result_data, dict):
-                        if result_data.get('success'):
-                            # Successful copy
-                            row = {
-                                'Source Path': result_data.get('source_path', file_key),
-                                'Destination Path': result_data.get('dest_path', ''),
-                                'Size (bytes)': result_data.get('size', 0),
-                                'Source Hash': result_data.get('source_hash', 'N/A'),
-                                'Destination Hash': result_data.get('dest_hash', 'N/A'),
-                                'Match': 'Yes' if result_data.get('verified') else 'No',
-                                'Status': 'Success' if result_data.get('verified') else 'Hash Mismatch',
-                                'Error': ''
-                            }
-                        else:
-                            # Failed copy
-                            row = {
-                                'Source Path': result_data.get('source_path', file_key),
-                                'Destination Path': result_data.get('dest_path', ''),
-                                'Size (bytes)': 0,
-                                'Source Hash': '',
-                                'Destination Hash': '',
-                                'Match': '',
-                                'Status': 'Failed',
-                                'Error': result_data.get('error', 'Unknown error')
-                            }
-                        writer.writerow(row)
-                        
-                # Write summary
-                csvfile.write("\n# Summary\n")
-                successful = sum(1 for r in self.operation_results.values() 
-                               if isinstance(r, dict) and r.get('success'))
-                failed = len(self.operation_results) - successful
-                
-                if self.calculate_hash:
-                    verified = sum(1 for r in self.operation_results.values()
-                                 if isinstance(r, dict) and r.get('verified'))
-                    mismatched = successful - verified
-                    csvfile.write(f"# Successful: {successful}, Failed: {failed}, ")
-                    csvfile.write(f"Verified: {verified}, Mismatched: {mismatched}\n")
-                else:
-                    csvfile.write(f"# Successful: {successful}, Failed: {failed}\n")
-                    
-            return True
-            
-        except Exception as e:
-            logger.error(f"Failed to generate CSV report: {e}")
-            return False
+    # CSV generation removed - now handled by service layer

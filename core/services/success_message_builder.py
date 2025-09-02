@@ -272,11 +272,16 @@ class SuccessMessageBuilder:
             else:
                 summary_lines.append(f"✅ All file hashes verified successfully")
         
-        # Performance summary
-        if copy_data.operation_time_seconds > 0 and copy_data.bytes_processed > 0:
+        # Performance summary - show if we have any timing data at all
+        if copy_data.operation_time_seconds > 0.001 and copy_data.bytes_processed > 0:
             summary_lines.append("")  # Add spacing
             summary_lines.append("📊 Performance Summary:")
-            summary_lines.append(f"  • Time: {copy_data.operation_time_seconds:.1f} seconds")
+            
+            # Show time with appropriate precision
+            if copy_data.operation_time_seconds < 1:
+                summary_lines.append(f"  • Time: {copy_data.operation_time_seconds:.3f} seconds")
+            else:
+                summary_lines.append(f"  • Time: {copy_data.operation_time_seconds:.1f} seconds")
             
             if copy_data.average_speed_mbps > 0:
                 summary_lines.append(f"  • Average speed: {copy_data.average_speed_mbps:.1f} MB/s")

@@ -186,11 +186,19 @@ class CopyVerifyOperationData:
             return "0 bytes"
         
         size_mb = self.bytes_processed / (1024 * 1024)
-        if size_mb < 1024:
+        if size_mb < 1:
+            # Less than 1 MB, show in KB
+            size_kb = self.bytes_processed / 1024
+            return f"{size_kb:.1f} KB"
+        elif size_mb < 1024:
+            # Less than 1 GB, show in MB
             return f"{size_mb:.1f} MB"
         else:
+            # Show in GB without rounding up (truncate to 2 decimal places)
             size_gb = size_mb / 1024
-            return f"{size_gb:.2f} GB"
+            # Truncate instead of round by using int() to remove extra decimal places
+            truncated_gb = int(size_gb * 100) / 100
+            return f"{truncated_gb:.2f} GB"
     
     def get_success_rate(self) -> float:
         """Calculate operation success rate."""
