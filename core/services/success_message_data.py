@@ -158,6 +158,58 @@ class BatchOperationData:
 
 
 @dataclass
+class CopyVerifyOperationData:
+    """Data structure for copy & verify operation results."""
+    
+    files_copied: int
+    bytes_processed: int
+    operation_time_seconds: float = 0
+    average_speed_mbps: float = 0
+    peak_speed_mbps: float = 0
+    
+    # Hash verification data
+    hash_verification_enabled: bool = False
+    files_with_hash_mismatch: int = 0
+    files_failed_to_copy: int = 0
+    
+    # CSV report data
+    csv_generated: bool = False
+    csv_path: Optional[Path] = None
+    
+    # Operation details
+    source_items_count: int = 0  # Original number of items selected
+    preserve_structure: bool = True
+    
+    def get_size_display(self) -> str:
+        """Get human-readable size display."""
+        if self.bytes_processed == 0:
+            return "0 bytes"
+        
+        size_mb = self.bytes_processed / (1024 * 1024)
+        if size_mb < 1024:
+            return f"{size_mb:.1f} MB"
+        else:
+            size_gb = size_mb / 1024
+            return f"{size_gb:.2f} GB"
+    
+    def get_success_rate(self) -> float:
+        """Calculate operation success rate."""
+        if self.files_copied == 0:
+            return 0.0
+        
+        total_attempted = self.files_copied + self.files_failed_to_copy
+        if total_attempted == 0:
+            return 100.0
+            
+        return (self.files_copied / total_attempted) * 100
+    
+    @property
+    def has_issues(self) -> bool:
+        """Check if operation had any issues."""
+        return self.files_failed_to_copy > 0 or self.files_with_hash_mismatch > 0
+
+
+@dataclass
 class EnhancedBatchOperationData:
     """Enhanced data structure for rich batch processing success messages."""
     

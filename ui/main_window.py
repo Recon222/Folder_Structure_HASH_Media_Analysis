@@ -121,6 +121,12 @@ class MainWindow(QMainWindow):
         self.hashing_tab.log_message.connect(self.log)
         self.tabs.addTab(self.hashing_tab, "Hashing")
         
+        # Copy & Verify tab for direct copying
+        from ui.tabs.copy_verify_tab import CopyVerifyTab
+        self.copy_verify_tab = CopyVerifyTab()
+        self.copy_verify_tab.log_message.connect(self.log)
+        self.tabs.addTab(self.copy_verify_tab, "Copy & Verify")
+        
         # Configure tab widget to prevent content-based expansion
         self.tabs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         

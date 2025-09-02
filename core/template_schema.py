@@ -231,6 +231,11 @@ TEMPLATE_SCHEMA: Dict[str, Any] = {
                     "type": "string",
                     "format": "date-time",
                     "description": "When the template was imported"
+                },
+                "notes": {
+                    "type": "string",
+                    "maxLength": 1000,
+                    "description": "Additional notes or usage instructions for the template"
                 }
             },
             "additionalProperties": False
