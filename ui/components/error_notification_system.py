@@ -572,10 +572,8 @@ class ErrorNotificationManager(QWidget):
         
         # Hide the manager window if no notifications, show if there are notifications
         if len(self.notifications) == 0:
-            logger.debug("MANAGER: No notifications - hiding manager window")
             self.hide()
         else:
-            logger.debug(f"MANAGER: {len(self.notifications)} notifications - showing manager window")
             if not self.isVisible():
                 self.show()
     
@@ -592,7 +590,6 @@ class ErrorNotificationManager(QWidget):
         self.notification_counter += 1
         
         logger.info(f"MANAGER: Showing new error notification {notification_id}")
-        logger.debug(f"MANAGER: Current notifications count: {len(self.notifications)}")
         
         # Create notification
         notification = ErrorNotification(error, context, notification_id)
@@ -600,7 +597,6 @@ class ErrorNotificationManager(QWidget):
         notification.details_requested.connect(self._show_error_details)
         
         # Insert at top (before stretch)
-        logger.debug(f"MANAGER: Inserting notification {notification_id} into layout")
         self.layout.insertWidget(0, notification)
         self.notifications[notification_id] = notification
         
@@ -614,17 +610,14 @@ class ErrorNotificationManager(QWidget):
             self.notifications[oldest_id].dismiss()
         
         # Update manager size to accommodate new notification
-        logger.debug(f"MANAGER: Updating manager size for {notification_id}")
         self._update_manager_size()
         
         # Update positioning and ensure manager stays on top
-        logger.debug(f"MANAGER: Updating position for {notification_id}")
         self._update_position()
         self.raise_()
         self.activateWindow()  # Ensure top-level window is active
         
         # Show with slide-in animation
-        logger.debug(f"MANAGER: Showing notification {notification_id} and starting animation")
         notification.show()
         self._animate_notification_in(notification)
     
@@ -636,21 +629,16 @@ class ErrorNotificationManager(QWidget):
             notification_id: ID of notification to remove
         """
         logger.info(f"MANAGER: REMOVING notification {notification_id}")
-        logger.debug(f"MANAGER: Notifications before removal: {list(self.notifications.keys())}")
         
         if notification_id in self.notifications:
             del self.notifications[notification_id]
             logger.info(f"MANAGER: Successfully removed {notification_id} from notifications dict")
-            logger.debug(f"MANAGER: Notifications after removal: {list(self.notifications.keys())}")
             
             # Update manager size after removing notification
-            logger.debug(f"MANAGER: Updating manager size after removing {notification_id}")
             self._update_manager_size()
-            logger.debug(f"MANAGER: Updating position after removing {notification_id}")
             self._update_position()
         else:
             logger.warning(f"MANAGER: Attempted to remove non-existent notification {notification_id}")
-            logger.debug(f"MANAGER: Available notifications: {list(self.notifications.keys())}")
     
     def _show_error_details(self, error: FSAError, context: dict):
         """
@@ -700,15 +688,12 @@ class ErrorNotificationManager(QWidget):
     
     def _update_position(self):
         """Update manager position using global screen coordinates"""
-        logger.debug(f"MANAGER: _update_position called")
         
         if self.parent_window:
             # Get parent window's global position and size
             parent_global_pos = self.parent_window.mapToGlobal(self.parent_window.rect().topLeft())
             parent_rect = self.parent_window.rect()
             margin = 10
-            
-            logger.debug(f"MANAGER: Parent window global pos: {parent_global_pos}, rect: {parent_rect}")
             
             # Try to get actual menu bar height
             menu_bar_height = 0
@@ -725,12 +710,8 @@ class ErrorNotificationManager(QWidget):
             global_x = parent_global_pos.x() + parent_rect.width() - self.width() - margin
             global_y = parent_global_pos.y() + menu_bar_height + margin
             
-            logger.debug(f"MANAGER: Calculated position: ({global_x}, {global_y})")
-            logger.debug(f"MANAGER: Current position: {self.pos()}")
-            
             # Move to global screen coordinates
             self.move(global_x, global_y)
-            logger.debug(f"MANAGER: Moved to position: {self.pos()}")
     
     def clear_all(self):
         """Clear all active notifications"""

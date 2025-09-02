@@ -158,7 +158,7 @@ class BufferedFileOperations:
             # Ensure buffer size is reasonable
             buffer_size = min(max(buffer_size, 8192), 10485760)  # 8KB to 10MB
         
-        logger.info(f"[BUFFERED OPS] Copying {source.name} with buffer size {buffer_size/1024:.0f}KB")
+        logger.debug(f"[BUFFERED OPS] Copying {source.name} with buffer size {buffer_size/1024:.0f}KB")
         
         try:
             file_size = source.stat().st_size
@@ -234,7 +234,7 @@ class BufferedFileOperations:
             else:
                 # Medium/Large files: Use OPTIMIZED streaming with integrated source hashing
                 # This is where we get the major performance benefit (33% reduction in reads)
-                logger.info(f"[BUFFERED OPS OPTIMIZED] Using 2-read optimization for {source.name}")
+                logger.debug(f"[BUFFERED OPS OPTIMIZED] Using 2-read optimization for {source.name}")
                 
                 bytes_copied, source_hash, dest_hash = self._stream_copy_with_hash(
                     source, dest, buffer_size, file_size, calculate_hash
@@ -651,6 +651,20 @@ class BufferedFileOperations:
             f"{self.metrics.bytes_copied/(1024*1024):.1f} MB @ "
             f"{self.metrics.average_speed_mbps:.1f} MB/s avg"
         )
+        
+        # Log comprehensive summary statistics (replaces per-file logging)
+        if self.metrics.files_processed > 0:
+            logger.info(f"[BUFFERED OPS SUMMARY] Operation Complete:")
+            logger.info(f"  • Files processed: {self.metrics.files_processed}/{self.metrics.total_files}")
+            logger.info(f"  • Data copied: {self.metrics.bytes_copied/(1024*1024):.1f} MB")
+            logger.info(f"  • Time taken: {duration:.1f} seconds")
+            logger.info(f"  • Average speed: {self.metrics.average_speed_mbps:.1f} MB/s")
+            logger.info(f"  • Peak speed: {self.metrics.peak_speed_mbps:.1f} MB/s")
+            if self.metrics.disk_reads_saved > 0:
+                logger.info(f"  • Optimization: Saved {self.metrics.disk_reads_saved} disk reads (33% I/O reduction)")
+            if self.metrics.small_files_count > 0:
+                logger.info(f"  • File distribution: {self.metrics.small_files_count} small, "
+                          f"{self.metrics.medium_files_count} medium, {self.metrics.large_files_count} large")
         
         # Create FileOperationResult
         return FileOperationResult.create(

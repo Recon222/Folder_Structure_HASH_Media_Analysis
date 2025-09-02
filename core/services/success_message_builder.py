@@ -49,12 +49,6 @@ class SuccessMessageBuilder:
         Returns:
             SuccessMessageData object ready for UI display
         """
-        # DEBUG: Log input types
-        self.logger.debug(f"DEBUG SuccessMessageBuilder: file_result type = {type(file_result)}")
-        self.logger.debug(f"DEBUG SuccessMessageBuilder: file_result value = {file_result}")
-        if file_result:
-            self.logger.debug(f"DEBUG SuccessMessageBuilder: file_result.files_processed = {getattr(file_result, 'files_processed', 'NO ATTR')}")
-        
         summary_lines = []
         
         # File operation summary
@@ -86,7 +80,6 @@ class SuccessMessageBuilder:
         
         # Extract performance data
         perf_data = self._extract_performance_dict(file_result)
-        self.logger.debug(f"DEBUG SuccessMessageBuilder: perf_data type = {type(perf_data)}, value = {perf_data}")
         
         return SuccessMessageData(
             title="Operation Complete!",
@@ -444,12 +437,7 @@ class SuccessMessageBuilder:
     
     def _extract_performance_dict(self, file_result: FileOperationResult) -> Dict[str, Any]:
         """Extract performance data as dictionary for compatibility."""
-        # DEBUG: Log what we're extracting from
-        self.logger.debug(f"DEBUG _extract_performance_dict: file_result type = {type(file_result)}")
-        self.logger.debug(f"DEBUG _extract_performance_dict: file_result = {file_result}")
-        
         if not (file_result.files_processed > 0 and file_result.duration_seconds > 0):
-            self.logger.debug("DEBUG _extract_performance_dict: Returning empty dict (no files or duration)")
             return {}
         
         result = {
@@ -461,7 +449,6 @@ class SuccessMessageBuilder:
             'peak_speed_mbps': getattr(file_result, 'peak_speed_mbps', file_result.average_speed_mbps),
             'mode': getattr(file_result, 'optimization_mode', 'Balanced')
         }
-        self.logger.debug(f"DEBUG _extract_performance_dict: Returning dict with {len(result)} keys")
         return result
     
     def _get_report_display_name(self, report_type: str) -> str:

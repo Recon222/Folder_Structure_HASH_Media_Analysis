@@ -138,7 +138,8 @@ class PerformanceFormatterService(BaseService, IPerformanceFormatterService):
             match = self._speed_pattern.search(speed_part)
             if match:
                 speed = float(match.group(1))
-                self._log_operation("speed_extracted", f"{speed} MB/s from message")
+                # Changed to debug to reduce terminal spam - speed is already shown in progress
+                self._log_operation("speed_extracted", f"{speed} MB/s from message", "debug")
                 return speed
             
             return None
