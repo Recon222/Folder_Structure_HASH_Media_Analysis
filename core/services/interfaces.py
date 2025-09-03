@@ -331,3 +331,89 @@ class IMediaAnalysisService(IService):
             Dictionary with ffprobe status information
         """
         pass
+    
+    @abstractmethod
+    def analyze_with_exiftool(
+        self,
+        files: List[Path],
+        settings: Any,  # ExifToolSettings
+        progress_callback: Optional[callable] = None
+    ) -> Result[Any]:  # Result[ExifToolAnalysisResult]
+        """
+        Analyze files with ExifTool for forensic metadata extraction
+        
+        Args:
+            files: List of files to analyze
+            settings: ExifTool extraction settings
+            progress_callback: Optional callback for progress updates
+            
+        Returns:
+            Result containing ExifToolAnalysisResult or error
+        """
+        pass
+    
+    @abstractmethod
+    def get_exiftool_status(self) -> Dict[str, Any]:
+        """
+        Get ExifTool availability and version status
+        
+        Returns:
+            Dictionary with exiftool status information
+        """
+        pass
+    
+    @abstractmethod
+    def generate_exiftool_report(
+        self,
+        results: Any,  # ExifToolAnalysisResult
+        output_path: Path,
+        form_data: Optional[FormData] = None
+    ) -> Result[Path]:
+        """
+        Generate PDF report from ExifTool analysis results
+        
+        Args:
+            results: ExifTool analysis results
+            output_path: Path where report should be saved
+            form_data: Optional form data for case information
+            
+        Returns:
+            Result containing report path or error
+        """
+        pass
+    
+    @abstractmethod
+    def export_exiftool_to_csv(
+        self,
+        results: Any,  # ExifToolAnalysisResult
+        output_path: Path
+    ) -> Result[Path]:
+        """
+        Export ExifTool results to CSV format
+        
+        Args:
+            results: ExifTool analysis results
+            output_path: Path where CSV should be saved
+            
+        Returns:
+            Result containing CSV path or error
+        """
+        pass
+    
+    @abstractmethod
+    def export_to_kml(
+        self,
+        results: Any,  # ExifToolAnalysisResult
+        output_path: Path
+    ) -> Result[Path]:
+        """
+        Export GPS locations to KML format for Google Earth
+        
+        Args:
+            results: ExifTool analysis results with GPS data
+            output_path: Path where KML should be saved
+            
+        Returns:
+            Result containing KML path or error
+        """
+        pass

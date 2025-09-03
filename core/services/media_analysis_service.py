@@ -8,6 +8,7 @@ import time
 import csv
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Callable
+from collections import defaultdict
 
 from .interfaces import IMediaAnalysisService
 from .base_service import BaseService
@@ -23,6 +24,12 @@ from ..exceptions import (
 from ..media.ffprobe_binary_manager import FFProbeBinaryManager
 from ..media.ffprobe_wrapper import FFProbeWrapper
 from ..media.metadata_normalizer import MetadataNormalizer
+from ..exiftool.exiftool_binary_manager import ExifToolBinaryManager
+from ..exiftool.exiftool_wrapper import ExifToolWrapper
+from ..exiftool.exiftool_normalizer import ExifToolNormalizer
+from ..exiftool.exiftool_models import (
+    ExifToolSettings, ExifToolAnalysisResult, ExifToolMetadata
+)
 from ..logger import logger
 
 
@@ -38,6 +45,11 @@ class MediaAnalysisService(BaseService, IMediaAnalysisService):
         self.ffprobe_wrapper = None
         self.normalizer = MetadataNormalizer()
         
+        # Initialize ExifTool components
+        self.exiftool_manager = ExifToolBinaryManager()
+        self.exiftool_wrapper = None
+        self.exiftool_normalizer = ExifToolNormalizer()
+        
         # Initialize FFprobe wrapper if binary is available
         if self.ffprobe_manager.is_available():
             try:
@@ -50,6 +62,19 @@ class MediaAnalysisService(BaseService, IMediaAnalysisService):
                 self.ffprobe_wrapper = None
         else:
             logger.warning("MediaAnalysisService initialized without FFprobe - media analysis unavailable")
+        
+        # Initialize ExifTool wrapper if binary is available
+        if self.exiftool_manager.is_available():
+            try:
+                self.exiftool_wrapper = ExifToolWrapper(
+                    self.exiftool_manager.get_binary_path()
+                )
+                logger.info(f"MediaAnalysisService initialized with ExifTool at {self.exiftool_manager.binary_path}")
+            except Exception as e:
+                logger.error(f"Failed to initialize ExifTool wrapper: {e}")
+                self.exiftool_wrapper = None
+        else:
+            logger.warning("MediaAnalysisService initialized without ExifTool - forensic metadata extraction unavailable")
     
     def validate_media_files(self, paths: List[Path]) -> Result[List[Path]]:
         """
@@ -697,3 +722,508 @@ class MediaAnalysisService(BaseService, IMediaAnalysisService):
             Dictionary with ffprobe status information
         """
         return self.ffprobe_manager.get_status_info()
+    
+    # ========== ExifTool Methods ==========
+    
+    def analyze_with_exiftool(
+        self,
+        files: List[Path],
+        settings: ExifToolSettings,
+        progress_callback: Optional[Callable[[float, str], None]] = None
+    ) -> Result[ExifToolAnalysisResult]:
+        """
+        Analyze files with ExifTool for forensic metadata extraction
+        
+        Args:
+            files: List of files to analyze
+            settings: ExifTool extraction settings
+            progress_callback: Optional callback for progress updates
+            
+        Returns:
+            Result containing ExifToolAnalysisResult or error
+        """
+        try:
+            # Check ExifTool availability
+            if not self.exiftool_wrapper:
+                return Result.error(
+                    MediaAnalysisError(
+                        "ExifTool not available",
+                        user_message="ExifTool is required for forensic analysis. Please install ExifTool."
+                    )
+                )
+            
+            # Validate input files
+            if not files:
+                return Result.error(
+                    ValidationError(
+                        {"files": "No files specified"},
+                        user_message="Please select files to analyze."
+                    )
+                )
+            
+            logger.info(f"Starting ExifTool analysis of {len(files)} files")
+            start_time = time.time()
+            
+            # Extract metadata using ExifTool
+            raw_metadata_list, errors = self.exiftool_wrapper.extract_batch(
+                files,
+                settings,
+                progress_callback=progress_callback
+            )
+            
+            # Normalize metadata
+            metadata_list = []
+            gps_locations = []
+            device_map = defaultdict(list)
+            temporal_path = []
+            privacy_warnings = []
+            
+            for idx, raw_metadata in enumerate(raw_metadata_list):
+                try:
+                    # Get file path from raw metadata
+                    file_path = Path(raw_metadata.get('SourceFile', files[idx] if idx < len(files) else 'unknown'))
+                    
+                    # Normalize metadata
+                    metadata = self.exiftool_normalizer.normalize(
+                        raw_metadata,
+                        file_path,
+                        settings
+                    )
+                    metadata_list.append(metadata)
+                    
+                    # Categorize by GPS
+                    if metadata.has_gps:
+                        gps_locations.append(metadata)
+                        if settings.obfuscate_gps:
+                            privacy_warnings.append(
+                                f"GPS coordinates obfuscated to {settings.gps_precision.name} precision"
+                            )
+                    
+                    # Categorize by device
+                    if metadata.device_info:
+                        device_id = metadata.device_info.get_primary_id()
+                        if device_id:
+                            device_map[device_id].append(metadata)
+                    
+                    # Build temporal path
+                    if metadata.temporal_data:
+                        timestamp = metadata.temporal_data.get_primary_timestamp()
+                        if timestamp:
+                            temporal_path.append((timestamp, metadata))
+                            
+                except Exception as e:
+                    logger.error(f"Failed to normalize metadata for file {idx}: {e}")
+                    errors.append(str(e))
+            
+            # Sort temporal path by time
+            temporal_path.sort(key=lambda x: x[0])
+            
+            # Remove duplicate privacy warnings
+            privacy_warnings = list(set(privacy_warnings))
+            
+            processing_time = time.time() - start_time
+            
+            # Create result
+            result = ExifToolAnalysisResult(
+                total_files=len(files),
+                successful=len(metadata_list),
+                failed=len(errors),
+                skipped=len(files) - len(metadata_list) - len(errors),
+                metadata_list=metadata_list,
+                gps_locations=gps_locations,
+                device_map=dict(device_map),
+                temporal_path=temporal_path,
+                processing_time=processing_time,
+                errors=errors[:100],  # Cap errors at 100
+                privacy_warnings=privacy_warnings
+            )
+            
+            logger.info(
+                f"ExifTool analysis complete: {result.successful} successful, "
+                f"{result.failed} failed, {len(gps_locations)} with GPS"
+            )
+            
+            return Result.success(result)
+            
+        except Exception as e:
+            error = MediaAnalysisError(
+                f"ExifTool analysis failed: {e}",
+                user_message="Failed to analyze files with ExifTool."
+            )
+            self._handle_error(error)
+            return Result.error(error)
+    
+    def get_exiftool_status(self) -> Dict[str, Any]:
+        """
+        Get ExifTool availability and version status
+        
+        Returns:
+            Dictionary with exiftool status information
+        """
+        return self.exiftool_manager.get_status_info()
+    
+    def generate_exiftool_report(
+        self,
+        results: ExifToolAnalysisResult,
+        output_path: Path,
+        form_data: Optional[FormData] = None
+    ) -> Result[Path]:
+        """
+        Generate PDF report from ExifTool analysis results
+        
+        Args:
+            results: ExifTool analysis results
+            output_path: Path where report should be saved
+            form_data: Optional form data for case information
+            
+        Returns:
+            Result containing report path or error
+        """
+        try:
+            from ..pdf_gen import PDFGenerator
+            
+            # Ensure output directory exists
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Create PDF generator
+            pdf = PDFGenerator(output_path)
+            
+            # Add case information if available
+            if form_data:
+                pdf.add_title_page(
+                    f"ExifTool Forensic Analysis Report",
+                    form_data.occurrence_number,
+                    form_data.exhibit_number,
+                    form_data.requester_name,
+                    form_data.requester_phone,
+                    form_data.technician_name
+                )
+            else:
+                pdf.add_page()
+                pdf.set_font("Helvetica-Bold", 16)
+                pdf.cell(0, 10, "ExifTool Forensic Analysis Report", ln=True, align='C')
+                pdf.ln(10)
+            
+            # Add summary section
+            pdf.add_page()
+            pdf.set_font("Helvetica-Bold", 14)
+            pdf.cell(0, 10, "Analysis Summary", ln=True)
+            pdf.set_font("Helvetica", 12)
+            
+            summary_data = [
+                ['Total Files:', str(results.total_files)],
+                ['Successful:', str(results.successful)],
+                ['Failed:', str(results.failed)],
+                ['Files with GPS:', str(len(results.gps_locations))],
+                ['Unique Devices:', str(len(results.device_map))],
+                ['Processing Time:', f"{results.processing_time:.1f} seconds"]
+            ]
+            
+            if results.get_temporal_range():
+                start, end = results.get_temporal_range()
+                summary_data.append(['Time Range:', f"{start} to {end}"])
+            
+            pdf.add_table(summary_data, col_widths=[60, 130])
+            
+            # Add device statistics
+            if results.device_map:
+                pdf.add_page()
+                pdf.set_font("Helvetica-Bold", 14)
+                pdf.cell(0, 10, "Device Analysis", ln=True)
+                
+                device_data = []
+                for device_id, files in results.device_map.items():
+                    if files:
+                        device_name = files[0].device_info.get_display_name() if files[0].device_info else device_id
+                        device_data.append([device_name, str(len(files)) + " files"])
+                
+                pdf.add_table(device_data, col_widths=[130, 60])
+            
+            # Add GPS locations summary
+            if results.gps_locations:
+                pdf.add_page()
+                pdf.set_font("Helvetica-Bold", 14)
+                pdf.cell(0, 10, "GPS Location Summary", ln=True)
+                
+                gps_data = []
+                for metadata in results.gps_locations[:50]:  # Limit to 50 entries
+                    if metadata.gps_data:
+                        lat, lon = metadata.gps_data.to_decimal_degrees()
+                        gps_data.append([
+                            metadata.file_path.name,
+                            f"{lat:.6f}, {lon:.6f}"
+                        ])
+                
+                pdf.add_table(gps_data, col_widths=[100, 90])
+                
+                if len(results.gps_locations) > 50:
+                    pdf.set_font("Helvetica", 10)
+                    pdf.cell(0, 10, f"... and {len(results.gps_locations) - 50} more files with GPS data", ln=True)
+            
+            # Add privacy warnings if present
+            if results.privacy_warnings:
+                pdf.ln(10)
+                pdf.set_font("Helvetica-Bold", 12)
+                pdf.cell(0, 10, "Privacy Settings Applied:", ln=True)
+                pdf.set_font("Helvetica", 10)
+                for warning in results.privacy_warnings:
+                    pdf.cell(0, 5, f"• {warning}", ln=True)
+            
+            # Save PDF
+            pdf.save()
+            
+            self._log_operation("generate_exiftool_report", f"Report saved to {output_path}")
+            return Result.success(output_path)
+            
+        except Exception as e:
+            error = MediaReportError(
+                f"Failed to generate ExifTool report: {e}",
+                report_path=str(output_path),
+                user_message="Failed to generate ExifTool PDF report."
+            )
+            self._handle_error(error)
+            return Result.error(error)
+    
+    def export_exiftool_to_csv(
+        self,
+        results: ExifToolAnalysisResult,
+        output_path: Path
+    ) -> Result[Path]:
+        """
+        Export ExifTool results to CSV format
+        
+        Args:
+            results: ExifTool analysis results
+            output_path: Path where CSV should be saved
+            
+        Returns:
+            Result containing CSV path or error
+        """
+        try:
+            import csv
+            from collections import defaultdict
+            
+            # Ensure output directory exists
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Define CSV columns for ExifTool data
+            fieldnames = [
+                'File Path', 'File Name', 'File Type', 'MIME Type', 'File Size',
+                # GPS Fields
+                'GPS Latitude', 'GPS Longitude', 'GPS Altitude', 'GPS Accuracy',
+                'GPS Speed', 'GPS Direction', 'Location Name',
+                # Device Fields
+                'Make', 'Model', 'Serial Number', 'Device ID', 'Software',
+                # Temporal Fields
+                'Capture Time', 'Create Time', 'Modify Time', 'Timezone',
+                # Camera Settings
+                'ISO', 'Exposure Time', 'F-Number', 'Focal Length', 'Flash',
+                # Document Integrity
+                'Has Edit History', 'Edit Count', 'Original Filename'
+            ]
+            
+            with open(output_path, 'w', newline='', encoding='utf-8') as csvfile:
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                writer.writeheader()
+                
+                for metadata in results.metadata_list:
+                    row = {
+                        'File Path': str(metadata.file_path),
+                        'File Name': metadata.file_path.name,
+                        'File Type': metadata.file_type or '',
+                        'MIME Type': metadata.mime_type or '',
+                        'File Size': metadata.file_size or ''
+                    }
+                    
+                    # GPS data
+                    if metadata.gps_data:
+                        row.update({
+                            'GPS Latitude': f"{metadata.gps_data.latitude:.6f}",
+                            'GPS Longitude': f"{metadata.gps_data.longitude:.6f}",
+                            'GPS Altitude': metadata.gps_data.altitude or '',
+                            'GPS Accuracy': metadata.gps_data.accuracy or '',
+                            'GPS Speed': metadata.gps_data.speed or '',
+                            'GPS Direction': metadata.gps_data.direction or ''
+                        })
+                    
+                    row['Location Name'] = metadata.location_name or ''
+                    
+                    # Device data
+                    if metadata.device_info:
+                        row.update({
+                            'Make': metadata.device_info.make or '',
+                            'Model': metadata.device_info.model or '',
+                            'Serial Number': metadata.device_info.get_primary_id() or '',
+                            'Device ID': metadata.device_info.device_id or '',
+                            'Software': metadata.device_info.software or ''
+                        })
+                    
+                    # Temporal data
+                    if metadata.temporal_data:
+                        primary_time = metadata.temporal_data.get_primary_timestamp()
+                        row.update({
+                            'Capture Time': str(primary_time) if primary_time else '',
+                            'Create Time': str(metadata.temporal_data.create_time) if metadata.temporal_data.create_time else '',
+                            'Modify Time': str(metadata.temporal_data.modify_time) if metadata.temporal_data.modify_time else '',
+                            'Timezone': metadata.temporal_data.timezone_offset or ''
+                        })
+                    
+                    # Camera settings
+                    if metadata.camera_settings:
+                        row.update({
+                            'ISO': metadata.camera_settings.iso or '',
+                            'Exposure Time': metadata.camera_settings.exposure_time or '',
+                            'F-Number': metadata.camera_settings.f_number or '',
+                            'Focal Length': metadata.camera_settings.focal_length or '',
+                            'Flash': metadata.camera_settings.flash or ''
+                        })
+                    
+                    # Document integrity
+                    if metadata.document_integrity:
+                        row.update({
+                            'Has Edit History': 'Yes' if metadata.has_edit_history else 'No',
+                            'Edit Count': metadata.document_integrity.get_edit_count(),
+                            'Original Filename': metadata.document_integrity.original_filename or ''
+                        })
+                    
+                    writer.writerow(row)
+            
+            self._log_operation("export_exiftool_to_csv", f"CSV exported to {output_path}")
+            return Result.success(output_path)
+            
+        except Exception as e:
+            error = MediaReportError(
+                f"Failed to export ExifTool CSV: {e}",
+                report_path=str(output_path),
+                user_message="Failed to export ExifTool results to CSV."
+            )
+            self._handle_error(error)
+            return Result.error(error)
+    
+    def export_to_kml(
+        self,
+        results: ExifToolAnalysisResult,
+        output_path: Path
+    ) -> Result[Path]:
+        """
+        Export GPS locations to KML format for Google Earth
+        
+        Args:
+            results: ExifTool analysis results with GPS data
+            output_path: Path where KML should be saved
+            
+        Returns:
+            Result containing KML path or error
+        """
+        try:
+            from xml.etree.ElementTree import Element, SubElement, ElementTree
+            
+            # Ensure output directory exists
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Create KML structure
+            kml = Element('kml', xmlns='http://www.opengis.net/kml/2.2')
+            document = SubElement(kml, 'Document')
+            
+            # Add document name
+            name = SubElement(document, 'name')
+            name.text = 'ExifTool GPS Locations'
+            
+            # Add styles for different device types
+            for color_id, color_code in enumerate(['ff0000ff', 'ff00ff00', 'ffff0000', 'ff00ffff', 'ffff00ff']):
+                style = SubElement(document, 'Style', id=f'device_{color_id}')
+                icon_style = SubElement(style, 'IconStyle')
+                color = SubElement(icon_style, 'color')
+                color.text = color_code
+                icon = SubElement(icon_style, 'Icon')
+                href = SubElement(icon, 'href')
+                href.text = 'http://maps.google.com/mapfiles/kml/pushpin/ylw-pushpin.png'
+            
+            # Group by device
+            device_folders = {}
+            for device_id, files in results.device_map.items():
+                if device_id not in device_folders:
+                    folder = SubElement(document, 'Folder')
+                    folder_name = SubElement(folder, 'name')
+                    folder_name.text = device_id or 'Unknown Device'
+                    device_folders[device_id] = folder
+            
+            # Add unidentified files folder
+            unknown_folder = SubElement(document, 'Folder')
+            unknown_name = SubElement(unknown_folder, 'name')
+            unknown_name.text = 'Unidentified Devices'
+            
+            # Add placemarks for each GPS location
+            device_colors = {}
+            color_index = 0
+            
+            for metadata in results.gps_locations:
+                if not metadata.gps_data:
+                    continue
+                
+                # Determine which folder to use
+                device_id = metadata.device_info.get_primary_id() if metadata.device_info else None
+                if device_id and device_id in device_folders:
+                    parent = device_folders[device_id]
+                    # Assign color to device
+                    if device_id not in device_colors:
+                        device_colors[device_id] = f'device_{color_index % 5}'
+                        color_index += 1
+                    style_url = device_colors[device_id]
+                else:
+                    parent = unknown_folder
+                    style_url = 'device_0'
+                
+                # Create placemark
+                placemark = SubElement(parent, 'Placemark')
+                
+                # Name
+                pm_name = SubElement(placemark, 'name')
+                pm_name.text = metadata.file_path.name
+                
+                # Description
+                description = SubElement(placemark, 'description')
+                desc_text = f"File: {metadata.file_path.name}\n"
+                
+                if metadata.temporal_data:
+                    timestamp = metadata.temporal_data.get_primary_timestamp()
+                    if timestamp:
+                        desc_text += f"Time: {timestamp}\n"
+                
+                if metadata.device_info:
+                    desc_text += f"Device: {metadata.device_info.get_display_name()}\n"
+                
+                if metadata.gps_data.altitude:
+                    desc_text += f"Altitude: {metadata.gps_data.altitude}m\n"
+                
+                if metadata.gps_data.speed:
+                    desc_text += f"Speed: {metadata.gps_data.speed} km/h\n"
+                
+                description.text = desc_text
+                
+                # Style
+                style_ref = SubElement(placemark, 'styleUrl')
+                style_ref.text = f'#{style_url}'
+                
+                # Point
+                point = SubElement(placemark, 'Point')
+                coordinates = SubElement(point, 'coordinates')
+                lat, lon = metadata.gps_data.to_decimal_degrees()
+                alt = metadata.gps_data.altitude or 0
+                coordinates.text = f"{lon},{lat},{alt}"
+            
+            # Write KML file
+            tree = ElementTree(kml)
+            tree.write(output_path, encoding='utf-8', xml_declaration=True)
+            
+            self._log_operation("export_to_kml", f"KML exported to {output_path}")
+            return Result.success(output_path)
+            
+        except Exception as e:
+            error = MediaReportError(
+                f"Failed to export KML: {e}",
+                report_path=str(output_path),
+                user_message="Failed to export GPS locations to KML format."
+            )
+            self._handle_error(error)
+            return Result.error(error)

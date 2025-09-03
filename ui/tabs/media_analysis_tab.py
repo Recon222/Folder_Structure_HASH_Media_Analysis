@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QGroupBox, QCheckBox, QFileDialog, QProgressBar, QSplitter,
     QComboBox, QSpinBox, QDoubleSpinBox, QMessageBox, QScrollArea,
-    QGridLayout
+    QGridLayout, QTabWidget
 )
 from PySide6.QtGui import QFont
 
@@ -25,8 +25,12 @@ from core.media_analysis_models import (
     MediaAnalysisSettings, MediaAnalysisResult, MetadataFieldGroup,
     FileReferenceFormat
 )
+from core.exiftool.exiftool_models import (
+    ExifToolSettings, ExifToolAnalysisResult, GPSPrecisionLevel
+)
 from core.models import FormData
-from core.services.success_message_data import MediaAnalysisOperationData
+from ui.components.geo import GeoVisualizationWidget
+from core.services.success_message_data import MediaAnalysisOperationData, ExifToolOperationData
 from core.services.success_message_builder import SuccessMessageBuilder
 from core.settings_manager import settings
 from core.logger import logger
@@ -61,7 +65,9 @@ class MediaAnalysisTab(QWidget):
         self.operation_active = False
         self.current_worker = None
         self.last_results: Optional[MediaAnalysisResult] = None
+        self.last_exiftool_results: Optional[ExifToolAnalysisResult] = None
         self.selected_paths: List[Path] = []
+        self.current_tool = "ffprobe"  # Track which tool is active
         
         # Settings
         self.analysis_settings = self._load_settings()
@@ -113,7 +119,7 @@ class MediaAnalysisTab(QWidget):
         title_label.setFont(self._get_title_font())
         title_layout.addWidget(title_label)
         
-        desc_label = QLabel("Analyze video, audio, and image files to extract metadata using FFprobe")
+        desc_label = QLabel("Analyze media files to extract metadata using FFprobe and ExifTool")
         desc_label.setStyleSheet("color: #6c757d; font-size: 11px;")
         desc_label.setWordWrap(True)
         title_layout.addWidget(desc_label)
@@ -166,6 +172,60 @@ class MediaAnalysisTab(QWidget):
         """Create right panel for analysis settings"""
         panel = QGroupBox("Analysis Settings")
         main_layout = QVBoxLayout(panel)
+        
+        # Create tab widget for FFprobe and ExifTool
+        self.tool_tabs = QTabWidget()
+        
+        # FFprobe tab
+        ffprobe_tab = self._create_ffprobe_settings_tab()
+        self.tool_tabs.addTab(ffprobe_tab, "🎬 FFprobe")
+        
+        # ExifTool tab
+        exiftool_tab = self._create_exiftool_settings_tab()
+        self.tool_tabs.addTab(exiftool_tab, "📷 ExifTool")
+        
+        # Connect tab change signal
+        self.tool_tabs.currentChanged.connect(self._on_tool_tab_changed)
+        
+        main_layout.addWidget(self.tool_tabs)
+        
+        # Progress bar (shared between tools)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setVisible(False)
+        main_layout.addWidget(self.progress_bar)
+        
+        # Progress label
+        self.progress_label = QLabel("")
+        self.progress_label.setVisible(False)
+        self.progress_label.setStyleSheet("color: #6c757d; font-size: 10px;")
+        main_layout.addWidget(self.progress_label)
+        
+        # Action buttons
+        button_layout = QHBoxLayout()
+        
+        self.analyze_btn = QPushButton("🔍 Analyze Files")
+        self.analyze_btn.setEnabled(False)
+        self.analyze_btn.clicked.connect(self._start_analysis)
+        button_layout.addWidget(self.analyze_btn)
+        
+        self.export_btn = QPushButton("📊 Export Results")
+        self.export_btn.setEnabled(False)
+        self.export_btn.clicked.connect(self._export_results)
+        button_layout.addWidget(self.export_btn)
+        
+        self.cancel_btn = QPushButton("🛑 Cancel")
+        self.cancel_btn.setEnabled(False)
+        self.cancel_btn.clicked.connect(self._cancel_operation)
+        button_layout.addWidget(self.cancel_btn)
+        
+        main_layout.addLayout(button_layout)
+        
+        return panel
+    
+    def _create_ffprobe_settings_tab(self) -> QWidget:
+        """Create FFprobe settings tab"""
+        tab = QWidget()
+        main_layout = QVBoxLayout(tab)
         
         # Create scrollable area for settings
         scroll_area = QScrollArea()
@@ -278,38 +338,140 @@ class MediaAnalysisTab(QWidget):
         scroll_area.setWidget(container)
         main_layout.addWidget(scroll_area)
         
-        # Progress bar
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setVisible(False)
-        main_layout.addWidget(self.progress_bar)
+        return tab
+    
+    def _create_exiftool_settings_tab(self) -> QWidget:
+        """Create ExifTool settings tab"""
+        tab = QWidget()
+        main_layout = QVBoxLayout(tab)
         
-        # Progress label
-        self.progress_label = QLabel("")
-        self.progress_label.setVisible(False)
-        self.progress_label.setStyleSheet("color: #6c757d; font-size: 10px;")
-        main_layout.addWidget(self.progress_label)
+        # Create scrollable area for settings
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         
-        # Action buttons
-        button_layout = QHBoxLayout()
+        # Container widget for scroll area
+        container = QWidget()
+        layout = QVBoxLayout(container)
         
-        self.analyze_btn = QPushButton("🔍 Analyze Files")
-        self.analyze_btn.setEnabled(False)
-        self.analyze_btn.clicked.connect(self._start_analysis)
-        button_layout.addWidget(self.analyze_btn)
+        # ExifTool field groups
+        self.exif_field_groups = {}
         
-        self.export_btn = QPushButton("📊 Export Results")
-        self.export_btn.setEnabled(False)
-        self.export_btn.clicked.connect(self._export_results)
-        button_layout.addWidget(self.export_btn)
+        # Geospatial fields
+        geo_group = self._create_exif_field_group(
+            "Geospatial Data",
+            ["GPS Coordinates", "Altitude", "Direction", "Speed", "Satellite Info"],
+            "geospatial"
+        )
+        layout.addWidget(geo_group)
         
-        self.cancel_btn = QPushButton("🛑 Cancel")
-        self.cancel_btn.setEnabled(False)
-        self.cancel_btn.clicked.connect(self._cancel_operation)
-        button_layout.addWidget(self.cancel_btn)
+        # Temporal fields
+        temporal_group = self._create_exif_field_group(
+            "Time & Date",
+            ["All Dates", "SubSec Times", "Time Zones", "Clock Skew Detection"],
+            "temporal"
+        )
+        layout.addWidget(temporal_group)
         
-        main_layout.addLayout(button_layout)
+        # Device fields
+        device_group = self._create_exif_field_group(
+            "Device Information",
+            ["Make & Model", "Serial Numbers", "Lens Info", "Firmware"],
+            "device"
+        )
+        layout.addWidget(device_group)
         
-        return panel
+        # Camera Settings
+        camera_group = self._create_exif_field_group(
+            "Camera Settings",
+            ["Exposure", "ISO", "Aperture", "Focal Length", "Flash"],
+            "camera_settings"
+        )
+        layout.addWidget(camera_group)
+        
+        # Processing options
+        options_group = QGroupBox("ExifTool Options")
+        options_layout = QGridLayout(options_group)
+        
+        # GPS Privacy
+        options_layout.addWidget(QLabel("GPS Privacy:"), 0, 0)
+        self.gps_privacy_combo = QComboBox()
+        self.gps_privacy_combo.addItems(["Exact", "Building", "Block", "Neighborhood"])
+        self.gps_privacy_combo.setCurrentIndex(0)
+        options_layout.addWidget(self.gps_privacy_combo, 0, 1)
+        
+        # Extract thumbnails
+        self.extract_thumbnails_check = QCheckBox("Extract embedded thumbnails")
+        self.extract_thumbnails_check.setChecked(False)
+        options_layout.addWidget(self.extract_thumbnails_check, 1, 0, 1, 2)
+        
+        # Include binary data
+        self.include_binary_check = QCheckBox("Include binary data")
+        self.include_binary_check.setChecked(False)
+        options_layout.addWidget(self.include_binary_check, 2, 0, 1, 2)
+        
+        # Batch size
+        options_layout.addWidget(QLabel("Batch Size:"), 3, 0)
+        self.exif_batch_spin = QSpinBox()
+        self.exif_batch_spin.setRange(10, 500)
+        self.exif_batch_spin.setValue(100)
+        options_layout.addWidget(self.exif_batch_spin, 3, 1)
+        
+        layout.addWidget(options_group)
+        
+        # Map visualization
+        vis_group = QGroupBox("Visualization")
+        vis_layout = QVBoxLayout(vis_group)
+        
+        self.show_map_check = QCheckBox("Show interactive map for GPS data")
+        self.show_map_check.setChecked(True)
+        vis_layout.addWidget(self.show_map_check)
+        
+        self.cluster_markers_check = QCheckBox("Cluster map markers")
+        self.cluster_markers_check.setChecked(True)
+        vis_layout.addWidget(self.cluster_markers_check)
+        
+        layout.addWidget(vis_group)
+        layout.addStretch()
+        
+        # Set scroll area content
+        scroll_area.setWidget(container)
+        main_layout.addWidget(scroll_area)
+        
+        return tab
+    
+    def _create_exif_field_group(
+        self,
+        title: str,
+        fields: List[str],
+        key: str,
+        enabled_by_default: bool = True
+    ) -> QGroupBox:
+        """Create ExifTool field group"""
+        group = QGroupBox(title)
+        group.setCheckable(True)
+        group.setChecked(enabled_by_default)
+        
+        layout = QVBoxLayout(group)
+        layout.setSpacing(4)
+        
+        # Store group reference
+        self.exif_field_groups[key] = {
+            'group': group,
+            'fields': {}
+        }
+        
+        # Create field checkboxes
+        for field in fields:
+            checkbox = QCheckBox(field)
+            checkbox.setChecked(True)
+            layout.addWidget(checkbox)
+            
+            # Store field reference
+            field_key = field.lower().replace(" ", "_").replace("&", "and")
+            self.exif_field_groups[key]['fields'][field_key] = checkbox
+        
+        return group
     
     def _create_field_group(
         self, 
@@ -514,11 +676,69 @@ class MediaAnalysisTab(QWidget):
         
         return settings
     
+    def _on_tool_tab_changed(self, index: int):
+        """Handle tool tab change"""
+        self.current_tool = "ffprobe" if index == 0 else "exiftool"
+        
+        # Update button text based on tool
+        if self.current_tool == "ffprobe":
+            self.analyze_btn.setText("🔍 Analyze with FFprobe")
+        else:
+            self.analyze_btn.setText("📷 Analyze with ExifTool")
+        
+        # Enable export button if we have results for the current tool
+        if self.current_tool == "ffprobe" and self.last_results:
+            self.export_btn.setEnabled(True)
+        elif self.current_tool == "exiftool" and self.last_exiftool_results:
+            self.export_btn.setEnabled(True)
+        else:
+            self.export_btn.setEnabled(False)
+    
+    def _get_exiftool_settings(self) -> ExifToolSettings:
+        """Get current ExifTool settings from UI"""
+        settings = ExifToolSettings()
+        
+        # Field groups
+        if 'geospatial' in self.exif_field_groups:
+            settings.extract_gps = self.exif_field_groups['geospatial']['group'].isChecked()
+        
+        if 'temporal' in self.exif_field_groups:
+            settings.extract_temporal = self.exif_field_groups['temporal']['group'].isChecked()
+        
+        if 'device' in self.exif_field_groups:
+            settings.extract_device = self.exif_field_groups['device']['group'].isChecked()
+        
+        if 'camera_settings' in self.exif_field_groups:
+            settings.extract_camera_settings = self.exif_field_groups['camera_settings']['group'].isChecked()
+        
+        # GPS privacy level
+        privacy_index = self.gps_privacy_combo.currentIndex()
+        settings.gps_precision = [
+            GPSPrecisionLevel.EXACT,
+            GPSPrecisionLevel.BUILDING,
+            GPSPrecisionLevel.BLOCK,
+            GPSPrecisionLevel.NEIGHBORHOOD
+        ][privacy_index]
+        
+        # Other options
+        settings.extract_thumbnails = self.extract_thumbnails_check.isChecked()
+        settings.include_binary = self.include_binary_check.isChecked()
+        settings.batch_size = self.exif_batch_spin.value()
+        
+        return settings
+    
     def _start_analysis(self):
         """Start media analysis operation"""
         if not self.selected_paths:
             return
         
+        if self.current_tool == "ffprobe":
+            self._start_ffprobe_analysis()
+        else:
+            self._start_exiftool_analysis()
+    
+    def _start_ffprobe_analysis(self):
+        """Start FFprobe analysis"""
         # Get current settings
         settings = self._get_current_settings()
         
@@ -558,6 +778,44 @@ class MediaAnalysisTab(QWidget):
                 result.error.user_message
             )
     
+    def _start_exiftool_analysis(self):
+        """Start ExifTool analysis"""
+        # Get ExifTool settings
+        settings = self._get_exiftool_settings()
+        
+        # Update UI state
+        self._set_operation_active(True)
+        
+        # Log start
+        self.log_message.emit(f"Starting ExifTool analysis of {len(self.selected_paths)} items...")
+        
+        # Start ExifTool workflow through controller
+        result = self.controller.start_exiftool_workflow(
+            self.selected_paths,
+            settings,
+            self.form_data
+        )
+        
+        if result.success:
+            self.current_worker = result.value
+            
+            # Connect worker signals
+            self.current_worker.result_ready.connect(self._on_exiftool_complete)
+            self.current_worker.progress_update.connect(self._on_progress_update)
+            
+            # Start worker
+            self.current_worker.start()
+        else:
+            # Failed to start
+            self._set_operation_active(False)
+            self.log_message.emit(f"Error: {result.error.user_message}")
+            
+            QMessageBox.warning(
+                self,
+                "ExifTool Error",
+                result.error.user_message
+            )
+    
     def _on_progress_update(self, percentage: int, message: str):
         """Handle progress updates from worker"""
         self.progress_bar.setValue(percentage)
@@ -567,8 +825,81 @@ class MediaAnalysisTab(QWidget):
         if percentage % 10 == 0 or percentage == 100:
             self.log_message.emit(message)
     
+    def _on_exiftool_complete(self, result):
+        """Handle ExifTool completion"""
+        self._set_operation_active(False)
+        
+        if result.success:
+            self.last_exiftool_results = result.value
+            self.export_btn.setEnabled(True)
+            
+            # Log completion
+            self.log_message.emit(
+                f"ExifTool analysis complete: {self.last_exiftool_results.successful} files processed, "
+                f"{self.last_exiftool_results.failed} failed"
+            )
+            
+            # Show map if GPS data found and option enabled
+            if self.last_exiftool_results.gps_locations and self.show_map_check.isChecked():
+                self._show_gps_map()
+            
+            # Show success dialog
+            op_data = ExifToolOperationData(
+                total_files=self.last_exiftool_results.total_files,
+                successful=self.last_exiftool_results.successful,
+                failed=self.last_exiftool_results.failed,
+                gps_count=len(self.last_exiftool_results.gps_locations),
+                device_count=len(self.last_exiftool_results.device_map),
+                processing_time=self.last_exiftool_results.processing_time
+            )
+            
+            success_message = self.success_builder.build_exiftool_success_message(op_data)
+            SuccessDialog.show_success_message(success_message, self)
+            
+        else:
+            # Analysis failed
+            self.log_message.emit(f"ExifTool analysis failed: {result.error.user_message}")
+            
+            QMessageBox.warning(
+                self,
+                "ExifTool Failed",
+                result.error.user_message
+            )
+    
+    def _show_gps_map(self):
+        """Show interactive GPS map"""
+        if not self.last_exiftool_results or not self.last_exiftool_results.gps_locations:
+            return
+        
+        # Create map dialog
+        from PySide6.QtWidgets import QDialog
+        dialog = QDialog(self)
+        dialog.setWindowTitle("GPS Location Map")
+        dialog.setModal(False)
+        dialog.resize(1200, 800)
+        
+        layout = QVBoxLayout(dialog)
+        
+        # Create and configure map widget
+        map_widget = GeoVisualizationWidget()
+        map_widget.add_media_locations(self.last_exiftool_results.gps_locations)
+        
+        # Set clustering option
+        if hasattr(map_widget, 'set_clustering'):
+            map_widget.set_clustering(self.cluster_markers_check.isChecked())
+        
+        # Connect signals for file selection
+        map_widget.file_selected.connect(
+            lambda path: self.log_message.emit(f"Selected: {path}")
+        )
+        
+        layout.addWidget(map_widget)
+        
+        # Show dialog
+        dialog.show()
+    
     def _on_analysis_complete(self, result):
-        """Handle analysis completion"""
+        """Handle FFprobe analysis completion"""
         self._set_operation_active(False)
         
         if result.success:
@@ -627,8 +958,17 @@ class MediaAnalysisTab(QWidget):
     
     def _export_results(self):
         """Export analysis results"""
-        if not self.last_results:
-            return
+        if self.current_tool == "ffprobe":
+            if not self.last_results:
+                return
+            self._export_ffprobe_results()
+        else:
+            if not self.last_exiftool_results:
+                return
+            self._export_exiftool_results()
+    
+    def _export_ffprobe_results(self):
+        """Export FFprobe results"""
         
         # Create export menu
         from PySide6.QtWidgets import QMenu
@@ -644,6 +984,97 @@ class MediaAnalysisTab(QWidget):
         
         # Show menu at button
         menu.exec_(self.export_btn.mapToGlobal(self.export_btn.rect().bottomLeft()))
+    
+    def _export_exiftool_results(self):
+        """Export ExifTool results"""
+        # Create export menu
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu(self)
+        
+        # CSV export action
+        csv_action = menu.addAction("📊 Export to CSV")
+        csv_action.triggered.connect(self._export_exiftool_csv)
+        
+        # KML export action (if GPS data exists)
+        if self.last_exiftool_results.gps_locations:
+            kml_action = menu.addAction("🌍 Export to KML (Google Earth)")
+            kml_action.triggered.connect(self._export_to_kml)
+        
+        # Show menu at button
+        menu.exec_(self.export_btn.mapToGlobal(self.export_btn.rect().bottomLeft()))
+    
+    def _export_exiftool_csv(self):
+        """Export ExifTool results to CSV"""
+        if not self.last_exiftool_results:
+            return
+        
+        # Get output path
+        default_name = f"exiftool_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export to CSV",
+            default_name,
+            "CSV Files (*.csv)"
+        )
+        
+        if file_path:
+            # Export through controller
+            result = self.controller.export_exiftool_to_csv(
+                self.last_exiftool_results,
+                Path(file_path)
+            )
+            
+            if result.success:
+                self.log_message.emit(f"ExifTool CSV exported: {file_path}")
+                QMessageBox.information(
+                    self,
+                    "Export Success",
+                    f"ExifTool results exported to:\n{file_path}"
+                )
+            else:
+                self.log_message.emit(f"CSV export failed: {result.error.user_message}")
+                QMessageBox.warning(
+                    self,
+                    "Export Error",
+                    result.error.user_message
+                )
+    
+    def _export_to_kml(self):
+        """Export GPS data to KML"""
+        if not self.last_exiftool_results or not self.last_exiftool_results.gps_locations:
+            return
+        
+        # Get output path
+        default_name = f"gps_locations_{datetime.now().strftime('%Y%m%d_%H%M%S')}.kml"
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export to KML",
+            default_name,
+            "KML Files (*.kml)"
+        )
+        
+        if file_path:
+            # Export through controller
+            result = self.controller.export_to_kml(
+                self.last_exiftool_results.gps_locations,
+                Path(file_path),
+                group_by_device=True
+            )
+            
+            if result.success:
+                self.log_message.emit(f"KML exported: {file_path}")
+                QMessageBox.information(
+                    self,
+                    "Export Success",
+                    f"GPS locations exported to:\n{file_path}\n\nYou can open this file in Google Earth."
+                )
+            else:
+                self.log_message.emit(f"KML export failed: {result.error.user_message}")
+                QMessageBox.warning(
+                    self,
+                    "Export Error",
+                    result.error.user_message
+                )
     
     def _generate_pdf_report(self):
         """Generate PDF report from results"""

@@ -6,6 +6,9 @@
 # UI Framework
 PySide6>=6.4.0
 
+# Web Engine for map visualization
+PySide6-WebEngine>=6.4.0
+
 # PDF Generation
 reportlab>=3.6.12
 

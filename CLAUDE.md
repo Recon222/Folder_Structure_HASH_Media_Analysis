@@ -6,6 +6,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Folder Structure Utility - A PySide6 application for professional file organization and evidence management, primarily used in forensic/law enforcement contexts. Features enterprise-grade architecture with advanced performance optimization, unified error handling, comprehensive reporting capabilities, and production-ready code quality.
 
+## Recent Updates
+
+### ExifTool Integration with Geolocation Visualization (NEW)
+- **Complete forensic metadata extraction** using ExifTool for GPS, device ID, and temporal analysis
+- **Interactive map visualization** with QWebEngineView and Leaflet for location data
+- **Privacy controls** - GPS obfuscation with configurable precision levels
+- **KML export** - Google Earth compatible with device-based grouping
+- **Batch processing** - Optimized with parallel execution and command caching
+- **Device tracking** - Multiple serial number sources for identification
+
 ## Commands
 
 ### Development & Testing
@@ -145,6 +155,12 @@ progress_callback(percentage, message)
 - `template_path_builder.py`: Template-based path construction
 - `template_schema.py`: Template schema definitions and validation rules
 - `workers/`: QThread implementations with unified Result-based architecture
+- `exiftool/`: **ExifTool integration for forensic metadata extraction** (NEW)
+  - `exiftool_binary_manager.py`: Binary detection and validation
+  - `exiftool_command_builder.py`: Optimized command generation with caching
+  - `exiftool_wrapper.py`: Batch processing with parallel execution
+  - `exiftool_normalizer.py`: Metadata normalization and GPS extraction
+  - `exiftool_models.py`: Data models for GPS, device, temporal data
 
 **controllers/**
 - `base_controller.py`: **Service injection foundation** with error handling and logging
@@ -161,7 +177,11 @@ progress_callback(percentage, message)
   - `form_panel.py`, `log_console.py`, `batch_queue_widget.py`: Enhanced with Result integration
   - `error_notification_system.py`: **Non-modal error notifications** with auto-dismiss
   - `elided_label.py`: **Text truncation widgets** preventing UI expansion from long file paths
-- `tabs/`: Tab implementations (ForensicTab, BatchTab, HashingTab, CopyVerifyTab)
+  - `geo/`: **Geolocation visualization components** (NEW)
+    - `geo_visualization_widget.py`: Interactive map with QWebEngineView
+    - `geo_bridge.py`: Qt/JavaScript communication bridge
+    - `map_template.py`: Leaflet-based HTML map template
+- `tabs/`: Tab implementations (ForensicTab, BatchTab, HashingTab, CopyVerifyTab, MediaAnalysisTab)
 - `dialogs/`: Settings and configuration dialogs
   - `success_dialog.py`: **Enterprise success celebrations** with native Result object support
   - `template_management_dialog.py`: Template management UI with import/export

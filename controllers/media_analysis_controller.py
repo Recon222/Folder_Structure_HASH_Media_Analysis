@@ -10,7 +10,9 @@ from typing import List, Optional, Dict, Any
 from .base_controller import BaseController
 from core.services.interfaces import IMediaAnalysisService, IReportService
 from core.workers.media_analysis_worker import MediaAnalysisWorker
+from core.workers.exiftool_worker import ExifToolWorker
 from core.media_analysis_models import MediaAnalysisSettings, MediaAnalysisResult
+from core.exiftool.exiftool_models import ExifToolSettings, ExifToolAnalysisResult, GPSData
 from core.models import FormData
 from core.result_types import Result
 from core.exceptions import MediaAnalysisError
@@ -204,6 +206,145 @@ class MediaAnalysisController(BaseController):
             Dictionary with ffprobe status information
         """
         return self.media_service.get_ffprobe_status()
+    
+    def start_exiftool_workflow(
+        self,
+        paths: List[Path],
+        settings: ExifToolSettings,
+        form_data: Optional[FormData] = None
+    ) -> Result[ExifToolWorker]:
+        """
+        Start ExifTool analysis workflow
+        
+        Args:
+            paths: List of files/folders to analyze
+            settings: ExifTool analysis settings
+            form_data: Optional form data for report generation
+            
+        Returns:
+            Result containing ExifToolWorker or error
+        """
+        try:
+            self._log_operation("start_exiftool_workflow", 
+                              f"Starting ExifTool analysis of {len(paths)} items")
+            
+            # Step 1: Validate files (ExifTool can handle more formats than FFprobe)
+            valid_files = []
+            for path in paths:
+                if path.is_file():
+                    valid_files.append(path)
+                elif path.is_dir():
+                    # Get all files from directory
+                    valid_files.extend(path.rglob("*"))
+            
+            # Filter to only files
+            valid_files = [f for f in valid_files if f.is_file()]
+            
+            if not valid_files:
+                error = MediaAnalysisError(
+                    "No valid files found to analyze",
+                    user_message="No files found in the selected items."
+                )
+                self._handle_error(error)
+                return Result.error(error)
+            
+            logger.info(f"Found {len(valid_files)} files for ExifTool analysis")
+            
+            # Step 2: Create worker thread
+            worker = ExifToolWorker(
+                files=valid_files,
+                settings=settings,
+                service=self.media_service,
+                form_data=form_data
+            )
+            
+            # Store reference to current worker
+            self.current_worker = worker
+            
+            logger.info(f"Created ExifToolWorker for {len(valid_files)} files")
+            return Result.success(worker)
+            
+        except Exception as e:
+            error = MediaAnalysisError(
+                f"Failed to start ExifTool workflow: {e}",
+                user_message="Failed to start ExifTool analysis. Please try again."
+            )
+            self._handle_error(error)
+            return Result.error(error)
+    
+    def export_exiftool_to_csv(
+        self,
+        results: ExifToolAnalysisResult,
+        output_path: Path
+    ) -> Result[Path]:
+        """
+        Export ExifTool results to CSV
+        
+        Args:
+            results: ExifTool analysis results
+            output_path: Path for CSV file
+            
+        Returns:
+            Result containing CSV path or error
+        """
+        try:
+            self._log_operation("export_exiftool_to_csv", 
+                              f"Exporting {results.total_files} ExifTool results to CSV")
+            
+            # Delegate to media service
+            result = self.media_service.export_exiftool_to_csv(results, output_path)
+            
+            if result.success:
+                logger.info(f"ExifTool CSV exported successfully to {output_path}")
+            
+            return result
+            
+        except Exception as e:
+            error = MediaAnalysisError(
+                f"Failed to export ExifTool CSV: {e}",
+                user_message="Failed to export ExifTool results to CSV."
+            )
+            self._handle_error(error)
+            return Result.error(error)
+    
+    def export_to_kml(
+        self,
+        gps_locations: List[GPSData],
+        output_path: Path,
+        group_by_device: bool = True
+    ) -> Result[Path]:
+        """
+        Export GPS locations to KML
+        
+        Args:
+            gps_locations: List of GPS location data
+            output_path: Path for KML file
+            group_by_device: Whether to group locations by device
+            
+        Returns:
+            Result containing KML path or error
+        """
+        try:
+            self._log_operation("export_to_kml", 
+                              f"Exporting {len(gps_locations)} GPS locations to KML")
+            
+            # Delegate to media service
+            result = self.media_service.export_to_kml(
+                gps_locations, output_path, group_by_device
+            )
+            
+            if result.success:
+                logger.info(f"KML exported successfully to {output_path}")
+            
+            return result
+            
+        except Exception as e:
+            error = MediaAnalysisError(
+                f"Failed to export KML: {e}",
+                user_message="Failed to export GPS locations to KML."
+            )
+            self._handle_error(error)
+            return Result.error(error)
     
     def cleanup(self):
         """Clean up resources"""

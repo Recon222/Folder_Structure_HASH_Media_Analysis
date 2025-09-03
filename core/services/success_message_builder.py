@@ -17,7 +17,8 @@ from core.result_types import (
 )
 from core.services.success_message_data import (
     SuccessMessageData, QueueOperationData, HashOperationData, BatchOperationData,
-    EnhancedBatchOperationData, CopyVerifyOperationData
+    EnhancedBatchOperationData, CopyVerifyOperationData, MediaAnalysisOperationData,
+    ExifToolOperationData
 )
 
 
@@ -631,6 +632,117 @@ class SuccessMessageBuilder:
             performance_data={
                 'files_per_second': analysis_data.files_per_second,
                 'processing_time': analysis_data.processing_time_seconds
+            },
+            raw_data=metadata
+        )
+    
+    def build_exiftool_success_message(
+        self,
+        exiftool_data: ExifToolOperationData
+    ) -> SuccessMessageData:
+        """
+        Build success message for ExifTool metadata extraction.
+        
+        Args:
+            exiftool_data: ExifTool operation data
+            
+        Returns:
+            SuccessMessageData configured for ExifTool success
+        """
+        # Build primary message
+        primary_message = f"ExifTool extracted metadata from {exiftool_data.successful} files"
+        
+        # Build details list
+        details = []
+        
+        # Analysis statistics
+        details.append(f"✓ Processed {exiftool_data.total_files} total files")
+        
+        if exiftool_data.failed > 0:
+            details.append(f"⚠️ Failed to process {exiftool_data.failed} files")
+        
+        # GPS and location data
+        if exiftool_data.gps_count > 0:
+            details.append(f"📍 Found GPS data in {exiftool_data.gps_count} files")
+            if exiftool_data.unique_locations > 0:
+                details.append(f"📍 {exiftool_data.unique_locations} unique locations identified")
+        
+        # Device information
+        if exiftool_data.device_count > 0:
+            details.append(f"📱 Identified {exiftool_data.device_count} unique devices")
+            
+            # Show top devices
+            top_devices = exiftool_data.get_top_devices(2)
+            for device, count in top_devices:
+                details.append(f"  • {device}: {count} files")
+        
+        # Date range
+        date_range = exiftool_data.get_date_range_string()
+        if date_range != "No dates found":
+            details.append(f"📅 Date range: {date_range}")
+        
+        # Forensic findings
+        if exiftool_data.has_forensic_findings:
+            details.append("")  # Spacing
+            details.append("🔍 Forensic Findings:")
+            
+            if exiftool_data.clock_skew_detected > 0:
+                details.append(f"  • Clock skew detected in {exiftool_data.clock_skew_detected} files")
+            
+            if exiftool_data.metadata_tampering_detected > 0:
+                details.append(f"  • Potential tampering in {exiftool_data.metadata_tampering_detected} files")
+            
+            if exiftool_data.edited_files > 0:
+                details.append(f"  • {exiftool_data.edited_files} files show editing history")
+        
+        # Thumbnails
+        if exiftool_data.thumbnail_count > 0:
+            details.append(f"✓ Extracted {exiftool_data.thumbnail_count} thumbnails")
+        
+        # Processing time
+        time_str = exiftool_data.get_processing_time_string()
+        details.append(f"⏱️ Processing time: {time_str}")
+        
+        # Export information
+        if exiftool_data.csv_path:
+            details.append(f"✓ CSV exported: {exiftool_data.csv_path.name}")
+        
+        if exiftool_data.kml_path:
+            details.append(f"✓ KML exported: {exiftool_data.kml_path.name}")
+        
+        # Build metadata
+        metadata = {
+            'operation_type': 'exiftool_analysis',
+            'total_files': exiftool_data.total_files,
+            'successful': exiftool_data.successful,
+            'gps_count': exiftool_data.gps_count,
+            'device_count': exiftool_data.device_count,
+            'success_rate': exiftool_data.get_success_rate()
+        }
+        
+        # Add output location if exports were created
+        output_location = None
+        if exiftool_data.csv_path:
+            output_location = str(exiftool_data.csv_path.parent)
+        elif exiftool_data.kml_path:
+            output_location = str(exiftool_data.kml_path.parent)
+        
+        # Choose emoji based on findings
+        if exiftool_data.has_forensic_findings:
+            emoji = "🔍"  # Forensic findings detected
+        elif exiftool_data.gps_count > 0:
+            emoji = "📍"  # GPS data found
+        else:
+            emoji = "📷"  # Standard metadata extraction
+        
+        return SuccessMessageData(
+            title="ExifTool Analysis Complete!",
+            summary_lines=[primary_message] + details,
+            output_location=output_location,
+            celebration_emoji=emoji,
+            performance_data={
+                'files_per_second': exiftool_data.files_per_second,
+                'processing_time': exiftool_data.processing_time
             },
             raw_data=metadata
         )

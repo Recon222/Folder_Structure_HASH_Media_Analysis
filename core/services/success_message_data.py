@@ -347,3 +347,79 @@ class MediaAnalysisOperationData:
         """Get top N most common video codecs."""
         sorted_codecs = sorted(self.video_codec_counts.items(), key=lambda x: x[1], reverse=True)
         return sorted_codecs[:limit]
+
+
+@dataclass
+class ExifToolOperationData:
+    """Data for ExifTool metadata extraction success messages."""
+    
+    # Analysis Statistics
+    total_files: int = 0
+    successful: int = 0
+    failed: int = 0
+    
+    # GPS & Location Data
+    gps_count: int = 0
+    unique_locations: int = 0
+    location_clusters: List[Dict[str, Any]] = field(default_factory=list)
+    
+    # Device Information
+    device_count: int = 0
+    device_breakdown: Dict[str, int] = field(default_factory=dict)  # {"iPhone 12": 45, "Canon EOS": 20}
+    
+    # Temporal Analysis
+    earliest_date: Optional[datetime] = None
+    latest_date: Optional[datetime] = None
+    clock_skew_detected: int = 0
+    
+    # Performance Metrics
+    processing_time: float = 0.0
+    files_per_second: float = 0.0
+    
+    # Export Information
+    csv_path: Optional[Path] = None
+    kml_path: Optional[Path] = None
+    report_path: Optional[Path] = None
+    
+    # Forensic Insights
+    thumbnail_count: int = 0
+    edited_files: int = 0
+    metadata_tampering_detected: int = 0
+    
+    def get_success_rate(self) -> float:
+        """Calculate extraction success rate."""
+        if self.total_files == 0:
+            return 0.0
+        return (self.successful / self.total_files) * 100
+    
+    def get_date_range_string(self) -> str:
+        """Get formatted date range string."""
+        if not self.earliest_date or not self.latest_date:
+            return "No dates found"
+        
+        if self.earliest_date == self.latest_date:
+            return self.earliest_date.strftime("%Y-%m-%d")
+        else:
+            return f"{self.earliest_date.strftime('%Y-%m-%d')} to {self.latest_date.strftime('%Y-%m-%d')}"
+    
+    def get_processing_time_string(self) -> str:
+        """Get formatted processing time."""
+        if self.processing_time < 60:
+            return f"{self.processing_time:.1f} seconds"
+        else:
+            minutes = self.processing_time / 60
+            return f"{minutes:.1f} minutes"
+    
+    def get_top_devices(self, limit: int = 3) -> List[Tuple[str, int]]:
+        """Get top N most common devices."""
+        sorted_devices = sorted(self.device_breakdown.items(), key=lambda x: x[1], reverse=True)
+        return sorted_devices[:limit]
+    
+    @property
+    def has_forensic_findings(self) -> bool:
+        """Check if forensic findings were detected."""
+        return (
+            self.clock_skew_detected > 0 or
+            self.metadata_tampering_detected > 0 or
+            self.edited_files > 0
+        )

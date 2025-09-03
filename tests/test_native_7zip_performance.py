@@ -238,9 +238,9 @@ class PerformanceTestSuite:
                 'error': str(result.error) if not result.success else None,
                 'duration': duration,
                 'speed_mbps': speed_mbps,
-                'files_processed': result.data.metadata.get('files_processed', 0) if result.success else 0,
-                'total_files': result.data.metadata.get('total_files', 0) if result.success else 0,
-                'archive_size': result.data.metadata.get('archive_size', 0) if result.success else 0
+                'files_processed': result.metadata.get('files_processed', 0) if result.success else 0,
+                'total_files': result.metadata.get('total_files', 0) if result.success else 0,
+                'archive_size': result.metadata.get('archive_size', 0) if result.success else 0
             }
             
         except Exception as e:
