@@ -46,6 +46,14 @@ class GeoVisualizationWidget(QWidget):
         
         # Web components
         self.web_view = QWebEngineView()
+        
+        # Connect to console messages for debugging
+        from PySide6.QtWebEngineCore import QWebEnginePage
+        
+        # Override the javaScriptConsoleMessage method
+        page = self.web_view.page()
+        page.javaScriptConsoleMessage = self._handle_console_message
+        
         self.web_channel = QWebChannel()
         self.geo_bridge = GeoBridge()
         
@@ -120,6 +128,13 @@ class GeoVisualizationWidget(QWidget):
         
         logger.info("WebChannel configured with geoBridge")
     
+    def _handle_console_message(self, level, message, line, source):
+        """Handle JavaScript console messages for debugging"""
+        level_str = {0: "INFO", 1: "WARNING", 2: "ERROR"}.get(level, "DEBUG")
+        logger.info(f"[JS {level_str}] {message} (line {line})")
+        if source:
+            logger.info(f"  Source: {source}")
+    
     def _connect_signals(self):
         """Connect internal signals"""
         # Bridge signals
@@ -135,16 +150,37 @@ class GeoVisualizationWidget(QWidget):
             # Get map provider preference
             provider = settings.get('map_provider', 'leaflet')
             
-            # Prepare HTML with provider
+            # Get QWebChannel JS script content
+            qwebchannel_js = """
+            var QWebChannel = QWebChannel || (function() {
+                console.warn('QWebChannel not available, using stub');
+                return function(transport, callback) {
+                    callback({ objects: {} });
+                };
+            })();
+            """
+            
+            # Try to load the actual QWebChannel script
+            try:
+                from PySide6.QtCore import QFile, QIODevice
+                qrc_file = QFile(":/qtwebchannel/qwebchannel.js")
+                if qrc_file.open(QIODevice.ReadOnly):
+                    qwebchannel_js = str(qrc_file.readAll(), 'utf-8')
+                    qrc_file.close()
+                    logger.info("Loaded QWebChannel script from Qt resources")
+            except Exception as e:
+                logger.warning(f"Could not load QWebChannel script: {e}")
+            
+            # Prepare HTML with provider and inject QWebChannel script
             html_content = MAP_HTML_TEMPLATE.replace(
                 '{{MAP_PROVIDER}}', provider
+            ).replace(
+                '<script src="qrc:///qtwebchannel/qwebchannel.js"></script>',
+                f'<script>{qwebchannel_js}</script>'
             )
             
-            # Set base URL for resource loading
-            base_url = QUrl.fromLocalFile(str(Path(__file__).parent))
-            
-            # Load HTML
-            self.web_view.setHtml(html_content, base_url)
+            # Load HTML directly without base URL to avoid resource conflicts
+            self.web_view.setHtml(html_content)
             
             logger.info(f"Map HTML loaded with provider: {provider}")
             
@@ -393,7 +429,8 @@ Total files: {len(self.current_metadata)}
             html = MAP_HTML_TEMPLATE.replace(
                 '{{MAP_PROVIDER}}', 'leaflet'
             ).replace(
-                '{{MARKERS_DATA}}', markers_json
+                'const MARKERS_DATA = undefined;', 
+                f'const MARKERS_DATA = {markers_json};'
             )
             
             # Write to file

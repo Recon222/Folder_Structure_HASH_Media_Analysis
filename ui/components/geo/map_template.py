@@ -192,8 +192,12 @@ MAP_HTML_TEMPLATE = """<!DOCTYPE html>
     <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
     
     <script>
+        console.log('Script starting...');
+        console.log('Window loaded:', document.readyState);
+        
         class MapController {
             constructor() {
+                console.log('MapController constructor called');
                 this.map = null;
                 this.markers = [];
                 this.markerLayer = null;
@@ -206,60 +210,88 @@ MAP_HTML_TEMPLATE = """<!DOCTYPE html>
                     '#DDA0DD', '#98D8C8', '#F7DC6F', '#85C1E2', '#F8B739'
                 ];
                 
+                console.log('Calling initMap...');
                 this.initMap();
+                console.log('Calling initQWebChannel...');
                 this.initQWebChannel();
             }
             
             initMap() {
-                // Initialize Leaflet map
-                this.map = L.map('map', {
-                    center: [40.7128, -74.0060], // Default to NYC
-                    zoom: 13,
-                    zoomControl: true,
-                    attributionControl: true
-                });
-                
-                // Add OpenStreetMap tiles
-                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                    attribution: '© OpenStreetMap contributors',
-                    maxZoom: 19
-                }).addTo(this.map);
-                
-                // Initialize marker cluster group
-                this.markerCluster = L.markerClusterGroup({
-                    chunkedLoading: true,
-                    spiderfyOnMaxZoom: true,
-                    showCoverageOnHover: false,
-                    zoomToBoundsOnClick: true,
-                    maxClusterRadius: 60,
-                    iconCreateFunction: function(cluster) {
-                        const count = cluster.getChildCount();
-                        let size = 'small';
-                        let dimension = 40;
-                        
-                        if (count > 10) {
-                            size = 'medium';
-                            dimension = 50;
-                        }
-                        if (count > 50) {
-                            size = 'large';
-                            dimension = 60;
-                        }
-                        
-                        return new L.DivIcon({
-                            html: '<div><span>' + count + '</span></div>',
-                            className: 'marker-cluster marker-cluster-' + size,
-                            iconSize: new L.Point(dimension, dimension)
-                        });
+                console.log('Starting map initialization...');
+                try {
+                    // Check if Leaflet is loaded
+                    if (typeof L === 'undefined') {
+                        console.error('Leaflet library not loaded!');
+                        return;
                     }
-                });
-                
-                this.map.addLayer(this.markerCluster);
-                
-                // Track map bounds changes
-                this.map.on('moveend', () => this.onBoundsChange());
-                
-                console.log('Map initialized');
+                    console.log('Leaflet library loaded successfully');
+                    
+                    // Initialize Leaflet map
+                    this.map = L.map('map', {
+                        center: [40.7128, -74.0060], // Default to NYC
+                        zoom: 13,
+                        zoomControl: true,
+                        attributionControl: true
+                    });
+                    console.log('Map instance created');
+                    
+                    // Add OpenStreetMap tiles
+                    const tileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                        attribution: '© OpenStreetMap contributors',
+                        maxZoom: 19
+                    });
+                    tileLayer.addTo(this.map);
+                    console.log('Tile layer added');
+                    
+                    // Add tile loading event handlers
+                    tileLayer.on('loading', () => console.log('Tiles loading...'));
+                    tileLayer.on('load', () => console.log('Tiles loaded'));
+                    tileLayer.on('tileerror', (error) => console.error('Tile error:', error));
+                    
+                    // Initialize marker cluster group
+                    if (typeof L.markerClusterGroup !== 'undefined') {
+                        this.markerCluster = L.markerClusterGroup({
+                            chunkedLoading: true,
+                            spiderfyOnMaxZoom: true,
+                            showCoverageOnHover: false,
+                            zoomToBoundsOnClick: true,
+                            maxClusterRadius: 60,
+                            iconCreateFunction: function(cluster) {
+                                const count = cluster.getChildCount();
+                                let size = 'small';
+                                let dimension = 40;
+                                
+                                if (count > 10) {
+                                    size = 'medium';
+                                    dimension = 50;
+                                }
+                                if (count > 50) {
+                                    size = 'large';
+                                    dimension = 60;
+                                }
+                                
+                                return new L.DivIcon({
+                                    html: '<div><span>' + count + '</span></div>',
+                                    className: 'marker-cluster marker-cluster-' + size,
+                                    iconSize: new L.Point(dimension, dimension)
+                                });
+                            }
+                        });
+                        
+                        this.map.addLayer(this.markerCluster);
+                        console.log('Marker cluster group initialized');
+                    } else {
+                        console.warn('MarkerCluster plugin not loaded');
+                    }
+                    
+                    // Track map bounds changes
+                    this.map.on('moveend', () => this.onBoundsChange());
+                    
+                    console.log('Map initialization completed successfully');
+                } catch (error) {
+                    console.error('Map initialization failed:', error);
+                    console.error('Error stack:', error.stack);
+                }
             }
             
             initQWebChannel() {
@@ -566,11 +598,33 @@ MAP_HTML_TEMPLATE = """<!DOCTYPE html>
             }
         }
         
-        // Initialize controller
-        window.mapController = new MapController();
+        // Initialize controller when DOM is ready
+        console.log('About to initialize MapController...');
+        
+        // Function to initialize the map
+        function initializeMap() {
+            console.log('initializeMap function called');
+            try {
+                window.mapController = new MapController();
+                console.log('MapController created successfully');
+            } catch (error) {
+                console.error('Failed to create MapController:', error);
+                console.error('Error stack:', error.stack);
+            }
+        }
+        
+        // Check if DOM is already loaded
+        if (document.readyState === 'loading') {
+            console.log('DOM not ready, waiting for DOMContentLoaded...');
+            document.addEventListener('DOMContentLoaded', initializeMap);
+        } else {
+            console.log('DOM already ready, initializing immediately...');
+            initializeMap();
+        }
         
         // For standalone HTML exports, markers can be embedded
-        const MARKERS_DATA = {{MARKERS_DATA}};
+        // This will be replaced with actual data during export
+        const MARKERS_DATA = undefined;
     </script>
 </body>
 </html>"""

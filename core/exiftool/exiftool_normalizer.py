@@ -25,7 +25,7 @@ class ExifToolNormalizer:
     
     # GPS coordinate regex patterns
     GPS_DMS_PATTERN = re.compile(
-        r'(\d+)\s*deg\s*(\d+)\'\s*([\d.]+)"\s*([NSEW])'
+        r"(\d+)\s*(?:deg|°)\s*(\d+)['\u2032\u2019]\s*([\d.]+)[\"\u2033\u201D]?\s*([NSEW])?"
     )
     GPS_DECIMAL_PATTERN = re.compile(
         r'^([+-]?\d+\.?\d*)'
@@ -113,6 +113,12 @@ class ExifToolNormalizer:
         lat = self._extract_coordinate(raw, ['GPSLatitude', 'GPS:Latitude', 'Latitude'])
         lon = self._extract_coordinate(raw, ['GPSLongitude', 'GPS:Longitude', 'Longitude'])
         
+        # Debug: Log raw GPS values
+        logger.debug(f"Raw GPS extraction - Lat: {lat}, Lon: {lon}")
+        logger.debug(f"Raw GPS data: GPSLatitude={raw.get('GPSLatitude')}, GPSLongitude={raw.get('GPSLongitude')}")
+        logger.debug(f"GPS Refs: LatRef={raw.get('GPSLatitudeRef')}, LonRef={raw.get('GPSLongitudeRef')}")
+        
+        
         # Check for combined location field
         if not (lat and lon):
             location = raw.get('Location') or raw.get('GPS:Location')
@@ -134,12 +140,17 @@ class ExifToolNormalizer:
         
         # Apply hemisphere corrections
         lat_ref = raw.get('GPSLatitudeRef') or raw.get('GPS:LatitudeRef')
-        if lat_ref == 'S' and lat > 0:
+        if lat_ref and ('S' in lat_ref or 'South' in lat_ref) and lat > 0:
             lat = -lat
         
         lon_ref = raw.get('GPSLongitudeRef') or raw.get('GPS:LongitudeRef')
-        if lon_ref == 'W' and lon > 0:
+        
+        # Apply West hemisphere correction if needed
+        if lon_ref and ('W' in lon_ref or 'West' in lon_ref) and lon > 0:
+            logger.debug(f"Applying West correction: {lon} -> {-lon}")
             lon = -lon
+        
+        logger.debug(f"Final GPS coordinates - Lat: {lat}, Lon: {lon}")
         
         # Extract additional GPS fields
         gps_data = GPSData(
@@ -190,7 +201,9 @@ class ExifToolNormalizer:
                     if dms_match:
                         deg, min, sec, ref = dms_match.groups()
                         decimal = float(deg) + float(min)/60 + float(sec)/3600
-                        if ref in ['S', 'W']:
+                        # Only apply hemisphere if it's in the string
+                        # Otherwise it will be handled by GPSLatitudeRef/GPSLongitudeRef
+                        if ref and ref in ['S', 'W']:
                             decimal = -decimal
                         return decimal
                     
