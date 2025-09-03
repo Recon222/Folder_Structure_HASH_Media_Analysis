@@ -249,6 +249,10 @@ class ExifToolMetadata:
     # Additional location info
     location_name: Optional[str] = None
     
+    # Thumbnail data
+    thumbnail_base64: Optional[str] = None  # Base64-encoded thumbnail for web display
+    thumbnail_type: Optional[str] = None    # Type: ThumbnailImage, PreviewImage, or JpgFromRaw
+    
     # Raw data
     raw_json: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
@@ -307,8 +311,9 @@ class ExifToolSettings:
     
     # Advanced options
     use_mwg: bool = False           # Use Metadata Working Group mappings
-    extract_binary: bool = False     # Extract binary data
+    extract_binary: bool = False     # Extract ALL binary data
     extract_unknown: bool = False    # Extract unknown tags
+    extract_thumbnails: bool = False # Extract embedded thumbnails specifically
     
     # Privacy settings
     gps_precision: GPSPrecisionLevel = GPSPrecisionLevel.EXACT
@@ -331,6 +336,7 @@ class ExifToolSettings:
             'use_mwg': self.use_mwg,
             'extract_binary': self.extract_binary,
             'extract_unknown': self.extract_unknown,
+            'extract_thumbnails': self.extract_thumbnails,
             'gps_precision': self.gps_precision.name,
             'obfuscate_gps': self.obfuscate_gps,
             'batch_size': self.batch_size,

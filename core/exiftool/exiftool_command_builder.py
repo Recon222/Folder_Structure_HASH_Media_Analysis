@@ -253,8 +253,22 @@ class ExifToolForensicCommandBuilder:
             cmd.append('-use')
             cmd.append('MWG')  # Use Metadata Working Group mappings
         
-        if getattr(settings, 'extract_binary', False):
-            cmd.append('-b')  # Extract binary data (thumbnails, etc.)
+        # Handle thumbnail extraction specifically
+        extract_thumbnails = getattr(settings, 'extract_thumbnails', False)
+        logger.info(f"COMMAND BUILDER - extract_thumbnails={extract_thumbnails}")
+        
+        if extract_thumbnails:
+            logger.info("THUMBNAIL EXTRACTION ENABLED - Adding thumbnail tags to command")
+            # Extract specific thumbnail fields as base64
+            cmd.extend([
+                '-ThumbnailImage',     # JPEG thumbnail (most common)
+                '-PreviewImage',       # Larger preview image
+                '-JpgFromRaw',        # JPEG extracted from RAW
+                '-b'                  # Binary output as base64 in JSON
+            ])
+        elif getattr(settings, 'extract_binary', False):
+            # Extract ALL binary data
+            cmd.append('-b')
         
         if getattr(settings, 'extract_unknown', False):
             cmd.append('-U')  # Extract unknown tags
@@ -285,6 +299,7 @@ class ExifToolForensicCommandBuilder:
             getattr(settings, 'use_mwg', False),
             getattr(settings, 'extract_binary', False),
             getattr(settings, 'extract_unknown', False),
+            getattr(settings, 'extract_thumbnails', False),
         )
         return str(hash(settings_tuple))
     

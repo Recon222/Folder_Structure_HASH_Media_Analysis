@@ -700,16 +700,16 @@ class MediaAnalysisTab(QWidget):
         
         # Field groups
         if 'geospatial' in self.exif_field_groups:
-            settings.extract_gps = self.exif_field_groups['geospatial']['group'].isChecked()
+            settings.geospatial_enabled = self.exif_field_groups['geospatial']['group'].isChecked()
         
         if 'temporal' in self.exif_field_groups:
-            settings.extract_temporal = self.exif_field_groups['temporal']['group'].isChecked()
+            settings.temporal_enabled = self.exif_field_groups['temporal']['group'].isChecked()
         
         if 'device' in self.exif_field_groups:
-            settings.extract_device = self.exif_field_groups['device']['group'].isChecked()
+            settings.device_enabled = self.exif_field_groups['device']['group'].isChecked()
         
         if 'camera_settings' in self.exif_field_groups:
-            settings.extract_camera_settings = self.exif_field_groups['camera_settings']['group'].isChecked()
+            settings.camera_settings_enabled = self.exif_field_groups['camera_settings']['group'].isChecked()
         
         # GPS privacy level
         privacy_index = self.gps_privacy_combo.currentIndex()
@@ -722,8 +722,11 @@ class MediaAnalysisTab(QWidget):
         
         # Other options
         settings.extract_thumbnails = self.extract_thumbnails_check.isChecked()
-        settings.include_binary = self.include_binary_check.isChecked()
+        settings.extract_binary = self.include_binary_check.isChecked()
         settings.batch_size = self.exif_batch_spin.value()
+        
+        # Debug logging
+        logger.info(f"EXIFTOOL SETTINGS: extract_thumbnails={settings.extract_thumbnails}, extract_binary={settings.extract_binary}")
         
         return settings
     

@@ -197,6 +197,11 @@ class GeoVisualizationWidget(QWidget):
         """
         self.current_metadata = metadata_list
         
+        # Debug logging
+        logger.info(f"ADD_MEDIA_LOCATIONS: Received {len(metadata_list)} metadata objects")
+        for metadata in metadata_list:
+            logger.info(f"  - {metadata.file_path.name}: has_thumbnail={metadata.thumbnail_base64 is not None}")
+        
         # Convert to marker format
         markers = []
         for metadata in metadata_list:
@@ -258,6 +263,14 @@ class GeoVisualizationWidget(QWidget):
             marker['speed'] = metadata.gps_data.speed
         if metadata.gps_data.direction:
             marker['direction'] = metadata.gps_data.direction
+        
+        # Add thumbnail if available
+        if metadata.thumbnail_base64:
+            logger.info(f"ADDING THUMBNAIL to marker for {metadata.file_path.name}, type: {metadata.thumbnail_type}")
+            marker['thumbnail'] = metadata.thumbnail_base64
+            marker['thumbnail_type'] = metadata.thumbnail_type
+        else:
+            logger.debug(f"No thumbnail available for {metadata.file_path.name}")
         
         return marker
     

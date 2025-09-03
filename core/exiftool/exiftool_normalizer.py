@@ -93,6 +93,9 @@ class ExifToolNormalizer:
             # Extract additional location info
             metadata.location_name = self._extract_location_name(raw_metadata)
             
+            # Extract thumbnail if present
+            self._extract_thumbnail(metadata, raw_metadata)
+            
         except Exception as e:
             logger.error(f"Error normalizing metadata for {file_path}: {e}")
             metadata.error = str(e)
@@ -516,3 +519,52 @@ class ExifToolNormalizer:
                 except (ValueError, TypeError):
                     continue
         return None
+    
+    def _extract_thumbnail(self, metadata: ExifToolMetadata, raw: Dict[str, Any]) -> None:
+        """
+        Extract and encode thumbnail data from raw metadata
+        
+        Args:
+            metadata: ExifToolMetadata object to update
+            raw: Raw metadata dictionary from ExifTool
+        """
+        logger.info(f"THUMBNAIL CHECK for {metadata.file_path.name}")
+        
+        # Check for thumbnail fields in order of preference
+        thumbnail_fields = [
+            ('ThumbnailImage', 'ThumbnailImage'),      # Most common JPEG thumbnail
+            ('PreviewImage', 'PreviewImage'),          # Larger preview image
+            ('JpgFromRaw', 'JpgFromRaw'),             # JPEG extracted from RAW
+        ]
+        
+        for field_name, field_type in thumbnail_fields:
+            thumbnail_data = raw.get(field_name)
+            if thumbnail_data:
+                logger.info(f"THUMBNAIL FOUND: {field_type} for {metadata.file_path.name}, data type: {type(thumbnail_data)}")
+                # ExifTool with -b flag in JSON mode returns base64 strings
+                if isinstance(thumbnail_data, str):
+                    # Log first 100 chars to check format
+                    logger.debug(f"Thumbnail data preview (first 100 chars): {thumbnail_data[:100]}")
+                    
+                    # Remove 'base64:' prefix if present (ExifTool adds this)
+                    if thumbnail_data.startswith('base64:'):
+                        thumbnail_data = thumbnail_data[7:]  # Remove 'base64:' prefix
+                        logger.debug("Removed 'base64:' prefix from thumbnail data")
+                    
+                    # Clean up any whitespace or newlines
+                    thumbnail_data = thumbnail_data.strip().replace('\n', '').replace('\r', '')
+                    
+                    # It's already base64 encoded from ExifTool
+                    metadata.thumbnail_base64 = thumbnail_data
+                    metadata.thumbnail_type = field_type
+                    logger.info(f"THUMBNAIL EXTRACTED: {field_type} thumbnail for {metadata.file_path.name}, base64 length: {len(metadata.thumbnail_base64)}")
+                    return
+                elif isinstance(thumbnail_data, bytes):
+                    # If it's raw bytes, encode to base64
+                    import base64
+                    metadata.thumbnail_base64 = base64.b64encode(thumbnail_data).decode('utf-8')
+                    metadata.thumbnail_type = field_type
+                    logger.debug(f"Encoded {field_type} thumbnail for {metadata.file_path.name}")
+                    return
+        
+        logger.debug(f"No thumbnail found for {metadata.file_path.name}")

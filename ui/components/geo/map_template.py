@@ -141,6 +141,20 @@ MAP_HTML_TEMPLATE = """<!DOCTYPE html>
         .leaflet-popup-content {
             font-size: 13px;
             line-height: 1.5;
+            min-width: 200px;
+        }
+        
+        .popup-content {
+            padding: 5px;
+        }
+        
+        .popup-thumbnail {
+            text-align: center;
+            margin-bottom: 10px;
+        }
+        
+        .popup-thumbnail img {
+            cursor: zoom-in;
         }
         
         .popup-title {
@@ -404,6 +418,24 @@ MAP_HTML_TEMPLATE = """<!DOCTYPE html>
                 
                 // Create popup content
                 let popupHtml = `<div class="popup-content">`;
+                
+                // Add thumbnail at the top if available
+                if (data.thumbnail) {
+                    console.log('Thumbnail data present, length:', data.thumbnail.length);
+                    popupHtml += `<div class="popup-thumbnail">`;
+                    // Check if base64 already has the data URI prefix
+                    const imgSrc = data.thumbnail.startsWith('data:') 
+                        ? data.thumbnail 
+                        : `data:image/jpeg;base64,${data.thumbnail}`;
+                    popupHtml += `<img src="${imgSrc}" `;
+                    popupHtml += `style="max-width:200px; max-height:150px; width:auto; height:auto; `;
+                    popupHtml += `display:block; margin:0 auto 10px auto; border-radius:4px; `;
+                    popupHtml += `box-shadow:0 2px 4px rgba(0,0,0,0.1);" `;
+                    popupHtml += `alt="${data.filename}" `;
+                    popupHtml += `onerror="console.error('Image failed to load for:', '${data.filename}'); this.style.display='none';" />`;
+                    popupHtml += `</div>`;
+                }
+                
                 popupHtml += `<div class="popup-title">${data.filename || 'Unknown'}</div>`;
                 
                 if (data.time_display) {

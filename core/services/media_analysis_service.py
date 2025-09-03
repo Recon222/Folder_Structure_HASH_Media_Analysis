@@ -762,6 +762,7 @@ class MediaAnalysisService(BaseService, IMediaAnalysisService):
                 )
             
             logger.info(f"Starting ExifTool analysis of {len(files)} files")
+            logger.info(f"MEDIA SERVICE - extract_thumbnails setting: {getattr(settings, 'extract_thumbnails', False)}")
             start_time = time.time()
             
             # Extract metadata using ExifTool

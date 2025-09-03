@@ -64,6 +64,9 @@ class ExifToolWrapper:
         total_files = len(files)
         processed = 0
         
+        # Debug logging for settings
+        logger.info(f"EXIFTOOL WRAPPER - extract_thumbnails: {getattr(settings, 'extract_thumbnails', False)}")
+        
         # Build batch commands
         batch_commands = self.command_builder.build_batch_command(
             self.binary_path,
@@ -248,6 +251,9 @@ class ExifToolWrapper:
         errors = []
         
         try:
+            # Log the actual command for debugging
+            logger.debug(f"EXECUTING EXIFTOOL COMMAND: {' '.join(cmd[:20])}..." if len(cmd) > 20 else ' '.join(cmd))
+            
             # Execute command
             result = subprocess.run(
                 cmd,
@@ -270,6 +276,10 @@ class ExifToolWrapper:
                     for metadata in metadata_list:
                         if 'SourceFile' in metadata:
                             source_path = Path(metadata['SourceFile'])
+                            # Debug: Check for thumbnail fields
+                            has_thumbnail = any(k in metadata for k in ['ThumbnailImage', 'PreviewImage', 'JpgFromRaw'])
+                            if has_thumbnail:
+                                logger.info(f"THUMBNAIL FIELDS FOUND in raw output for {source_path.name}")
                             # Add execution time per file
                             metadata['_extraction_time'] = execution_time / len(metadata_list)
                             results.append(metadata)
