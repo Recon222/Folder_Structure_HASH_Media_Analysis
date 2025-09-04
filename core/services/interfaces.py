@@ -3,12 +3,35 @@
 Service interfaces for dependency injection and testing
 """
 from abc import ABC, abstractmethod
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Callable, ContextManager
 from pathlib import Path
+from enum import Enum
 
 from ..models import FormData
 from ..result_types import Result, FileOperationResult, ReportGenerationResult, ArchiveOperationResult
 from .success_message_data import SuccessMessageData, QueueOperationData
+
+
+class ResourceType(Enum):
+    """Types of resources that can be tracked"""
+    MEMORY = "memory"
+    FILE_HANDLE = "file_handle"
+    THREAD = "thread"
+    QOBJECT = "qobject"
+    THUMBNAIL = "thumbnail"
+    MAP = "map"
+    WORKER = "worker"
+    CUSTOM = "custom"
+
+
+class ComponentState(Enum):
+    """Lifecycle states for components"""
+    LOADED = "loaded"
+    INITIALIZED = "initialized"
+    ACTIVE = "active"
+    PAUSED = "paused"
+    CLEANING = "cleaning"
+    DESTROYED = "destroyed"
 
 class IService(ABC):
     """Base interface for all services"""
@@ -415,5 +438,182 @@ class IMediaAnalysisService(IService):
             
         Returns:
             Result containing KML path or error
+        """
+        pass
+
+
+class IResourceManagementService(IService):
+    """Interface for centralized resource management in plugin architecture"""
+    
+    @abstractmethod
+    def register_component(self, component: Any, component_id: str, 
+                         component_type: str = "plugin") -> None:
+        """
+        Register a component for resource tracking
+        
+        Args:
+            component: The component instance to register
+            component_id: Unique identifier for the component
+            component_type: Type of component (plugin, tab, service, etc.)
+        """
+        pass
+    
+    @abstractmethod
+    def unregister_component(self, component: Any) -> None:
+        """
+        Unregister a component and cleanup all its resources
+        
+        Args:
+            component: The component to unregister
+        """
+        pass
+    
+    @abstractmethod
+    def track_resource(self, component: Any, resource_type: ResourceType,
+                      resource: Any, size_bytes: Optional[int] = None,
+                      metadata: Optional[Dict] = None) -> str:
+        """
+        Track a resource with optional size and metadata
+        
+        Args:
+            component: Component that owns the resource
+            resource_type: Type of resource being tracked
+            resource: The actual resource object
+            size_bytes: Optional size in bytes for memory tracking
+            metadata: Optional metadata about the resource
+            
+        Returns:
+            Unique resource ID for later release
+        """
+        pass
+    
+    @abstractmethod
+    def release_resource(self, component: Any, resource_id: str) -> bool:
+        """
+        Release a specific tracked resource
+        
+        Args:
+            component: Component that owns the resource
+            resource_id: ID of resource to release
+            
+        Returns:
+            True if resource was released, False if not found
+        """
+        pass
+    
+    @abstractmethod
+    def register_cleanup(self, component: Any, callback: Callable,
+                        priority: int = 0) -> None:
+        """
+        Register a cleanup callback for component
+        
+        Args:
+            component: Component to register callback for
+            callback: Function to call during cleanup
+            priority: Higher priority callbacks run first
+        """
+        pass
+    
+    @abstractmethod
+    def managed_resource(self, component: Any, 
+                        resource_type: ResourceType) -> ContextManager:
+        """
+        Context manager for automatic resource cleanup
+        
+        Args:
+            component: Component that will own the resource
+            resource_type: Type of resource being managed
+            
+        Returns:
+            Context manager that handles resource lifecycle
+        """
+        pass
+    
+    @abstractmethod
+    def cleanup_component(self, component: Any, force: bool = False) -> None:
+        """
+        Clean up all resources for a component
+        
+        Args:
+            component: Component to clean up
+            force: If True, force cleanup even on errors
+        """
+        pass
+    
+    @abstractmethod
+    def get_memory_usage(self) -> Dict[str, int]:
+        """
+        Get memory usage by component
+        
+        Returns:
+            Dictionary mapping component_id to bytes used
+        """
+        pass
+    
+    @abstractmethod
+    def get_resource_count(self, component: Any = None) -> Dict[str, int]:
+        """
+        Get resource count by type
+        
+        Args:
+            component: Optional component to filter by
+            
+        Returns:
+            Dictionary mapping resource type to count
+        """
+        pass
+    
+    @abstractmethod
+    def set_component_state(self, component: Any, state: ComponentState) -> None:
+        """
+        Update component lifecycle state
+        
+        Args:
+            component: Component to update
+            state: New state
+        """
+        pass
+    
+    @abstractmethod
+    def get_component_state(self, component: Any) -> Optional[ComponentState]:
+        """
+        Get current component state
+        
+        Args:
+            component: Component to check
+            
+        Returns:
+            Current state or None if not registered
+        """
+        pass
+    
+    @abstractmethod
+    def set_memory_limit(self, component_id: str, limit_bytes: int) -> None:
+        """
+        Set memory limit for a component
+        
+        Args:
+            component_id: Component identifier
+            limit_bytes: Maximum memory in bytes
+        """
+        pass
+    
+    @abstractmethod
+    def set_global_memory_limit(self, limit_bytes: int) -> None:
+        """
+        Set global memory limit for all components
+        
+        Args:
+            limit_bytes: Maximum total memory in bytes
+        """
+        pass
+    
+    @abstractmethod
+    def get_statistics(self) -> Dict[str, Any]:
+        """
+        Get resource management statistics
+        
+        Returns:
+            Dictionary with statistics about resource usage
         """
         pass

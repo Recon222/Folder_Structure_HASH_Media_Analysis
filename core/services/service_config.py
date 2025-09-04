@@ -6,7 +6,7 @@ from .service_registry import register_service
 from .interfaces import (
     IPathService, IFileOperationService, IReportService,
     IArchiveService, IValidationService, ISuccessMessageService,
-    ICopyVerifyService, IMediaAnalysisService
+    ICopyVerifyService, IMediaAnalysisService, IResourceManagementService
 )
 from .path_service import PathService
 from .file_operation_service import FileOperationService
@@ -18,10 +18,15 @@ from .copy_verify_service import CopyVerifyService
 from .media_analysis_service import MediaAnalysisService
 from .thread_management_service import ThreadManagementService, IThreadManagementService
 from .performance_formatter_service import PerformanceFormatterService, IPerformanceFormatterService
+from .resource_management_service import ResourceManagementService
 
 def configure_services(zip_controller=None):
     """Configure and register all application services"""
     try:
+        # ✅ RESOURCE MANAGEMENT SERVICE: Foundational service for plugin architecture
+        # Register first as other services and components will depend on it
+        register_service(IResourceManagementService, ResourceManagementService())
+        
         # Core business logic services
         register_service(IPathService, PathService())
         register_service(IFileOperationService, FileOperationService())
@@ -61,6 +66,7 @@ def configure_services(zip_controller=None):
 def get_configured_services():
     """Get list of all configured service interfaces for debugging"""
     return [
+        IResourceManagementService,  # Foundational service
         IPathService,
         IFileOperationService,
         IReportService,
