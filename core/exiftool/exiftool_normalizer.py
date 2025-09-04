@@ -9,12 +9,25 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple
 from collections import defaultdict
+import base64
+from io import BytesIO
 
 from .exiftool_models import (
     ExifToolMetadata, GPSData, DeviceInfo, TemporalData,
     DocumentIntegrity, CameraSettings, GPSPrecisionLevel
 )
 from ..logger import logger
+
+# Try to import HEIC support
+try:
+    import pillow_heif
+    from PIL import Image
+    pillow_heif.register_heif_opener()
+    HEIC_SUPPORT = True
+    logger.info("HEIC thumbnail support enabled via pillow-heif")
+except ImportError:
+    HEIC_SUPPORT = False
+    logger.warning("pillow-heif not available - HEIC thumbnails will not be extracted")
 
 
 class ExifToolNormalizer:
@@ -520,6 +533,59 @@ class ExifToolNormalizer:
                     continue
         return None
     
+    def _extract_heic_thumbnail(self, metadata: ExifToolMetadata) -> None:
+        """
+        Extract/generate thumbnail from HEIC file using pillow-heif
+        
+        Args:
+            metadata: ExifToolMetadata object to update
+        """
+        if not HEIC_SUPPORT:
+            return
+        
+        try:
+            logger.debug(f"Attempting HEIC thumbnail generation for {metadata.file_path.name}")
+            
+            # Two approaches to try:
+            # 1. Use pillow-heif directly for more control
+            # 2. Use PIL with registered HEIF opener
+            
+            try:
+                # Approach 1: Use pillow-heif for direct access
+                heif_file = pillow_heif.open_heif(str(metadata.file_path))
+                
+                # Get the primary image (first image in the file)
+                for img in heif_file:
+                    # Convert to PIL Image
+                    pil_img = img.to_pillow()
+                    logger.debug(f"Converted HEIC to PIL: size={pil_img.size}, mode={pil_img.mode}")
+                    break
+            except Exception as e:
+                logger.debug(f"pillow-heif direct approach failed: {e}, trying PIL")
+                # Approach 2: Use PIL directly (pillow-heif has registered the format)
+                pil_img = Image.open(str(metadata.file_path))
+            
+            # Generate thumbnail from the main image
+            thumb_img = pil_img.copy()
+            thumb_img.thumbnail((200, 200), Image.Resampling.LANCZOS)
+            
+            # Convert to JPEG and encode as base64
+            buffer = BytesIO()
+            thumb_img.save(buffer, format='JPEG', quality=85)
+            jpeg_data = buffer.getvalue()
+            
+            # Encode to base64
+            metadata.thumbnail_base64 = base64.b64encode(jpeg_data).decode('utf-8')
+            metadata.thumbnail_type = 'HEICGenerated'
+            
+            logger.info(f"HEIC THUMBNAIL GENERATED: {metadata.file_path.name}, "
+                      f"size={thumb_img.size}, base64 length={len(metadata.thumbnail_base64)}")
+            return
+                    
+        except Exception as e:
+            logger.error(f"Failed to generate HEIC thumbnail for {metadata.file_path.name}: {e}")
+            return
+    
     def _extract_thumbnail(self, metadata: ExifToolMetadata, raw: Dict[str, Any]) -> None:
         """
         Extract and encode thumbnail data from raw metadata
@@ -567,4 +633,9 @@ class ExifToolNormalizer:
                     logger.debug(f"Encoded {field_type} thumbnail for {metadata.file_path.name}")
                     return
         
-        logger.debug(f"No thumbnail found for {metadata.file_path.name}")
+        # If no ExifTool thumbnail found and it's a HEIC file, try pillow-heif
+        if HEIC_SUPPORT and metadata.file_path.suffix.lower() in ['.heic', '.heif']:
+            logger.debug(f"No ExifTool thumbnail for {metadata.file_path.name}, trying pillow-heif")
+            self._extract_heic_thumbnail(metadata)
+        else:
+            logger.debug(f"No thumbnail found for {metadata.file_path.name}")
