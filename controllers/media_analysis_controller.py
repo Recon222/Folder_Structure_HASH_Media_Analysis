@@ -349,4 +349,3 @@ class MediaAnalysisController(BaseController):
     def cleanup(self):
         """Clean up resources"""
         self.cancel_current_operation()
-        super().cleanup()
