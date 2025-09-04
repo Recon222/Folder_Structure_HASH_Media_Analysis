@@ -10,9 +10,12 @@ from PySide6.QtWidgets import (
     QSplitter
 )
 from typing import Optional
+import logging
 
 from core.models import FormData
 from ui.components import FormPanel, FilesPanel, LogConsole, TemplateSelector
+from core.services.service_registry import get_service
+from core.services.interfaces import IResourceManagementService, ResourceType
 
 
 class ForensicTab(QWidget):
@@ -38,8 +41,37 @@ class ForensicTab(QWidget):
         self.current_thread = None  # Will hold FolderStructureThread reference
         self.is_paused = False
         
+        # Resource management
+        self._resource_manager = None
+        self._worker_resource_id = None
+        self.logger = logging.getLogger(__name__)
+        
+        # Register with ResourceManagementService
+        self._register_with_resource_manager()
+        
         self._create_ui()
         self._connect_signals()
+    
+    def _register_with_resource_manager(self):
+        """Register this tab with the resource management service"""
+        try:
+            self._resource_manager = get_service(IResourceManagementService)
+            if self._resource_manager:
+                self._resource_manager.register_component(
+                    self, 
+                    "ForensicTab", 
+                    "tab"
+                )
+                # Register cleanup callback
+                self._resource_manager.register_cleanup(
+                    self,
+                    self._cleanup_resources,
+                    priority=10
+                )
+                self.logger.info("ForensicTab registered with ResourceManagementService")
+        except Exception as e:
+            self.logger.warning(f"Could not register ForensicTab with ResourceManagementService: {e}")
+            self._resource_manager = None
         
     def _create_ui(self):
         """Create the tab UI"""
@@ -180,9 +212,31 @@ class ForensicTab(QWidget):
             thread: Current thread reference (FolderStructureThread)
         """
         self.processing_active = active
-        self.current_thread = thread
-        if not active:
+        
+        # Handle resource tracking for the worker thread
+        if active and thread:
+            # Release any existing worker resource before tracking new one
+            self._release_worker_resource()
+            
+            # Track the new worker thread
+            self.current_thread = thread
+            if self._resource_manager:
+                self._worker_resource_id = self._resource_manager.track_resource(
+                    self,
+                    ResourceType.WORKER,
+                    thread,
+                    metadata={
+                        'type': 'FolderStructureThread',
+                        'cleanup_func': lambda w: w.cancel() if w and w.isRunning() else None
+                    }
+                )
+                self.logger.debug(f"Tracked FolderStructureThread worker: {self._worker_resource_id}")
+        else:
+            # Processing stopped - release worker resource
+            self._release_worker_resource()
+            self.current_thread = None
             self.is_paused = False  # Reset pause state when processing stops
+            
         self._update_ui_for_processing_state()
     
     def set_paused_state(self, paused: bool):
@@ -233,6 +287,35 @@ class ForensicTab(QWidget):
         """Handle template selection change"""
         template_name = self.template_selector.template_combo.currentText()
         self.log(f"Template changed to: {template_name} ({template_id})")
+    
+    def _cleanup_resources(self):
+        """Clean up tab-specific resources (called by ResourceManagementService)"""
+        self.logger.info("Cleaning up ForensicTab resources")
+        
+        # Cancel any running operation
+        if self.current_thread:
+            if hasattr(self.current_thread, 'cancel'):
+                self.current_thread.cancel()
+            # Release the worker resource
+            self._release_worker_resource()
+            self.current_thread = None
+        
+        # Reset state
+        self.processing_active = False
+        self.is_paused = False
+        
+        # Clear log console if it has a clear method
+        if hasattr(self.log_console, 'clear'):
+            self.log_console.clear()
+        
+        self.logger.info("ForensicTab cleanup complete")
+    
+    def _release_worker_resource(self):
+        """Helper to release tracked worker resource"""
+        if self._worker_resource_id and self._resource_manager:
+            self._resource_manager.release_resource(self, self._worker_resource_id)
+            self._worker_resource_id = None
+            self.logger.debug("Released worker resource")
         
     # Example signal handlers (uncomment to use)
     """
