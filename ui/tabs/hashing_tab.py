@@ -739,6 +739,9 @@ class HashingTab(QWidget):
             self.hash_controller.cancel_current_operation()
             self._set_operation_active(False)
             
+            # Release the worker resource after cancellation
+            self._release_worker_resource()
+            
     def _start_single_hash_operation(self):
         """Start single hash operation"""
         try:

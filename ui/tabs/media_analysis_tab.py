@@ -1270,6 +1270,12 @@ class MediaAnalysisTab(QWidget):
         if self.current_worker and self.current_worker.isRunning():
             self.log_message.emit("Cancelling operation...")
             self.current_worker.cancel()
+            
+            # Release the worker resource after cancellation
+            self._release_worker_resource()
+            
+            # Update UI state
+            self._set_operation_active(False)
     
     def _set_operation_active(self, active: bool):
         """Update UI state for operation status"""

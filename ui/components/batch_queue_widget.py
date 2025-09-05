@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import List, Optional
 import time
 import uuid
+import logging
 
 from PySide6.QtCore import Signal, Qt, QTimer
 from PySide6.QtWidgets import (
@@ -28,6 +29,8 @@ from core.exceptions import UIError, ErrorSeverity
 from core.error_handler import handle_error
 from ui.dialogs.success_dialog import SuccessDialog
 from ui.components.elided_label import ElidedLabel
+from core.services.service_registry import get_service
+from core.services.interfaces import IResourceManagementService, ResourceType
 
 
 class BatchQueueWidget(QWidget):
@@ -46,10 +49,22 @@ class BatchQueueWidget(QWidget):
         self.processing_active = False
         self.stats_timer = QTimer()
         
+        # Resource management
+        self._resource_manager = None
+        self._processor_resource_id = None
+        self._timer_resource_id = None
+        self.logger = logging.getLogger(__name__)
+        
+        # Register with ResourceManagementService as sub-component
+        self._register_with_resource_manager()
+        
         # Initialize recovery manager
         self.recovery_manager = BatchRecoveryManager(auto_save_interval=300)  # 5 minutes
         self.recovery_manager.set_batch_queue(self.batch_queue)
         self.recovery_manager.start_monitoring()
+        
+        # Track internal resources
+        self._track_internal_resources()
         
         self._setup_ui()
         self._connect_signals()
@@ -471,6 +486,9 @@ class BatchQueueWidget(QWidget):
         self.processor_thread = BatchProcessorThread(self.batch_queue, self.main_window)
         self._connect_processor_signals()
         
+        # Track the processor thread as a resource
+        self._track_processor_thread(self.processor_thread)
+        
         self.processing_active = True
         self.recovery_manager.set_processing_active(True)
         self._update_ui_for_processing_state()
@@ -499,6 +517,9 @@ class BatchQueueWidget(QWidget):
             
         # Nuclear migration: Convert to immediate action with warning notification
         self.processor_thread.cancel()
+        
+        # Release the processor thread resource
+        self._release_processor_resource()
         
         # Show warning notification about the cancellation
         warning_error = UIError(
@@ -562,6 +583,10 @@ class BatchQueueWidget(QWidget):
         self.processing_active = False
         self.recovery_manager.set_processing_active(False)
         self._update_ui_for_processing_state()
+        
+        # Release the processor thread resource
+        self._release_processor_resource()
+        self.processor_thread = None
         
         # Clear batch operation choice from ZIP controller
         if self.main_window and hasattr(self.main_window, 'zip_controller'):
@@ -832,3 +857,138 @@ class BatchQueueWidget(QWidget):
     def get_recovery_manager(self) -> BatchRecoveryManager:
         """Get the recovery manager instance"""
         return self.recovery_manager
+    
+    def _register_with_resource_manager(self):
+        """Register this widget with the resource management service as a sub-component"""
+        try:
+            self._resource_manager = get_service(IResourceManagementService)
+            if self._resource_manager:
+                # Register as sub-component under BatchTab
+                self._resource_manager.register_component(
+                    self, 
+                    "BatchQueueWidget", 
+                    "sub_component"
+                )
+                # Register cleanup callback with higher priority than parent
+                self._resource_manager.register_cleanup(
+                    self,
+                    self._cleanup_resources,
+                    priority=15  # Higher priority than BatchTab (10)
+                )
+                self.logger.info("BatchQueueWidget registered with ResourceManagementService")
+        except Exception as e:
+            self.logger.warning(f"Could not register BatchQueueWidget with ResourceManagementService: {e}")
+            self._resource_manager = None
+    
+    def _track_internal_resources(self):
+        """Track internal resources like queue and recovery manager"""
+        if not self._resource_manager:
+            return
+            
+        try:
+            # Track BatchQueue
+            self._resource_manager.track_resource(
+                self,
+                ResourceType.CUSTOM,
+                self.batch_queue,
+                metadata={
+                    'type': 'BatchQueue',
+                    'description': 'Queue data structure'
+                }
+            )
+            
+            # Track BatchRecoveryManager
+            self._resource_manager.track_resource(
+                self,
+                ResourceType.CUSTOM,
+                self.recovery_manager,
+                metadata={
+                    'type': 'BatchRecoveryManager',
+                    'description': 'Queue recovery and auto-save manager',
+                    'cleanup_func': lambda rm: rm.stop_monitoring() if rm else None
+                }
+            )
+            
+            # Track the stats timer
+            self._timer_resource_id = self._resource_manager.track_resource(
+                self,
+                ResourceType.CUSTOM,
+                self.stats_timer,
+                metadata={
+                    'type': 'QTimer',
+                    'description': 'Statistics update timer',
+                    'cleanup_func': lambda t: t.stop() if t and t.isActive() else None
+                }
+            )
+            
+            self.logger.info("BatchQueueWidget internal resources tracked")
+        except Exception as e:
+            self.logger.warning(f"Could not track internal resources: {e}")
+    
+    def _track_processor_thread(self, thread: BatchProcessorThread):
+        """Track the batch processor thread as a resource"""
+        if not self._resource_manager or not thread:
+            return
+            
+        try:
+            # Release any existing processor resource
+            self._release_processor_resource()
+            
+            # Track the new processor thread
+            self._processor_resource_id = self._resource_manager.track_resource(
+                self,
+                ResourceType.WORKER,
+                thread,
+                metadata={
+                    'type': 'BatchProcessorThread',
+                    'job_count': len(self.batch_queue.get_pending_jobs()),
+                    'cleanup_func': lambda t: t.cancel() if t and t.isRunning() else None
+                }
+            )
+            
+            self.logger.info(f"Tracked BatchProcessorThread with {len(self.batch_queue.get_pending_jobs())} pending jobs")
+        except Exception as e:
+            self.logger.warning(f"Could not track processor thread: {e}")
+    
+    def _release_processor_resource(self):
+        """Release the processor thread resource"""
+        if self._resource_manager and self._processor_resource_id:
+            try:
+                self._resource_manager.release_resource(self, self._processor_resource_id)
+                self._processor_resource_id = None
+                self.logger.info("Released BatchProcessorThread resource")
+            except Exception as e:
+                self.logger.warning(f"Could not release processor resource: {e}")
+    
+    def _cleanup_resources(self):
+        """Clean up widget-specific resources"""
+        self.logger.info("Cleaning up BatchQueueWidget resources")
+        
+        try:
+            # Save queue state if there are jobs
+            if self.batch_queue and self.batch_queue.jobs:
+                self.recovery_manager._auto_save_state()
+                self.logger.info(f"Final save of batch queue with {len(self.batch_queue.jobs)} jobs")
+            
+            # Cancel any running processing
+            if self.processor_thread and self.processor_thread.isRunning():
+                self.processor_thread.cancel()
+                # Wait briefly for thread to stop
+                self.processor_thread.wait(2000)  # 2 seconds max
+                self.logger.info("Cancelled and stopped batch processor thread")
+            
+            # Release processor resource
+            self._release_processor_resource()
+            
+            # Stop timers
+            if self.stats_timer and self.stats_timer.isActive():
+                self.stats_timer.stop()
+            
+            # Stop recovery monitoring
+            if self.recovery_manager:
+                self.recovery_manager.stop_monitoring()
+            
+            self.logger.info("BatchQueueWidget cleanup complete")
+            
+        except Exception as e:
+            self.logger.error(f"Error during BatchQueueWidget cleanup: {e}")
