@@ -17,7 +17,9 @@
       "mcp__memory__create_relations",
       "mcp__memory__search_nodes",
       "mcp__memory__delete_observations",
-      "mcp__memory__read_graph"
+      "mcp__memory__read_graph",
+      "mcp__context7__get-library-docs",
+      "mcp__perplexity-ask__perplexity_ask"
     ],
     "deny": []
   }

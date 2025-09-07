@@ -8,9 +8,11 @@ Folder Structure Utility - A PySide6 application for professional file organizat
 
 ## Recent Updates
 
-### ExifTool Integration with Geolocation Visualization (NEW)
+### ExifTool Integration with Geolocation Visualization (ENHANCED)
 - **Complete forensic metadata extraction** using ExifTool for GPS, device ID, and temporal analysis
 - **Interactive map visualization** with QWebEngineView and Leaflet for location data
+- **Thumbnail extraction** - Embedded EXIF thumbnails displayed in map popups with base64 encoding
+- **HEIC/HEIF support** - Dynamic thumbnail generation using pillow-heif for modern iPhone formats
 - **Privacy controls** - GPS obfuscation with configurable precision levels
 - **KML export** - Google Earth compatible with device-based grouping
 - **Batch processing** - Optimized with parallel execution and command caching
@@ -157,10 +159,10 @@ progress_callback(percentage, message)
 - `workers/`: QThread implementations with unified Result-based architecture
 - `exiftool/`: **ExifTool integration for forensic metadata extraction** (NEW)
   - `exiftool_binary_manager.py`: Binary detection and validation
-  - `exiftool_command_builder.py`: Optimized command generation with caching
+  - `exiftool_command_builder.py`: Optimized command generation with caching and thumbnail extraction flags
   - `exiftool_wrapper.py`: Batch processing with parallel execution
-  - `exiftool_normalizer.py`: Metadata normalization and GPS extraction
-  - `exiftool_models.py`: Data models for GPS, device, temporal data
+  - `exiftool_normalizer.py`: Metadata normalization, GPS extraction, and thumbnail processing (base64 prefix handling, HEIC support)
+  - `exiftool_models.py`: Data models for GPS, device, temporal data with thumbnail fields
 
 **controllers/**
 - `base_controller.py`: **Service injection foundation** with error handling and logging
@@ -178,9 +180,9 @@ progress_callback(percentage, message)
   - `error_notification_system.py`: **Non-modal error notifications** with auto-dismiss
   - `elided_label.py`: **Text truncation widgets** preventing UI expansion from long file paths
   - `geo/`: **Geolocation visualization components** (NEW)
-    - `geo_visualization_widget.py`: Interactive map with QWebEngineView
-    - `geo_bridge.py`: Qt/JavaScript communication bridge
-    - `map_template.py`: Leaflet-based HTML map template
+    - `geo_visualization_widget.py`: Interactive map with QWebEngineView and thumbnail display support
+    - `geo_bridge.py`: Qt/JavaScript communication bridge with thumbnail data handling
+    - `map_template.py`: Leaflet-based HTML map template with base64 thumbnail rendering in popups
 - `tabs/`: Tab implementations (ForensicTab, BatchTab, HashingTab, CopyVerifyTab, MediaAnalysisTab)
 - `dialogs/`: Settings and configuration dialogs
   - `success_dialog.py`: **Enterprise success celebrations** with native Result object support
@@ -220,7 +222,7 @@ progress_callback(percentage, message)
 - `samples/`: Template examples for advanced features and agency-specific configurations
 
 **Project Dependencies**
-- `requirements.txt`: **Core dependencies** - PySide6>=6.4.0, reportlab>=3.6.12, psutil>=5.9.0, hashwise>=0.1.0
+- `requirements.txt`: **Core dependencies** - PySide6>=6.4.0, reportlab>=3.6.12, psutil>=5.9.0, hashwise>=0.1.0, pillow>=9.0.0, pillow-heif>=0.13.0 (for HEIC support)
 
 ### Important Implementation Details
 
@@ -271,6 +273,16 @@ progress_callback(percentage, message)
 - **Thread Optimization**: Capped at 16 threads for ZIP format compatibility
 - **Command Building**: Simplified parameter set removing problematic 7z-specific flags
 - **Result Integration**: All operations return ArchiveOperationResult with comprehensive error context
+
+#### Media Analysis & Thumbnail Extraction
+- **ExifTool Integration**: Forensic metadata extraction with `-b` flag for base64 thumbnail output
+- **Dual Extraction Approach**: Native EXIF thumbnails for JPEG/RAW, dynamic generation for HEIC/HEIF
+- **Base64 Processing**: Automatic stripping of ExifTool's "base64:" prefix for proper display
+- **HEIC Support**: Uses pillow-heif to register HEIF opener with PIL for thumbnail generation
+- **Map Popup Display**: Thumbnails embedded as base64 data URIs in Leaflet map popups
+- **Fallback Chain**: ThumbnailImage → PreviewImage → JpgFromRaw → HEIC generation
+- **Size Optimization**: Generated thumbnails limited to 200x200 pixels with LANCZOS resampling
+- **Memory Management**: Thumbnails stored in ExifToolMetadata objects, cleared with metadata
 
 ### Testing & Sample Data
 
