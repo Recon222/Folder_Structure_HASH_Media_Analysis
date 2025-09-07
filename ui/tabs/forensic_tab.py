@@ -2,79 +2,109 @@
 # -*- coding: utf-8 -*-
 """
 Forensic Tab - Law enforcement mode interface
+Now with proper controller integration following SOA architecture
 """
+
+from pathlib import Path
+from typing import Optional
+import logging
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-    QSplitter
+    QSplitter, QProgressBar
 )
-from typing import Optional
-import logging
 
 from core.models import FormData
 from ui.components import FormPanel, FilesPanel, LogConsole, TemplateSelector
+from controllers.forensic_controller import ForensicController
 from core.services.service_registry import get_service
 from core.services.interfaces import IResourceManagementService, ResourceType
+from core.exceptions import UIError
+from core.error_handler import handle_error
 
 
 class ForensicTab(QWidget):
     """Forensic mode tab for law enforcement evidence processing"""
     
     # Signals
-    process_requested = Signal()
     log_message = Signal(str)
     template_changed = Signal(str)  # template_id
+    operation_started = Signal()  # New signal for MainWindow
+    operation_completed = Signal()  # New signal for MainWindow
+    progress_update = Signal(int, str)  # Forward progress to MainWindow
     
     def __init__(self, form_data: FormData, parent=None):
-        """Initialize forensic tab
+        """Initialize forensic tab with controller
         
         Args:
             form_data: FormData instance to bind to
-            parent: Parent widget
+            parent: Parent widget (MainWindow)
         """
         super().__init__(parent)
         self.form_data = form_data
+        self.main_window = parent  # Store reference to MainWindow
         
-        # Processing state management
+        # Initialize controller
+        self.controller = ForensicController(self)
+        
+        # Inject ZIP controller if available from MainWindow
+        if hasattr(parent, 'zip_controller'):
+            self.controller.set_zip_controller(parent.zip_controller)
+        
+        # Processing state
         self.processing_active = False
-        self.current_thread = None  # Will hold FolderStructureThread reference
+        self.current_thread = None
         self.is_paused = False
         
         # Resource management
         self._resource_manager = None
+        self._controller_resource_id = None
         self._worker_resource_id = None
         self.logger = logging.getLogger(__name__)
         
         # Register with ResourceManagementService
         self._register_with_resource_manager()
         
+        # Create UI
         self._create_ui()
         self._connect_signals()
     
     def _register_with_resource_manager(self):
-        """Register this tab with the resource management service"""
+        """Register this tab and its controller with resource management"""
         try:
             self._resource_manager = get_service(IResourceManagementService)
             if self._resource_manager:
+                # Register tab
                 self._resource_manager.register_component(
                     self, 
                     "ForensicTab", 
                     "tab"
                 )
-                # Register cleanup callback
+                
+                # Track controller as resource
+                self._controller_resource_id = self._resource_manager.track_resource(
+                    self,
+                    ResourceType.CUSTOM,
+                    self.controller,
+                    metadata={'type': 'ForensicController'}
+                )
+                
+                # Register cleanup
                 self._resource_manager.register_cleanup(
                     self,
                     self._cleanup_resources,
                     priority=10
                 )
-                self.logger.info("ForensicTab registered with ResourceManagementService")
+                
+                self.logger.info("ForensicTab and controller registered with ResourceManagementService")
+                
         except Exception as e:
-            self.logger.warning(f"Could not register ForensicTab with ResourceManagementService: {e}")
+            self.logger.warning(f"Could not register with ResourceManagementService: {e}")
             self._resource_manager = None
         
     def _create_ui(self):
-        """Create the tab UI"""
+        """Create the tab UI with integrated progress bar"""
         layout = QVBoxLayout(self)
         
         # Template selector at top
@@ -107,21 +137,26 @@ class ForensicTab(QWidget):
         
         layout.addWidget(splitter)
         
+        # Progress bar (hidden by default)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setVisible(False)
+        layout.addWidget(self.progress_bar)
+        
         # Action buttons
         button_layout = QHBoxLayout()
         button_layout.addStretch()
         
-        # Process button (left) - green like batch tab
+        # Process button
         self.process_btn = QPushButton("Process Files")
         self.process_btn.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; min-width: 120px; }")
         button_layout.addWidget(self.process_btn)
         
-        # Pause button (middle) - disabled initially, blue when active  
+        # Pause button
         self.pause_btn = QPushButton("Pause")
         self.pause_btn.setEnabled(False)
         button_layout.addWidget(self.pause_btn)
         
-        # Cancel button (right) - red like batch tab
+        # Cancel button
         self.cancel_btn = QPushButton("Cancel") 
         self.cancel_btn.setEnabled(False)
         self.cancel_btn.setStyleSheet("QPushButton { background-color: #f44336; color: white; }")
@@ -131,225 +166,181 @@ class ForensicTab(QWidget):
         
     def _connect_signals(self):
         """Connect internal signals"""
-        # Form panel signals
-        self.form_panel.calculate_offset_requested.connect(
-            lambda: self.log_console.log(f"Calculated offset: {self.form_data.time_offset}")
-        )
-        
-        # Optional: Connect to form_data_changed for validation or live updates
-        # self.form_panel.form_data_changed.connect(self._on_form_data_changed)
-        
-        # Files panel signals
-        self.files_panel.log_message.connect(self.log)
-        
-        # Log console signals (optional: for external monitoring)
-        # self.log_console.message_logged.connect(self._on_message_logged)
-        # self.log_console.log_cleared.connect(self._on_log_cleared)
-        
-        # Process button
-        self.process_btn.clicked.connect(self.process_requested)
+        # Process button triggers controller
+        self.process_btn.clicked.connect(self._process_requested)
         
         # Control buttons
         self.pause_btn.clicked.connect(self._pause_processing)
         self.cancel_btn.clicked.connect(self._cancel_processing)
         
-        # Template selector signals
+        # Template selector
         self.template_selector.template_changed.connect(self.template_changed)
         self.template_selector.template_changed.connect(self._on_template_changed)
         
-    def log(self, message: str):
-        """Forward message to parent via signal
+        # Form panel signals
+        self.form_panel.calculate_offset_requested.connect(
+            lambda: self.log(f"Calculated offset: {self.form_data.time_offset}")
+        )
         
-        Args:
-            message: Message to log
-        """
-        # Don't log here - parent will handle it to avoid duplication
-        # self.log_console.log(message)
+        # Files panel signals
+        self.files_panel.log_message.connect(self.log)
+        
+    def _process_requested(self):
+        """Handle process button click - delegate to controller"""
+        try:
+            # Get files and folders
+            files = self.files_panel.get_files()
+            folders = self.files_panel.get_folders()
+            
+            # Get performance monitor from MainWindow if available
+            perf_monitor = None
+            if self.main_window and hasattr(self.main_window, 'performance_monitor'):
+                perf_monitor = self.main_window.performance_monitor
+            
+            # Start processing via controller
+            result = self.controller.process_forensic_files(
+                form_data=self.form_data,
+                files=files,
+                folders=folders,
+                performance_monitor=perf_monitor
+            )
+            
+            if result.success:
+                # Store thread reference
+                self.current_thread = result.value
+                
+                # Connect thread signals
+                self.current_thread.progress_update.connect(self._on_progress_update)
+                self.current_thread.result_ready.connect(self._on_operation_finished)
+                
+                # Track thread as resource
+                if self._resource_manager:
+                    self._worker_resource_id = self._resource_manager.track_resource(
+                        self,
+                        ResourceType.WORKER,
+                        self.current_thread,
+                        metadata={'type': 'FolderStructureThread'}
+                    )
+                
+                # Update UI state
+                self.set_processing_state(True)
+                
+                # Notify MainWindow
+                self.operation_started.emit()
+                
+                # Start thread
+                self.current_thread.start()
+                
+                self.log("Started forensic file processing")
+            else:
+                # Error already handled by controller
+                self.log(f"Failed to start processing: {result.error.user_message}")
+                
+        except Exception as e:
+            error = UIError(
+                f"Failed to start processing: {e}",
+                user_message="Could not start file processing. Please try again."
+            )
+            handle_error(error, {'component': 'ForensicTab'})
+    
+    def _on_progress_update(self, percentage: int, message: str):
+        """Handle progress updates from thread"""
+        self.progress_bar.setValue(percentage)
+        if message:
+            self.log(message)
+        # Forward to MainWindow
+        self.progress_update.emit(percentage, message)
+    
+    def _on_operation_finished(self, result):
+        """Handle operation completion - SIMPLIFIED"""
+        try:
+            # Let controller handle EVERYTHING internally
+            self.controller.on_operation_finished(result)
+            
+            # Controller will call set_processing_state(False) when done
+            # We don't need to do anything else here
+            
+        except Exception as e:
+            self.logger.error(f"Error in operation completion: {e}")
+            self.set_processing_state(False)
+            self.operation_completed.emit()
+    
+    def log(self, message: str):
+        """Log message to console and emit signal"""
+        self.log_console.log(message)
         self.log_message.emit(message)
         
-    def get_selected_files(self):
-        """Get files and folders from the files panel
-        
-        Returns:
-            Tuple of (files_list, folders_list)
-        """
-        return self.files_panel.get_files(), self.files_panel.get_folders()
-        
-    def set_process_button_enabled(self, enabled: bool):
-        """Enable or disable the process button
-        
-        Args:
-            enabled: Whether to enable the button
-        """
-        self.process_btn.setEnabled(enabled)
-    
-    def _update_ui_for_processing_state(self):
-        """Update UI elements based on processing state"""
-        # Process button: enabled when not processing
-        self.process_btn.setEnabled(not self.processing_active)
-        
-        # Pause button: enabled when processing, blue when active
-        self.pause_btn.setEnabled(self.processing_active)
-        if self.processing_active:
-            if self.is_paused:
-                self.pause_btn.setText("Resume")
-                self.pause_btn.setStyleSheet("QPushButton { background-color: #FF9800; color: white; }")
-            else:
-                self.pause_btn.setText("Pause")
-                self.pause_btn.setStyleSheet("QPushButton { background-color: #2196F3; color: white; }")
-        else:
-            self.pause_btn.setText("Pause")
-            self.pause_btn.setStyleSheet("")  # Reset to default
-        
-        # Cancel button: enabled when processing
-        self.cancel_btn.setEnabled(self.processing_active)
-    
-    def set_processing_state(self, active: bool, thread=None):
-        """Set processing state and update UI
-        
-        Args:
-            active: Whether processing is active
-            thread: Current thread reference (FolderStructureThread)
-        """
+    def set_processing_state(self, active: bool):
+        """Update UI for processing state"""
         self.processing_active = active
         
-        # Handle resource tracking for the worker thread
-        if active and thread:
-            # Release any existing worker resource before tracking new one
-            self._release_worker_resource()
-            
-            # Track the new worker thread
-            self.current_thread = thread
-            if self._resource_manager:
-                self._worker_resource_id = self._resource_manager.track_resource(
-                    self,
-                    ResourceType.WORKER,
-                    thread,
-                    metadata={
-                        'type': 'FolderStructureThread',
-                        'cleanup_func': lambda w: w.cancel() if w and w.isRunning() else None
-                    }
-                )
-                self.logger.debug(f"Tracked FolderStructureThread worker: {self._worker_resource_id}")
-        else:
-            # Processing stopped - release worker resource
-            self._release_worker_resource()
-            self.current_thread = None
-            self.is_paused = False  # Reset pause state when processing stops
-            
-        self._update_ui_for_processing_state()
-    
-    def set_paused_state(self, paused: bool):
-        """Set paused state and update UI
+        # Update buttons
+        self.process_btn.setEnabled(not active)
+        self.pause_btn.setEnabled(active)
+        self.cancel_btn.setEnabled(active)
         
-        Args:
-            paused: Whether processing is paused
-        """
-        self.is_paused = paused
-        self._update_ui_for_processing_state()
+        # Update progress bar
+        self.progress_bar.setVisible(active)
+        if not active:
+            self.progress_bar.setValue(0)
+            self.is_paused = False
+            self.pause_btn.setText("Pause")
+            self.pause_btn.setStyleSheet("")
+            # Release worker resource
+            if self._worker_resource_id and self._resource_manager:
+                self._resource_manager.release_resource(self, self._worker_resource_id)
+                self._worker_resource_id = None
+            # Notify MainWindow
+            self.operation_completed.emit()
     
     def _pause_processing(self):
-        """Handle pause/resume button click"""
+        """Handle pause button click"""
         if not self.current_thread or not self.processing_active:
             return
-            
+        
         if self.is_paused:
-            # Resume processing
+            # Resume
             if hasattr(self.current_thread, 'resume'):
                 self.current_thread.resume()
-            self.set_paused_state(False)
-            self.log_message.emit("Resumed forensic processing")
+            self.is_paused = False
+            self.pause_btn.setText("Pause")
+            self.pause_btn.setStyleSheet("")
+            self.log("Resumed processing")
         else:
-            # Pause processing  
+            # Pause
             if hasattr(self.current_thread, 'pause'):
                 self.current_thread.pause()
-            self.set_paused_state(True)
-            self.log_message.emit("Paused forensic processing")
+            self.is_paused = True
+            self.pause_btn.setText("Resume")
+            self.pause_btn.setStyleSheet("QPushButton { background-color: #FF9800; color: white; }")
+            self.log("Paused processing")
     
     def _cancel_processing(self):
         """Handle cancel button click"""
-        if not self.current_thread or not self.processing_active:
-            return
-            
-        # Cancel the current operation
-        if hasattr(self.current_thread, 'cancel'):
-            self.current_thread.cancel()
-        elif hasattr(self.current_thread, 'cancelled'):
-            # Fallback to direct flag setting
-            self.current_thread.cancelled = True
-            
-        self.log_message.emit("Cancelled forensic processing - operation will stop soon")
-        
-        # Note: The actual state reset will happen when the thread finishes
-        # and calls the completion handlers in MainWindow
+        if self.controller.cancel_operation():
+            self.log("Cancelling operation...")
+            self.set_processing_state(False)
     
     def _on_template_changed(self, template_id: str):
         """Handle template selection change"""
         template_name = self.template_selector.template_combo.currentText()
-        self.log(f"Template changed to: {template_name} ({template_id})")
+        self.log(f"Template changed to: {template_name}")
     
     def _cleanup_resources(self):
-        """Clean up tab-specific resources (called by ResourceManagementService)"""
+        """Clean up tab resources"""
         self.logger.info("Cleaning up ForensicTab resources")
         
         # Cancel any running operation
-        if self.current_thread:
-            if hasattr(self.current_thread, 'cancel'):
-                self.current_thread.cancel()
-            # Release the worker resource
-            self._release_worker_resource()
-            self.current_thread = None
+        self.controller.cancel_operation()
         
-        # Reset state
-        self.processing_active = False
-        self.is_paused = False
+        # Clean up controller resources
+        self.controller.cleanup_operation_memory()
         
-        # Clear log console if it has a clear method
-        if hasattr(self.log_console, 'clear'):
-            self.log_console.clear()
+        # Release tracked resources
+        if self._resource_manager:
+            if self._worker_resource_id:
+                self._resource_manager.release_resource(self, self._worker_resource_id)
+            if self._controller_resource_id:
+                self._resource_manager.release_resource(self, self._controller_resource_id)
         
         self.logger.info("ForensicTab cleanup complete")
-    
-    def _release_worker_resource(self):
-        """Helper to release tracked worker resource"""
-        if self._worker_resource_id and self._resource_manager:
-            self._resource_manager.release_resource(self, self._worker_resource_id)
-            self._worker_resource_id = None
-            self.logger.debug("Released worker resource")
-        
-    # Example signal handlers (uncomment to use)
-    """
-    def _on_form_data_changed(self, field_name: str, value):
-        '''Handle form data changes for validation or live updates
-        
-        Args:
-            field_name: Name of the changed field
-            value: New value
-        '''
-        # Example: Validate occurrence number format
-        if field_name == 'occurrence_number':
-            if value and not value.replace('-', '').isalnum():
-                self.log(f"Warning: Occurrence number contains special characters")
-        
-        # Example: Auto-enable process button when required fields are filled
-        if field_name in ['occurrence_number', 'technician_name']:
-            can_process = bool(self.form_data.occurrence_number and 
-                             self.form_data.technician_name and
-                             self.files_panel.has_files())
-            self.process_btn.setEnabled(can_process)
-    
-    def _on_message_logged(self, timestamp: str, message: str):
-        '''Handle logged messages for external monitoring
-        
-        Args:
-            timestamp: Time when message was logged
-            message: The log message
-        '''
-        # Example: Could save to external log file or send to monitoring service
-        pass
-        
-    def _on_log_cleared(self):
-        '''Handle log clear events'''
-        # Example: Could reset any message counters or states
-        pass
-    """
