@@ -13,7 +13,7 @@ from PySide6.QtCore import Qt, QDateTime, QTimer
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QMainWindow, QTabWidget, QVBoxLayout, QWidget,
-    QProgressBar, QStatusBar, QFileDialog,
+    QStatusBar, QFileDialog,
     QSplitter, QHBoxLayout, QDialog, QDialogButtonBox,
     QGroupBox, QComboBox, QCheckBox, QPushButton, QLabel,
     QSizePolicy
@@ -131,10 +131,7 @@ class MainWindow(QMainWindow):
         # Add tabs to layout
         layout.addWidget(self.tabs)
         
-        # Progress bar
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setVisible(False)
-        layout.addWidget(self.progress_bar)
+        # Note: Progress bars are managed by individual tabs
         
         # Status bar
         self.status_bar = QStatusBar()
@@ -268,12 +265,11 @@ class MainWindow(QMainWindow):
         pass
             
     def update_progress(self, value):
-        """Update progress bar"""
-        self.progress_bar.setValue(value)
+        """Update progress bar - deprecated, tabs manage their own progress"""
+        pass
         
     def update_progress_with_status(self, percentage, message):
-        """Update progress bar and log status"""
-        self.progress_bar.setValue(percentage)
+        """Update progress bar and log status - now just logs"""
         if message:
             self.log(message)
         
@@ -286,14 +282,12 @@ class MainWindow(QMainWindow):
             self.log(f"Error changing template: {e}")
     
     def log(self, message):
-        """Add message to log console"""
-        if hasattr(self, 'log_console'):
-            self.log_console.log(message)
+        """Add message to status bar only - tabs handle their own console logging"""
+        # Don't log to console here as tabs already log to their own consoles
         self.status_bar.showMessage(message, 3000)
     
     def _on_forensic_operation_started(self):
         """Handle forensic operation start - UI coordination only"""
-        self.progress_bar.setVisible(True)
         self.operation_active = True
         
         # Start performance monitor if available
@@ -303,8 +297,6 @@ class MainWindow(QMainWindow):
     
     def _on_forensic_operation_completed(self):
         """Handle forensic operation completion - UI coordination only"""
-        self.progress_bar.setVisible(False)
-        self.progress_bar.setValue(0)
         self.operation_active = False
         
         # Stop performance monitor if running
