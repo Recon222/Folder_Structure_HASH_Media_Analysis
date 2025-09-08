@@ -26,8 +26,6 @@ from ui.components import FilesPanel, LogConsole
 from ui.components.elided_label import ElidedLabel
 from core.exceptions import UIError, ErrorSeverity
 from core.error_handler import handle_error
-from core.services.service_registry import get_service
-from core.services.interfaces import IResourceManagementService, ResourceType
 
 
 class OperationStatusCard(QFrame):
@@ -341,37 +339,9 @@ class HashingTab(QWidget):
         """Initialize the redesigned hashing tab"""
         super().__init__(parent)
         
-        # Resource management
-        self._resource_manager = None
-        self._controller_resource_id = None
-        self._worker_resource_id = None
-        self._single_results_resource_id = None
-        self._verification_results_resource_id = None
-        
-        # Register with ResourceManagementService
-        try:
-            self._resource_manager = get_service(IResourceManagementService)
-            if self._resource_manager:
-                self._resource_manager.register_component(self, "HashingTab", "tab")
-                self._resource_manager.register_cleanup(
-                    self, self._cleanup_resources, priority=10
-                )
-                logger.info("HashingTab registered with ResourceManagementService")
-        except Exception as e:
-            logger.warning(f"Could not register HashingTab with ResourceManagementService: {e}")
-        
         # Controllers and utilities
         self.hash_controller = hash_controller or HashController()
         self.report_generator = HashReportGenerator()
-        
-        # Track the controller as a resource
-        if self._resource_manager and self.hash_controller:
-            self._controller_resource_id = self._resource_manager.track_resource(
-                self,
-                ResourceType.CUSTOM,
-                self.hash_controller,
-                metadata={'type': 'HashController'}
-            )
         
         # Current operation results
         self.current_single_results = None
@@ -739,9 +709,6 @@ class HashingTab(QWidget):
             self.hash_controller.cancel_current_operation()
             self._set_operation_active(False)
             
-            # Release the worker resource after cancellation
-            self._release_worker_resource()
-            
     def _start_single_hash_operation(self):
         """Start single hash operation"""
         try:
@@ -766,28 +733,10 @@ class HashingTab(QWidget):
             self._set_operation_active(True, 'single_hash')
             self.results_panel.update_operation_status('single_hash', 'in_progress')
             
-            # Release any existing worker resource
-            self._release_worker_resource()
-            
             # Start worker
             worker = self.hash_controller.start_single_hash_operation(all_paths, algorithm)
             worker.progress_update.connect(self._on_progress_update)
             worker.result_ready.connect(self._on_single_hash_result)
-            
-            # Track the worker as a resource
-            if self._resource_manager and worker:
-                self._worker_resource_id = self._resource_manager.track_resource(
-                    self,
-                    ResourceType.WORKER,
-                    worker,
-                    metadata={
-                        'type': 'SingleHashWorker',
-                        'file_count': file_count,
-                        'algorithm': algorithm,
-                        'cleanup_func': lambda w: w.cancel() if w and w.isRunning() else None
-                    }
-                )
-            
             worker.start()
             
         except Exception as e:
@@ -830,29 +779,10 @@ class HashingTab(QWidget):
             self._set_operation_active(True, 'verification')
             self.results_panel.update_operation_status('verification', 'in_progress')
             
-            # Release any existing worker resource
-            self._release_worker_resource()
-            
             # Start worker
             worker = self.hash_controller.start_verification_operation(source_paths, target_paths, algorithm)
             worker.progress_update.connect(self._on_progress_update)
             worker.result_ready.connect(self._on_verification_result)
-            
-            # Track the worker as a resource
-            if self._resource_manager and worker:
-                self._worker_resource_id = self._resource_manager.track_resource(
-                    self,
-                    ResourceType.WORKER,
-                    worker,
-                    metadata={
-                        'type': 'VerificationWorker',
-                        'source_count': source_file_count,
-                        'target_count': target_file_count,
-                        'algorithm': algorithm,
-                        'cleanup_func': lambda w: w.cancel() if w and w.isRunning() else None
-                    }
-                )
-            
             worker.start()
             
         except Exception as e:
@@ -875,32 +805,8 @@ class HashingTab(QWidget):
         
         self._set_operation_active(False)
         
-        # Release worker resource
-        self._release_worker_resource()
-        
         if isinstance(result, Result) and result.success:
-            # Release old results resource if exists
-            if self._single_results_resource_id and self._resource_manager:
-                self._resource_manager.release_resource(self, self._single_results_resource_id)
-                self._single_results_resource_id = None
-            
             self.current_single_results = result.value
-            
-            # Track results as a resource
-            if self._resource_manager and result.value:
-                results_count = len(result.value.get('results', []))
-                estimated_size = results_count * 200  # ~200 bytes per hash entry
-                self._single_results_resource_id = self._resource_manager.track_resource(
-                    self,
-                    ResourceType.CUSTOM,
-                    result.value,
-                    size_bytes=estimated_size,
-                    metadata={
-                        'type': 'SingleHashResults',
-                        'file_count': results_count
-                    }
-                )
-            
             self.results_panel.update_operation_status('single_hash', 'completed', result.value)
             self._log("Single hash operation completed successfully!")
         else:
@@ -914,76 +820,14 @@ class HashingTab(QWidget):
         
         self._set_operation_active(False)
         
-        # Release worker resource
-        self._release_worker_resource()
-        
         if isinstance(result, Result) and result.success:
-            # Release old results resource if exists
-            if self._verification_results_resource_id and self._resource_manager:
-                self._resource_manager.release_resource(self, self._verification_results_resource_id)
-                self._verification_results_resource_id = None
-            
             self.current_verification_results = result.value
-            
-            # Track results as a resource
-            if self._resource_manager and result.value:
-                # Count entries from various possible structures
-                results_count = 0
-                if isinstance(result.value, dict):
-                    if 'matches' in result.value:
-                        results_count += len(result.value['matches'])
-                    if 'mismatches' in result.value:
-                        results_count += len(result.value['mismatches'])
-                    if 'source_only' in result.value:
-                        results_count += len(result.value['source_only'])
-                    if 'target_only' in result.value:
-                        results_count += len(result.value['target_only'])
-                
-                estimated_size = results_count * 250  # ~250 bytes per verification entry
-                self._verification_results_resource_id = self._resource_manager.track_resource(
-                    self,
-                    ResourceType.CUSTOM,
-                    result.value,
-                    size_bytes=estimated_size,
-                    metadata={
-                        'type': 'VerificationResults',
-                        'entry_count': results_count
-                    }
-                )
-            
             self.results_panel.update_operation_status('verification', 'completed', result.value)
             self._log("Verification operation completed successfully!")
         else:
             # CRITICAL FIX: Failed verifications still have results - pass them to UI for export
             if isinstance(result, Result) and result.value:
-                # Release old results resource if exists
-                if self._verification_results_resource_id and self._resource_manager:
-                    self._resource_manager.release_resource(self, self._verification_results_resource_id)
-                    self._verification_results_resource_id = None
-                
                 self.current_verification_results = result.value
-                
-                # Track failed results too
-                if self._resource_manager:
-                    results_count = 0
-                    if isinstance(result.value, dict):
-                        for key in ['matches', 'mismatches', 'source_only', 'target_only']:
-                            if key in result.value:
-                                results_count += len(result.value.get(key, []))
-                    
-                    estimated_size = results_count * 250
-                    self._verification_results_resource_id = self._resource_manager.track_resource(
-                        self,
-                        ResourceType.CUSTOM,
-                        result.value,
-                        size_bytes=estimated_size,
-                        metadata={
-                            'type': 'VerificationResults',
-                            'entry_count': results_count,
-                            'failed': True
-                        }
-                    )
-                
                 self.results_panel.update_operation_status('verification', 'failed', result.value)
             else:
                 self.current_verification_results = {}
@@ -1108,46 +952,21 @@ class HashingTab(QWidget):
         if self.operation_active:
             self._cancel_all_operations()
     
-    def _cleanup_resources(self):
-        """Clean up all resources tracked by ResourceManagementService"""
-        logger.info("Cleaning up HashingTab resources")
+    def cleanup(self):
+        """Simple cleanup that delegates to controller"""
+        logger.info("Cleaning up HashingTab")
         
-        # Cancel any running operations
-        if self.operation_active:
-            self._cancel_all_operations()
-        
-        # Release worker if exists
-        self._release_worker_resource()
-        
-        # Release results resources
-        if self._single_results_resource_id and self._resource_manager:
-            self._resource_manager.release_resource(self, self._single_results_resource_id)
-            self._single_results_resource_id = None
-            
-        if self._verification_results_resource_id and self._resource_manager:
-            self._resource_manager.release_resource(self, self._verification_results_resource_id)
-            self._verification_results_resource_id = None
+        # Cancel any running operations and clean up controller
+        if self.hash_controller:
+            self.hash_controller.cancel_current_operation()
+            self.hash_controller.cleanup()
         
         # Clear result data
         self.current_single_results = None
         self.current_verification_results = None
         
-        # Clean up hash controller
-        if self.hash_controller:
-            if hasattr(self.hash_controller, 'current_operation') and self.hash_controller.current_operation:
-                if self.hash_controller.current_operation.isRunning():
-                    self.hash_controller.cancel_current_operation()
-        
-        # Clean up UI components
-        if hasattr(self, 'log_console'):
-            # LogConsole doesn't need cleanup, but clear its contents
-            if hasattr(self.log_console, 'clear'):
-                self.log_console.clear()
+        # Clear UI state
+        self.operation_active = False
+        self.current_operation_type = None
         
         logger.info("HashingTab cleanup complete")
-    
-    def _release_worker_resource(self):
-        """Helper method to release tracked worker resource"""
-        if self._worker_resource_id and self._resource_manager:
-            self._resource_manager.release_resource(self, self._worker_resource_id)
-            self._worker_resource_id = None

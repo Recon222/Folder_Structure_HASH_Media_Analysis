@@ -2,11 +2,12 @@
 # -*- coding: utf-8 -*-
 """
 Hash controller - coordinates hash operations between UI and workers
-Enhanced with service integration and enterprise error handling
+Enhanced with service integration, enterprise error handling, and resource coordination
 """
 
 from pathlib import Path
 from typing import List, Optional, Dict, Any
+from datetime import datetime
 
 from .base_controller import BaseController
 from core.workers.hash_worker import SingleHashWorker, VerificationWorker
@@ -14,17 +15,23 @@ from core.services.interfaces import IValidationService
 from core.settings_manager import settings
 from core.exceptions import ValidationError, FileOperationError, ErrorSeverity
 from core.result_types import Result
+from core.resource_coordinators import WorkerResourceCoordinator
 
 
 class HashController(BaseController):
-    """Coordinates all hash operations with enhanced error handling"""
+    """Coordinates all hash operations with enhanced error handling and resource coordination"""
     
     def __init__(self):
         super().__init__("HashController")
         self.current_operation: Optional[SingleHashWorker | VerificationWorker] = None
+        self._current_operation_id: Optional[str] = None
         
         # Service dependencies (injected)
         self._validation_service = None
+    
+    def _create_resource_coordinator(self, component_id: str) -> WorkerResourceCoordinator:
+        """Use WorkerResourceCoordinator for hash worker management"""
+        return WorkerResourceCoordinator(component_id)
     
     @property
     def validation_service(self) -> IValidationService:
@@ -90,6 +97,13 @@ class HashController(BaseController):
             # Create worker
             worker = SingleHashWorker(valid_paths, algorithm)
             self.current_operation = worker
+            
+            # Track worker with resource coordinator
+            if self.resources:
+                self._current_operation_id = self.resources.track_worker(
+                    worker,
+                    name=f"single_hash_{datetime.now():%H%M%S}"
+                )
             
             self._log_operation("hash_worker_created", 
                               f"{algorithm} on {len(valid_paths)} paths")
@@ -201,6 +215,13 @@ class HashController(BaseController):
             worker = VerificationWorker(valid_source_paths, valid_target_paths, algorithm)
             self.current_operation = worker
             
+            # Track worker with resource coordinator
+            if self.resources:
+                self._current_operation_id = self.resources.track_worker(
+                    worker,
+                    name=f"verification_{datetime.now():%H%M%S}"
+                )
+            
             self._log_operation("verification_worker_created", 
                               f"{algorithm} verification: {len(valid_source_paths)} sources, {len(valid_target_paths)} targets")
             return Result.success(worker)
@@ -247,6 +268,10 @@ class HashController(BaseController):
             self._log_operation("hash_operation_cancelled")
         else:
             self._log_operation("no_operation_to_cancel", level="debug")
+        
+        # Clear references - coordinator handles cleanup
+        self.current_operation = None
+        self._current_operation_id = None
             
     def is_operation_running(self) -> bool:
         """Check if an operation is currently running"""
@@ -276,4 +301,19 @@ class HashController(BaseController):
         if self.current_operation and not self.current_operation.isRunning():
             operation_name = self.current_operation.__class__.__name__
             self.current_operation = None
+            self._current_operation_id = None
             self._log_operation("operation_cleaned_up", operation_name)
+    
+    def cleanup(self) -> None:
+        """Clean up all resources"""
+        # Cancel any running operation
+        if self.current_operation and self.current_operation.isRunning():
+            self.cancel_current_operation()
+        
+        # Let resource coordinator handle cleanup
+        if self.resources:
+            self.resources.cleanup_all()
+        
+        # Clear references
+        self.current_operation = None
+        self._current_operation_id = None
