@@ -31,7 +31,7 @@ from core.exiftool.exiftool_models import (
 from core.models import FormData
 from ui.components.geo import GeoVisualizationWidget
 from core.services.success_message_data import MediaAnalysisOperationData, ExifToolOperationData
-from core.services.success_message_builder import SuccessMessageBuilder
+from .media_analysis_success import MediaAnalysisSuccessBuilder
 from core.settings_manager import settings
 from core.logger import logger
 from core.exceptions import UIError, ErrorSeverity
@@ -73,8 +73,8 @@ class MediaAnalysisTab(QWidget):
         # Settings
         self.analysis_settings = self._load_settings()
         
-        # Success message builder
-        self.success_builder = SuccessMessageBuilder()
+        # Success message builder for this tab
+        self.success_builder = MediaAnalysisSuccessBuilder()
         
         self._create_ui()
         self._connect_signals()
@@ -1032,11 +1032,13 @@ class MediaAnalysisTab(QWidget):
             
             if result.success:
                 self.log_message.emit(f"ExifTool CSV exported: {file_path}")
-                QMessageBox.information(
-                    self,
-                    "Export Success",
-                    f"ExifTool results exported to:\n{file_path}"
+                # Show success dialog
+                export_message = self.success_builder.build_csv_export_success(
+                    file_path=Path(file_path),
+                    record_count=self.last_exiftool_results.total_files,
+                    export_type="ExifTool"
                 )
+                SuccessDialog.show_success_message(export_message, self)
             else:
                 self.log_message.emit(f"CSV export failed: {result.error.user_message}")
                 QMessageBox.warning(
@@ -1069,11 +1071,14 @@ class MediaAnalysisTab(QWidget):
             
             if result.success:
                 self.log_message.emit(f"KML exported: {file_path}")
-                QMessageBox.information(
-                    self,
-                    "Export Success",
-                    f"GPS locations exported to:\n{file_path}\n\nYou can open this file in Google Earth."
+                # Show success dialog
+                device_count = len(self.last_exiftool_results.device_map) if self.last_exiftool_results.device_map else None
+                export_message = self.success_builder.build_kml_export_success(
+                    file_path=Path(file_path),
+                    location_count=len(self.last_exiftool_results.gps_locations),
+                    device_count=device_count
                 )
+                SuccessDialog.show_success_message(export_message, self)
             else:
                 self.log_message.emit(f"KML export failed: {result.error.user_message}")
                 QMessageBox.warning(
