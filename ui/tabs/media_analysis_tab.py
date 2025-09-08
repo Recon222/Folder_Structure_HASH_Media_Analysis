@@ -36,8 +36,6 @@ from core.settings_manager import settings
 from core.logger import logger
 from core.exceptions import UIError, ErrorSeverity
 from core.error_handler import handle_error
-from core.services.service_registry import get_service
-from core.services.interfaces import IResourceManagementService, ResourceType
 
 
 class MediaAnalysisTab(QWidget):
@@ -57,27 +55,8 @@ class MediaAnalysisTab(QWidget):
         """
         super().__init__(parent)
         
-        # Register with ResourceManagementService
-        self._resource_manager = get_service(IResourceManagementService)
-        if self._resource_manager:
-            self._resource_manager.register_component(self, "MediaAnalysisTab", "tab")
-            self._resource_manager.register_cleanup(self, self._cleanup_resources, priority=10)
-            logger.info("MediaAnalysisTab registered with ResourceManagementService")
-        else:
-            logger.warning("ResourceManagementService not available for MediaAnalysisTab")
-            self._resource_manager = None
-        
         # Controller for orchestration
         self.controller = MediaAnalysisController()
-        
-        # Track controller as a resource
-        if self._resource_manager:
-            self._resource_manager.track_resource(
-                self, 
-                ResourceType.CUSTOM, 
-                self.controller,
-                metadata={'type': 'MediaAnalysisController'}
-            )
         
         # Form data reference (optional)
         self.form_data = form_data
@@ -89,11 +68,6 @@ class MediaAnalysisTab(QWidget):
         self.last_exiftool_results: Optional[ExifToolAnalysisResult] = None
         self.selected_paths: List[Path] = []
         self.current_tool = "ffprobe"  # Track which tool is active
-        
-        # Resource tracking
-        self._thumbnail_resource_ids: List[str] = []
-        self._worker_resource_id: Optional[str] = None
-        self._geo_widget_resource_id: Optional[str] = None
         self.geo_widget: Optional[GeoVisualizationWidget] = None
         
         # Settings
@@ -789,23 +763,7 @@ class MediaAnalysisTab(QWidget):
         )
         
         if result.success:
-            # Release old worker if exists
-            self._release_worker_resource()
-            
             self.current_worker = result.value
-            
-            # Track worker as resource
-            if self._resource_manager and self.current_worker:
-                self._worker_resource_id = self._resource_manager.track_resource(
-                    self,
-                    ResourceType.WORKER,
-                    self.current_worker,
-                    metadata={
-                        'type': 'MediaAnalysisWorker',
-                        'tool': 'ffprobe',
-                        'cleanup_func': lambda w: w.cancel() if w and w.isRunning() else None
-                    }
-                )
             
             # Connect worker signals
             self.current_worker.result_ready.connect(self._on_analysis_complete)
@@ -843,23 +801,7 @@ class MediaAnalysisTab(QWidget):
         )
         
         if result.success:
-            # Release old worker if exists
-            self._release_worker_resource()
-            
             self.current_worker = result.value
-            
-            # Track worker as resource
-            if self._resource_manager and self.current_worker:
-                self._worker_resource_id = self._resource_manager.track_resource(
-                    self,
-                    ResourceType.WORKER,
-                    self.current_worker,
-                    metadata={
-                        'type': 'ExifToolWorker',
-                        'tool': 'exiftool',
-                        'cleanup_func': lambda w: w.cancel() if w and w.isRunning() else None
-                    }
-                )
             
             # Connect worker signals
             self.current_worker.result_ready.connect(self._on_exiftool_complete)
@@ -892,36 +834,8 @@ class MediaAnalysisTab(QWidget):
         self._set_operation_active(False)
         
         if result.success:
-            # Clear old thumbnail resources before setting new results
-            self._clear_thumbnail_resources()
-            
             self.last_exiftool_results = result.value
             self.export_btn.setEnabled(True)
-            
-            # Track thumbnail resources
-            if self._resource_manager and self.last_exiftool_results.metadata_list:
-                # Calculate total thumbnail memory
-                total_thumbnail_size = 0
-                for metadata in self.last_exiftool_results.metadata_list:
-                    if metadata.thumbnail_base64:
-                        thumbnail_size = len(metadata.thumbnail_base64)
-                        total_thumbnail_size += thumbnail_size
-                        
-                        # Track individual thumbnail resource
-                        resource_id = self._resource_manager.track_resource(
-                            self,
-                            ResourceType.THUMBNAIL,
-                            metadata.thumbnail_base64,
-                            size_bytes=thumbnail_size,
-                            metadata={
-                                'file': str(metadata.file_path),
-                                'type': metadata.thumbnail_type or 'unknown'
-                            }
-                        )
-                        if resource_id:
-                            self._thumbnail_resource_ids.append(resource_id)
-                
-                logger.info(f"Tracked {len(self._thumbnail_resource_ids)} thumbnails, total size: {total_thumbnail_size} bytes")
             
             # Log completion
             self.log_message.emit(
@@ -972,25 +886,7 @@ class MediaAnalysisTab(QWidget):
         
         # Create and configure map widget
         map_widget = GeoVisualizationWidget()
-        
-        # Track geo widget as resource
-        if self._resource_manager:
-            # Release old geo widget if exists
-            if self._geo_widget_resource_id:
-                self._resource_manager.release_resource(self, self._geo_widget_resource_id)
-                self._geo_widget_resource_id = None
-            
-            # Track new geo widget
-            self._geo_widget_resource_id = self._resource_manager.track_resource(
-                self,
-                ResourceType.MAP,
-                map_widget,
-                metadata={
-                    'type': 'GeoVisualizationWidget',
-                    'cleanup_func': lambda w: w.clear_map() if w else None
-                }
-            )
-            self.geo_widget = map_widget
+        self.geo_widget = map_widget
         
         map_widget.add_media_locations(self.last_exiftool_results.gps_locations)
         
@@ -1271,9 +1167,6 @@ class MediaAnalysisTab(QWidget):
             self.log_message.emit("Cancelling operation...")
             self.current_worker.cancel()
             
-            # Release the worker resource after cancellation
-            self._release_worker_resource()
-            
             # Update UI state
             self._set_operation_active(False)
     
@@ -1331,47 +1224,19 @@ class MediaAnalysisTab(QWidget):
         
         qsettings.endGroup()
     
-    def _cleanup_resources(self):
-        """Clean up all resources - called by ResourceManagementService"""
-        logger.info("MediaAnalysisTab: Cleaning up resources")
+    def cleanup(self):
+        """Simple cleanup that delegates to controller"""
+        logger.info("Cleaning up MediaAnalysisTab")
         
-        # Clear thumbnail resources
-        self._clear_thumbnail_resources()
+        # Cancel any running operations and clean up controller
+        if self.controller:
+            self.controller.cancel_current_operation()
+            self.controller.cleanup()
         
-        # Release worker
-        self._release_worker_resource()
-        
-        # Release geo widget
-        if self._geo_widget_resource_id and self._resource_manager:
-            self._resource_manager.release_resource(self, self._geo_widget_resource_id)
-            self._geo_widget_resource_id = None
-        
-        # Clear data
+        # Clear references
+        self.current_worker = None
         self.last_results = None
         self.last_exiftool_results = None
         self.geo_widget = None
-        self.current_worker = None
         
-        # Controller cleanup
-        if self.controller:
-            self.controller.cleanup()
-        
-        logger.info("MediaAnalysisTab: Resource cleanup complete")
-    
-    def _clear_thumbnail_resources(self):
-        """Clear all tracked thumbnail resources"""
-        if self._resource_manager:
-            for resource_id in self._thumbnail_resource_ids:
-                self._resource_manager.release_resource(self, resource_id)
-            self._thumbnail_resource_ids.clear()
-    
-    def _release_worker_resource(self):
-        """Release the current worker resource"""
-        if self._worker_resource_id and self._resource_manager:
-            # Cancel worker if still running
-            if self.current_worker and self.current_worker.isRunning():
-                self.current_worker.cancel()
-                self.current_worker.wait(2000)
-            
-            self._resource_manager.release_resource(self, self._worker_resource_id)
-            self._worker_resource_id = None
+        logger.info("MediaAnalysisTab cleanup complete")

@@ -6,6 +6,7 @@ Follows SOA architecture with full service integration
 
 from pathlib import Path
 from typing import List, Optional, Dict, Any
+from datetime import datetime
 
 from .base_controller import BaseController
 from core.services.interfaces import IMediaAnalysisService, IReportService
@@ -17,6 +18,7 @@ from core.models import FormData
 from core.result_types import Result
 from core.exceptions import MediaAnalysisError
 from core.logger import logger
+from core.resource_coordinators import WorkerResourceCoordinator
 
 
 class MediaAnalysisController(BaseController):
@@ -26,10 +28,15 @@ class MediaAnalysisController(BaseController):
         """Initialize media analysis controller"""
         super().__init__("MediaAnalysisController")
         self.current_worker: Optional[MediaAnalysisWorker] = None
+        self._current_worker_id: Optional[str] = None
         
         # Service dependencies (lazy loaded)
         self._media_service = None
         self._report_service = None
+    
+    def _create_resource_coordinator(self, component_id: str) -> WorkerResourceCoordinator:
+        """Use WorkerResourceCoordinator for media analysis worker management"""
+        return WorkerResourceCoordinator(component_id)
     
     @property
     def media_service(self) -> IMediaAnalysisService:
@@ -98,6 +105,13 @@ class MediaAnalysisController(BaseController):
             
             # Store reference to current worker
             self.current_worker = worker
+            
+            # Track worker with resource coordinator
+            if self.resources:
+                self._current_worker_id = self.resources.track_worker(
+                    worker,
+                    name=f"media_analysis_{datetime.now():%H%M%S}"
+                )
             
             logger.info(f"Created MediaAnalysisWorker for {len(valid_files)} files")
             return Result.success(worker)
@@ -194,8 +208,12 @@ class MediaAnalysisController(BaseController):
             if self.current_worker.isRunning():
                 logger.warning("Worker did not stop gracefully, terminating")
                 self.current_worker.terminate()
-            
-            self.current_worker = None
+        
+        # Clear references - coordinator handles cleanup
+        self.current_worker = None
+        self._current_worker_id = None
+        
+        if self.current_worker:
             logger.info("Analysis operation cancelled")
     
     def get_ffprobe_status(self) -> Dict[str, Any]:
@@ -260,6 +278,13 @@ class MediaAnalysisController(BaseController):
             
             # Store reference to current worker
             self.current_worker = worker
+            
+            # Track worker with resource coordinator
+            if self.resources:
+                self._current_worker_id = self.resources.track_worker(
+                    worker,
+                    name=f"exiftool_{datetime.now():%H%M%S}"
+                )
             
             logger.info(f"Created ExifToolWorker for {len(valid_files)} files")
             return Result.success(worker)
@@ -347,5 +372,15 @@ class MediaAnalysisController(BaseController):
             return Result.error(error)
     
     def cleanup(self):
-        """Clean up resources"""
-        self.cancel_current_operation()
+        """Clean up all resources"""
+        # Cancel any running operation
+        if self.current_worker and self.current_worker.isRunning():
+            self.cancel_current_operation()
+        
+        # Let resource coordinator handle cleanup
+        if self.resources:
+            self.resources.cleanup_all()
+        
+        # Clear references
+        self.current_worker = None
+        self._current_worker_id = None
