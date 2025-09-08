@@ -18,8 +18,6 @@ from PySide6.QtWidgets import (
 from core.models import FormData
 from ui.components import FormPanel, FilesPanel, LogConsole, TemplateSelector
 from controllers.forensic_controller import ForensicController
-from core.services.service_registry import get_service
-from core.services.interfaces import IResourceManagementService, ResourceType
 from core.exceptions import UIError
 from core.error_handler import handle_error
 
@@ -56,53 +54,12 @@ class ForensicTab(QWidget):
         self.processing_active = False
         self.current_thread = None
         self.is_paused = False
-        
-        # Resource management
-        self._resource_manager = None
-        self._controller_resource_id = None
-        self._worker_resource_id = None
         self.logger = logging.getLogger(__name__)
-        
-        # Register with ResourceManagementService
-        self._register_with_resource_manager()
         
         # Create UI
         self._create_ui()
         self._connect_signals()
     
-    def _register_with_resource_manager(self):
-        """Register this tab and its controller with resource management"""
-        try:
-            self._resource_manager = get_service(IResourceManagementService)
-            if self._resource_manager:
-                # Register tab
-                self._resource_manager.register_component(
-                    self, 
-                    "ForensicTab", 
-                    "tab"
-                )
-                
-                # Track controller as resource
-                self._controller_resource_id = self._resource_manager.track_resource(
-                    self,
-                    ResourceType.CUSTOM,
-                    self.controller,
-                    metadata={'type': 'ForensicController'}
-                )
-                
-                # Register cleanup
-                self._resource_manager.register_cleanup(
-                    self,
-                    self._cleanup_resources,
-                    priority=10
-                )
-                
-                self.logger.info("ForensicTab and controller registered with ResourceManagementService")
-                
-        except Exception as e:
-            self.logger.warning(f"Could not register with ResourceManagementService: {e}")
-            self._resource_manager = None
-        
     def _create_ui(self):
         """Create the tab UI with integrated progress bar"""
         layout = QVBoxLayout(self)
@@ -213,15 +170,6 @@ class ForensicTab(QWidget):
                 self.current_thread.progress_update.connect(self._on_progress_update)
                 self.current_thread.result_ready.connect(self._on_operation_finished)
                 
-                # Track thread as resource
-                if self._resource_manager:
-                    self._worker_resource_id = self._resource_manager.track_resource(
-                        self,
-                        ResourceType.WORKER,
-                        self.current_thread,
-                        metadata={'type': 'FolderStructureThread'}
-                    )
-                
                 # Update UI state
                 self.set_processing_state(True)
                 
@@ -286,10 +234,6 @@ class ForensicTab(QWidget):
             self.is_paused = False
             self.pause_btn.setText("Pause")
             self.pause_btn.setStyleSheet("")
-            # Release worker resource
-            if self._worker_resource_id and self._resource_manager:
-                self._resource_manager.release_resource(self, self._worker_resource_id)
-                self._worker_resource_id = None
             # Notify MainWindow
             self.operation_completed.emit()
     
@@ -326,21 +270,16 @@ class ForensicTab(QWidget):
         template_name = self.template_selector.template_combo.currentText()
         self.log(f"Template changed to: {template_name}")
     
-    def _cleanup_resources(self):
-        """Clean up tab resources"""
-        self.logger.info("Cleaning up ForensicTab resources")
+    def cleanup(self):
+        """Simple cleanup that delegates to controller"""
+        self.logger.info("Cleaning up ForensicTab")
         
-        # Cancel any running operation
-        self.controller.cancel_operation()
+        # Cancel any running operations and clean up controller
+        if self.controller:
+            self.controller.cancel_operation()
+            self.controller.cleanup()
         
-        # Clean up controller resources
-        self.controller.cleanup_operation_memory()
-        
-        # Release tracked resources
-        if self._resource_manager:
-            if self._worker_resource_id:
-                self._resource_manager.release_resource(self, self._worker_resource_id)
-            if self._controller_resource_id:
-                self._resource_manager.release_resource(self, self._controller_resource_id)
+        # Clear thread reference
+        self.current_thread = None
         
         self.logger.info("ForensicTab cleanup complete")

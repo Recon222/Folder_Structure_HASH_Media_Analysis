@@ -4,8 +4,10 @@ Workflow controller - orchestrates complete processing workflows
 """
 from pathlib import Path
 from typing import List, Optional, Dict, Any
+from datetime import datetime
 
 from .base_controller import BaseController
+from core.resource_coordinators import WorkerResourceCoordinator
 from core.models import FormData
 from core.services.interfaces import IPathService, IFileOperationService, IValidationService, ISuccessMessageService
 from core.workers import FolderStructureThread
@@ -19,6 +21,7 @@ class WorkflowController(BaseController):
     def __init__(self):
         super().__init__("WorkflowController")
         self.current_operation: Optional[FolderStructureThread] = None
+        self._current_operation_id: Optional[str] = None
         
         # Service dependencies (injected)
         self._path_service = None
@@ -30,6 +33,10 @@ class WorkflowController(BaseController):
         self._last_file_result = None
         self._last_report_results = None
         self._last_zip_result = None
+    
+    def _create_resource_coordinator(self, component_id: str) -> WorkerResourceCoordinator:
+        """Use WorkerResourceCoordinator for thread management"""
+        return WorkerResourceCoordinator(component_id)
     
     @property
     def path_service(self) -> IPathService:
@@ -121,6 +128,14 @@ class WorkflowController(BaseController):
             )
             
             self.current_operation = thread
+            
+            # Track worker with resource coordinator
+            if self.resources:
+                self._current_operation_id = self.resources.track_worker(
+                    thread,
+                    name=f"forensic_workflow_{datetime.now():%H%M%S}"
+                )
+            
             self._log_operation("workflow_thread_created", f"destination: {forensic_path}")
             
             return Result.success(thread)
@@ -216,7 +231,13 @@ class WorkflowController(BaseController):
         if self.current_operation and self.current_operation.isRunning():
             self._log_operation("cancel_workflow_requested")
             self.current_operation.cancel()
+            # Clear references - coordinator handles cleanup
+            self.current_operation = None
+            self._current_operation_id = None
             return True
+        # Clear references even if not running
+        self.current_operation = None
+        self._current_operation_id = None
         return False
     
     def get_current_workflow_status(self) -> Dict[str, Any]:
@@ -359,3 +380,17 @@ class WorkflowController(BaseController):
             )
             self._handle_error(error, {'method': 'cleanup_operation_resources'})
             return Result.error(error)
+    
+    def cleanup(self) -> None:
+        """Clean up all resources"""
+        # Cancel any running operation
+        if self.current_operation and self.current_operation.isRunning():
+            self.cancel_current_workflow()
+        
+        # Let resource coordinator handle cleanup
+        if self.resources:
+            self.resources.cleanup_all()
+        
+        # Clear references
+        self.current_operation = None
+        self._current_operation_id = None

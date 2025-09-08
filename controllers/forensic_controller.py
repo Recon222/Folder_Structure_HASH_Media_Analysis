@@ -15,6 +15,7 @@ from .base_controller import BaseController
 from .workflow_controller import WorkflowController
 from .report_controller import ReportController
 from .zip_controller import ZipController
+from core.resource_coordinators import WorkerResourceCoordinator
 from core.models import FormData
 from core.result_types import Result, FileOperationResult, ReportGenerationResult, ArchiveOperationResult
 from core.exceptions import UIError, FileOperationError, ErrorSeverity
@@ -91,6 +92,8 @@ class ForensicController(BaseController):
         # Operation state - ENHANCED
         self.file_thread = None
         self.zip_thread = None
+        self._file_thread_id = None
+        self._zip_thread_id = None
         self.operation_active = False
         self.current_phase = None  # Track: 'files', 'reports', 'zip', 'complete', 'cancelled'
         
@@ -103,6 +106,10 @@ class ForensicController(BaseController):
         self.last_output_directory = None
         
         self._log_operation("initialized", "ForensicController ready")
+    
+    def _create_resource_coordinator(self, component_id: str) -> WorkerResourceCoordinator:
+        """Use WorkerResourceCoordinator for managing file and zip threads"""
+        return WorkerResourceCoordinator(component_id)
     
     def set_zip_controller(self, zip_controller: ZipController):
         """Inject ZIP controller dependency"""
@@ -214,6 +221,13 @@ class ForensicController(BaseController):
             # Store thread reference
             self.file_thread = workflow_result.value
             self.operation_active = True
+            
+            # Track file thread with resource coordinator
+            if self.resources and self.file_thread:
+                self._file_thread_id = self.resources.track_worker(
+                    self.file_thread,
+                    name=f"file_thread_{datetime.now():%H%M%S}"
+                )
             
             self._log_operation("forensic_processing_started", 
                               f"Files: {len(files)}, Folders: {len(folders)}")
@@ -393,6 +407,13 @@ class ForensicController(BaseController):
                 self.operation_state.form_data
             )
             
+            # Track zip thread with resource coordinator
+            if self.resources and self.zip_thread:
+                self._zip_thread_id = self.resources.track_worker(
+                    self.zip_thread,
+                    name=f"zip_thread_{datetime.now():%H%M%S}"
+                )
+            
             # Connect signals INTERNALLY
             self.zip_thread.progress_update.connect(self._on_zip_progress)
             self.zip_thread.result_ready.connect(self._on_zip_finished_internal)
@@ -527,9 +548,11 @@ class ForensicController(BaseController):
                 performance_data=None
             )
             
-            # Clear local references
+            # Clear local references - coordinator handles cleanup
             self.file_thread = None
             self.zip_thread = None
+            self._file_thread_id = None
+            self._zip_thread_id = None
             self.file_operation_results = {}
             
             # Clear operation state
@@ -570,6 +593,13 @@ class ForensicController(BaseController):
         if self.zip_thread and self.zip_thread.isRunning():
             self.zip_thread.cancel()
             cancelled = True
+        
+        # Clear references - coordinator handles cleanup
+        if cancelled:
+            self.file_thread = None
+            self.zip_thread = None
+            self._file_thread_id = None
+            self._zip_thread_id = None
             
         if cancelled:
             self._log_operation("operation_cancelled", "User cancelled operation")
@@ -577,3 +607,21 @@ class ForensicController(BaseController):
             self.operation_state.clear()
             
         return cancelled
+    
+    def cleanup(self) -> None:
+        """Clean up all resources"""
+        # Cancel any running operations
+        self.cancel_operation()
+        
+        # Clean up operation memory
+        self.cleanup_operation_memory()
+        
+        # Let resource coordinator handle cleanup
+        if self.resources:
+            self.resources.cleanup_all()
+        
+        # Clear all references
+        self.file_thread = None
+        self.zip_thread = None
+        self._file_thread_id = None
+        self._zip_thread_id = None
