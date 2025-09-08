@@ -213,7 +213,10 @@ class SuccessDialog(QDialog):
     @staticmethod
     def show_success_message(message_data, parent=None):
         """
-        NEW: Display success message using SuccessMessageData object.
+        Display success message using SuccessMessageData object.
+        
+        This is the PRIMARY method for showing success messages in the new architecture.
+        Each tab creates its own SuccessMessageData and passes it here for display.
         
         Args:
             message_data: SuccessMessageData object with all message information
@@ -242,59 +245,6 @@ class SuccessDialog(QDialog):
                     widget.setText(message_data.celebration_emoji)
                     break
         
-        return dialog.show_success()
-    
-    @staticmethod
-    def show_forensic_success_v2(
-        file_result,
-        report_results=None, 
-        zip_result=None,
-        parent=None
-    ):
-        """
-        NEW: Show forensic success using native Result objects (no conversions).
-        
-        Args:
-            file_result: FileOperationResult object
-            report_results: Dict of ReportGenerationResult objects
-            zip_result: ArchiveOperationResult object  
-            parent: Parent widget
-            
-        Returns:
-            QDialog result (accepted/rejected)
-        """
-        from core.services.success_message_builder import SuccessMessageBuilder
-        from core.result_types import FileOperationResult
-        
-        if not isinstance(file_result, FileOperationResult):
-            raise ValueError("file_result must be a FileOperationResult object")
-        
-        # Use business logic service to build message
-        message_builder = SuccessMessageBuilder()
-        message_data = message_builder.build_forensic_success_message(
-            file_result, report_results, zip_result
-        )
-        
-        return SuccessDialog.show_success_message(message_data, parent)
-
-    # Legacy methods - kept for backward compatibility during transition
-    @staticmethod
-    def show_forensic_success(title: str, message: str, details: str = "", parent=None):
-        """
-        LEGACY: Static method to show forensic success dialog (string-based).
-        
-        DEPRECATED: Use show_success() with SuccessMessageData or show_forensic_success_v2() instead.
-        
-        Args:
-            title: Dialog title
-            message: Rich success message with performance stats
-            details: Output location or additional details
-            parent: Parent widget
-            
-        Returns:
-            QDialog result (accepted/rejected)
-        """
-        dialog = SuccessDialog(title, message, details, parent)
         return dialog.show_success()
         
     @staticmethod 

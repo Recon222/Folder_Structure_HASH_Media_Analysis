@@ -20,6 +20,41 @@ class HashReportGenerator:
         """Initialize the report generator"""
         pass
         
+    def generate_single_hash_csv_from_dict(self,
+                                      results_dict: dict,
+                                      output_path: Path,
+                                      algorithm: str,
+                                      include_metadata: bool = True) -> bool:
+        """Generate CSV report from dictionary format (Result-based architecture support)
+        
+        Args:
+            results_dict: Dictionary of file paths to hash data
+            output_path: Path where CSV should be saved
+            algorithm: Hash algorithm used
+            include_metadata: Whether to include metadata header
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        # Convert dictionary to list of HashResult objects
+        hash_results = []
+        for file_path, data in results_dict.items():
+            if isinstance(data, dict):
+                # Create a HashResult from dictionary data
+                result = HashResult(
+                    file_path=Path(data.get('file_path', file_path)),
+                    relative_path=Path(data.get('file_path', file_path)),
+                    hash_value=data.get('hash_value', ''),
+                    algorithm=data.get('algorithm', algorithm),
+                    file_size=data.get('file_size', 0),
+                    duration=data.get('duration', 0),
+                    error=data.get('error', None) if not data.get('success', True) else None
+                )
+                hash_results.append(result)
+        
+        # Use the existing method with converted data
+        return self.generate_single_hash_csv(hash_results, output_path, algorithm, include_metadata)
+    
     def generate_single_hash_csv(self, 
                                 results: List[HashResult], 
                                 output_path: Path, 

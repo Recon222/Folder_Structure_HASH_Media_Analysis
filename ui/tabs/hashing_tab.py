@@ -26,6 +26,8 @@ from ui.components import FilesPanel, LogConsole
 from ui.components.elided_label import ElidedLabel
 from core.exceptions import UIError, ErrorSeverity
 from core.error_handler import handle_error
+from ui.dialogs.success_dialog import SuccessDialog
+from .hashing_success import HashingSuccessBuilder
 
 
 class OperationStatusCard(QFrame):
@@ -342,6 +344,7 @@ class HashingTab(QWidget):
         # Controllers and utilities
         self.hash_controller = hash_controller or HashController()
         self.report_generator = HashReportGenerator()
+        self.success_builder = HashingSuccessBuilder()  # NEW: Tab-specific success builder
         
         # Current operation results
         self.current_single_results = None
@@ -809,6 +812,25 @@ class HashingTab(QWidget):
             self.current_single_results = result.value
             self.results_panel.update_operation_status('single_hash', 'completed', result.value)
             self._log("Single hash operation completed successfully!")
+            
+            # NEW: Show success dialog using tab-specific builder
+            # Follow the Result-based pattern used by ForensicTab and CopyVerifyTab
+            if result.value:
+                # Use Result object's fields directly - don't look for nested 'results' key
+                files_processed = result.files_hashed if hasattr(result, 'files_hashed') else len(result.value)
+                # Iterate the dictionary values directly - they contain the hash data
+                total_size = sum(r.get('file_size', 0) for r in result.value.values() if isinstance(r, dict))
+                # Use Result's processing_time field directly
+                duration = result.processing_time if hasattr(result, 'processing_time') else 0
+                algorithm = self.algorithm_combo.currentText()
+                
+                success_message = self.success_builder.build_single_hash_success(
+                    files_processed=files_processed,
+                    total_size=total_size,
+                    duration=duration,
+                    algorithm=algorithm
+                )
+                SuccessDialog.show_success_message(success_message, self)
         else:
             self.results_panel.update_operation_status('single_hash', 'failed')
             error_msg = result.error.user_message if hasattr(result, 'error') and result.error else "Hash operation failed"
@@ -824,11 +846,49 @@ class HashingTab(QWidget):
             self.current_verification_results = result.value
             self.results_panel.update_operation_status('verification', 'completed', result.value)
             self._log("Verification operation completed successfully!")
+            
+            # NEW: Show success dialog for verification
+            # Use Result object's fields directly - following established pattern
+            if result:
+                # For verification, we need to count passed/failed from the dictionary
+                total_files = result.files_hashed if hasattr(result, 'files_hashed') else len(result.value)
+                # Count verified (passed) vs failed
+                passed = total_files - (result.verification_failures if hasattr(result, 'verification_failures') else 0)
+                failed = result.verification_failures if hasattr(result, 'verification_failures') else 0
+                duration = result.processing_time if hasattr(result, 'processing_time') else 0
+                algorithm = self.algorithm_combo.currentText()
+                
+                success_message = self.success_builder.build_verification_success(
+                    total_files=total_files,
+                    passed=passed,
+                    failed=failed,
+                    duration=duration,
+                    algorithm=algorithm
+                )
+                SuccessDialog.show_success_message(success_message, self)
         else:
             # CRITICAL FIX: Failed verifications still have results - pass them to UI for export
             if isinstance(result, Result) and result.value:
                 self.current_verification_results = result.value
                 self.results_panel.update_operation_status('verification', 'failed', result.value)
+                
+                # Show warning dialog even for failed verification
+                # Use Result object's fields directly
+                if result:
+                    total_files = result.files_hashed if hasattr(result, 'files_hashed') else len(result.value)
+                    passed = total_files - (result.verification_failures if hasattr(result, 'verification_failures') else total_files)
+                    failed = result.verification_failures if hasattr(result, 'verification_failures') else total_files
+                    duration = result.processing_time if hasattr(result, 'processing_time') else 0
+                    algorithm = self.algorithm_combo.currentText()
+                    
+                    success_message = self.success_builder.build_verification_success(
+                        total_files=total_files,
+                        passed=passed,
+                        failed=failed,
+                        duration=duration,
+                        algorithm=algorithm
+                    )
+                    SuccessDialog.show_success_message(success_message, self)
             else:
                 self.current_verification_results = {}
                 self.results_panel.update_operation_status('verification', 'failed')
@@ -860,12 +920,22 @@ class HashingTab(QWidget):
             )
             
             if filename:
-                success = self.report_generator.generate_single_hash_csv(
-                    results.get('results', []), Path(filename), algorithm
+                # Use the new dictionary-aware method
+                success = self.report_generator.generate_single_hash_csv_from_dict(
+                    results, Path(filename), algorithm
                 )
                 
                 if success:
                     self._log(f"Hash report exported to: {filename}")
+                    # NEW: Show export success dialog
+                    # Count actual results from dictionary
+                    record_count = len(results) if isinstance(results, dict) else 0
+                    export_message = self.success_builder.build_export_success(
+                        export_type='single_hash',
+                        file_path=Path(filename),
+                        record_count=record_count
+                    )
+                    SuccessDialog.show_success_message(export_message, self)
                 else:
                     self._show_error("Failed to export hash report")
                     
@@ -896,6 +966,15 @@ class HashingTab(QWidget):
                 
                 if success:
                     self._log(f"Verification report exported to: {filename}")
+                    # NEW: Show export success dialog for verification
+                    # Count actual verification results from dictionary
+                    total_records = len(results) if isinstance(results, dict) else 0
+                    export_message = self.success_builder.build_export_success(
+                        export_type='verification',
+                        file_path=Path(filename),
+                        record_count=total_records
+                    )
+                    SuccessDialog.show_success_message(export_message, self)
                 else:
                     self._show_error("Failed to export verification report")
                     
