@@ -25,8 +25,7 @@ from core.settings_manager import settings
 from core.logger import logger
 from core.exceptions import UIError, ErrorSeverity
 from core.error_handler import handle_error
-from core.services.service_registry import get_service
-from core.services.interfaces import IResourceManagementService, ResourceType
+# Resource management now handled by controller
 
 
 class CopyVerifyTab(QWidget):
@@ -40,27 +39,8 @@ class CopyVerifyTab(QWidget):
         """Initialize the Copy & Verify tab"""
         super().__init__(parent)
         
-        # Register with ResourceManagementService
-        self._resource_manager = get_service(IResourceManagementService)
-        if self._resource_manager:
-            self._resource_manager.register_component(self, "CopyVerifyTab", "tab")
-            self._resource_manager.register_cleanup(self, self._cleanup_resources, priority=10)
-            logger.info("CopyVerifyTab registered with ResourceManagementService")
-        else:
-            logger.warning("ResourceManagementService not available for CopyVerifyTab")
-            self._resource_manager = None
-        
-        # Controller for orchestration
+        # Controller for orchestration (handles its own resource management)
         self.controller = CopyVerifyController()
-        
-        # Track controller as a resource
-        if self._resource_manager:
-            self._resource_manager.track_resource(
-                self, 
-                ResourceType.CUSTOM, 
-                self.controller,
-                metadata={'type': 'CopyVerifyController'}
-            )
         
         # State management
         self.operation_active = False
@@ -69,8 +49,7 @@ class CopyVerifyTab(QWidget):
         self.destination_path = None
         self.is_paused = False
         
-        # Resource tracking
-        self._worker_resource_id = None
+        # Worker reference managed by controller
         
         self._create_ui()
         self._connect_signals()
@@ -491,22 +470,11 @@ class CopyVerifyTab(QWidget):
             
             if result.success:
                 # Release old worker if exists
-                self._release_worker_resource()
+                # Controller manages worker cleanup
                 
                 self.current_worker = result.value
                 
-                # Track worker as resource
-                if self._resource_manager and self.current_worker:
-                    self._worker_resource_id = self._resource_manager.track_resource(
-                        self,
-                        ResourceType.WORKER,
-                        self.current_worker,
-                        metadata={
-                            'type': 'CopyVerifyWorker',
-                            'destination': str(self.destination_path),
-                            'cleanup_func': lambda w: w.cancel() if w and w.isRunning() else None
-                        }
-                    )
+                # Worker is now tracked by controller's resource coordinator
                 
                 # Connect signals
                 self.current_worker.progress_update.connect(self._on_progress_update)
@@ -590,7 +558,7 @@ class CopyVerifyTab(QWidget):
                 self.is_paused = False
                 self.pause_btn.setText("⏸️ Pause")
             # Release worker resource after cancellation
-            self._release_worker_resource()
+            # Controller manages worker cleanup
             
     def _on_progress_update(self, percentage: int, message: str):
         """Handle progress updates"""
@@ -606,7 +574,7 @@ class CopyVerifyTab(QWidget):
         self._set_operation_active(False)
         
         # Release worker resource after completion
-        self._release_worker_resource()
+        # Controller manages worker cleanup
         
         if result.success:
             # Store the full result for later use
@@ -778,31 +746,21 @@ class CopyVerifyTab(QWidget):
         if self.operation_active:
             self._cancel_operation()
     
-    def _cleanup_resources(self):
-        """Clean up all resources - called by ResourceManagementService"""
-        logger.info("CopyVerifyTab: Cleaning up resources")
+    def cleanup(self):
+        """Clean up tab resources"""
+        logger.info("CopyVerifyTab: Cleaning up")
         
-        # Release worker
-        self._release_worker_resource()
+        # Cancel any active operations through controller
+        if self.controller:
+            self.controller.cancel_operation()
         
         # Clear data
         self.last_results = None
         self.current_worker = None
         self.destination_path = None
         
-        # Controller cleanup (cancel any operations)
+        # Controller handles its own resource cleanup
         if self.controller:
-            self.controller.cancel_operation()
+            self.controller.cleanup()
         
-        logger.info("CopyVerifyTab: Resource cleanup complete")
-    
-    def _release_worker_resource(self):
-        """Release the current worker resource"""
-        if self._worker_resource_id and self._resource_manager:
-            # Cancel worker if still running
-            if self.current_worker and self.current_worker.isRunning():
-                self.current_worker.cancel()
-                self.current_worker.wait(2000)
-            
-            self._resource_manager.release_resource(self, self._worker_resource_id)
-            self._worker_resource_id = None
+        logger.info("CopyVerifyTab: Cleanup complete")

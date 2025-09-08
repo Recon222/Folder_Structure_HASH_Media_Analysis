@@ -309,4 +309,171 @@ class PerformanceTestSuite:
         if scenarios is None:
             scenarios = ['small_files', 'large_files', 'mixed_workload', 'forensic_simulation']
         
-        results = []\n        \n        for scenario in scenarios:\n            print(f\"\\n{'='*60}\")\n            print(f\"Running {scenario.upper()} performance test\")\n            print(f\"{'='*60}\")\n            \n            try:\n                with tempfile.TemporaryDirectory() as temp_dir:\n                    temp_path = Path(temp_dir)\n                    test_data_dir = temp_path / \"test_data\"\n                    \n                    # Create test data\n                    print(f\"Creating test data for {scenario}...\")\n                    test_info = self.create_test_data(test_data_dir, scenario)\n                    \n                    # Override test directory for forensic simulation\n                    if 'test_dir' in test_info:\n                        test_data_dir = test_info['test_dir']\n                    \n                    print(f\"Test data: {test_info['description']}\")\n                    print(f\"Total size: {test_info['total_size_mb']:.1f} MB\")\n                    print(f\"File count: {test_info['file_count']}\")\n                    \n                    # Test all methods\n                    scenario_results = {\n                        'scenario': scenario,\n                        'test_info': test_info,\n                        'results': []\n                    }\n                    \n                    # Test Native 7zip\n                    native_result = self.test_native_7zip_performance(test_data_dir, test_info)\n                    scenario_results['results'].append(native_result)\n                    \n                    # Test Buffered Python\n                    buffered_result = self.test_buffered_python_performance(test_data_dir, test_info)\n                    scenario_results['results'].append(buffered_result)\n                    \n                    # Test Hybrid Implementation\n                    hybrid_result = self.test_hybrid_implementation(test_data_dir, test_info)\n                    scenario_results['results'].append(hybrid_result)\n                    \n                    results.append(scenario_results)\n                    \n                    # Print scenario results\n                    self._print_scenario_results(scenario_results)\n                    \n            except Exception as e:\n                print(f\"Error in {scenario} test: {e}\")\n                results.append({\n                    'scenario': scenario,\n                    'error': str(e),\n                    'results': []\n                })\n        \n        return results\n    \n    def _print_scenario_results(self, scenario_results: Dict[str, Any]):\n        \"\"\"Print results for a single scenario\"\"\"\n        print(f\"\\nResults for {scenario_results['scenario']}:\")\n        print(\"-\" * 50)\n        \n        for result in scenario_results['results']:\n            method = result['method']\n            if result['success']:\n                print(f\"{method:15} | {result['duration']:6.2f}s | {result['speed_mbps']:8.1f} MB/s\")\n            else:\n                print(f\"{method:15} | FAILED: {result['error']}\")\n    \n    def print_summary(self, all_results: List[Dict[str, Any]]):\n        \"\"\"Print comprehensive summary of all test results\"\"\"\n        print(f\"\\n{'='*80}\")\n        print(\"PERFORMANCE TEST SUMMARY\")\n        print(f\"{'='*80}\")\n        \n        for scenario_results in all_results:\n            if 'error' in scenario_results:\n                continue\n                \n            scenario = scenario_results['scenario']\n            test_info = scenario_results['test_info']\n            \n            print(f\"\\n{scenario.upper()} ({test_info['description']})\")\n            print(f\"Total: {test_info['total_size_mb']:.1f} MB, {test_info['file_count']} files\")\n            print(\"-\" * 60)\n            \n            # Find fastest method\n            successful_results = [r for r in scenario_results['results'] if r['success']]\n            if successful_results:\n                fastest = max(successful_results, key=lambda x: x['speed_mbps'])\n                \n                print(f\"{'Method':<20} {'Time':<8} {'Speed':<12} {'Improvement':<12}\")\n                print(\"-\" * 60)\n                \n                for result in scenario_results['results']:\n                    if result['success']:\n                        improvement = result['speed_mbps'] / fastest['speed_mbps'] * 100\n                        print(f\"{result['method']:<20} {result['duration']:6.2f}s {result['speed_mbps']:8.1f} MB/s  {improvement:6.1f}%\")\n                    else:\n                        print(f\"{result['method']:<20} FAILED: {result.get('error', 'Unknown error')}\")\n                        \n                print(f\"\\n🏆 Fastest: {fastest['method']} at {fastest['speed_mbps']:.1f} MB/s\")\n            else:\n                print(\"❌ All methods failed for this scenario\")\n        \n        # Overall performance summary\n        self._print_overall_summary(all_results)\n    \n    def _print_overall_summary(self, all_results: List[Dict[str, Any]]):\n        \"\"\"Print overall performance summary across all scenarios\"\"\"\n        print(f\"\\n{'='*80}\")\n        print(\"OVERALL PERFORMANCE COMPARISON\")\n        print(f\"{'='*80}\")\n        \n        # Aggregate results by method\n        method_stats = {}\n        \n        for scenario_results in all_results:\n            if 'error' in scenario_results:\n                continue\n                \n            for result in scenario_results['results']:\n                method = result['method']\n                if method not in method_stats:\n                    method_stats[method] = {'speeds': [], 'successes': 0, 'failures': 0}\n                \n                if result['success']:\n                    method_stats[method]['speeds'].append(result['speed_mbps'])\n                    method_stats[method]['successes'] += 1\n                else:\n                    method_stats[method]['failures'] += 1\n        \n        # Print method summaries\n        for method, stats in method_stats.items():\n            if stats['speeds']:\n                avg_speed = sum(stats['speeds']) / len(stats['speeds'])\n                max_speed = max(stats['speeds'])\n                print(f\"\\n{method.upper()}:\")\n                print(f\"  Average Speed: {avg_speed:.1f} MB/s\")\n                print(f\"  Peak Speed: {max_speed:.1f} MB/s\")\n                print(f\"  Success Rate: {stats['successes']}/{stats['successes'] + stats['failures']}\")\n            else:\n                print(f\"\\n{method.upper()}: Failed all tests\")\n\n\ndef main():\n    \"\"\"Main test execution function\"\"\"\n    print(\"Native 7-Zip vs Buffered Python Performance Test\")\n    print(\"=\" * 50)\n    \n    # Initialize test suite\n    test_suite = PerformanceTestSuite()\n    \n    # Run comprehensive tests\n    results = test_suite.run_comprehensive_test()\n    \n    # Print summary\n    test_suite.print_summary(results)\n    \n    print(f\"\\n{'='*80}\")\n    print(\"Test completed. Check results above for performance comparison.\")\n    print(\"Expected: Native 7-Zip should be 7-14x faster than Buffered Python\")\n    print(f\"{'='*80}\")\n\n\nif __name__ == \"__main__\":\n    main()
+        results = []
+        
+        for scenario in scenarios:
+            print(f"\n{'='*60}")
+            print(f"Running {scenario.upper()} performance test")
+            print(f"{'='*60}")
+            
+            try:
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    temp_path = Path(temp_dir)
+                    test_data_dir = temp_path / "test_data"
+                    
+                    # Create test data
+                    print(f"Creating test data for {scenario}...")
+                    test_info = self.create_test_data(test_data_dir, scenario)
+                    
+                    # Override test directory for forensic simulation
+                    if 'test_dir' in test_info:
+                        test_data_dir = test_info['test_dir']
+                    
+                    print(f"Test data: {test_info['description']}")
+                    print(f"Total size: {test_info['total_size_mb']:.1f} MB")
+                    print(f"File count: {test_info['file_count']}")
+                    
+                    # Test all methods
+                    scenario_results = {
+                        'scenario': scenario,
+                        'test_info': test_info,
+                        'results': []
+                    }
+                    
+                    # Test Native 7zip
+                    native_result = self.test_native_7zip_performance(test_data_dir, test_info)
+                    scenario_results['results'].append(native_result)
+                    
+                    # Test Buffered Python
+                    buffered_result = self.test_buffered_python_performance(test_data_dir, test_info)
+                    scenario_results['results'].append(buffered_result)
+                    
+                    # Test Hybrid Implementation
+                    hybrid_result = self.test_hybrid_implementation(test_data_dir, test_info)
+                    scenario_results['results'].append(hybrid_result)
+                    
+                    results.append(scenario_results)
+                    
+                    # Print scenario results
+                    self._print_scenario_results(scenario_results)
+                    
+            except Exception as e:
+                print(f"Error in {scenario} test: {e}")
+                results.append({
+                    'scenario': scenario,
+                    'error': str(e),
+                    'results': []
+                })
+        
+        return results
+    
+    def _print_scenario_results(self, scenario_results: Dict[str, Any]):
+        """Print results for a single scenario"""
+        print(f"\nResults for {scenario_results['scenario']}:")
+        print("-" * 50)
+        
+        for result in scenario_results['results']:
+            method = result['method']
+            if result['success']:
+                print(f"{method:15} | {result['duration']:6.2f}s | {result['speed_mbps']:8.1f} MB/s")
+            else:
+                print(f"{method:15} | FAILED: {result['error']}")
+    
+    def print_summary(self, all_results: List[Dict[str, Any]]):
+        """Print comprehensive summary of all test results"""
+        print(f"\n{'='*80}")
+        print("PERFORMANCE TEST SUMMARY")
+        print(f"{'='*80}")
+        
+        for scenario_results in all_results:
+            if 'error' in scenario_results:
+                continue
+                
+            scenario = scenario_results['scenario']
+            test_info = scenario_results['test_info']
+            
+            print(f"\n{scenario.upper()} ({test_info['description']})")
+            print(f"Total: {test_info['total_size_mb']:.1f} MB, {test_info['file_count']} files")
+            print("-" * 60)
+            
+            # Find fastest method
+            successful_results = [r for r in scenario_results['results'] if r['success']]
+            if successful_results:
+                fastest = max(successful_results, key=lambda x: x['speed_mbps'])
+                
+                print(f"{'Method':<20} {'Time':<8} {'Speed':<12} {'Improvement':<12}")
+                print("-" * 60)
+                
+                for result in scenario_results['results']:
+                    if result['success']:
+                        improvement = result['speed_mbps'] / fastest['speed_mbps'] * 100
+                        print(f"{result['method']:<20} {result['duration']:6.2f}s {result['speed_mbps']:8.1f} MB/s  {improvement:6.1f}%")
+                    else:
+                        print(f"{result['method']:<20} FAILED: {result.get('error', 'Unknown error')}")
+                        
+                print(f"\n🏆 Fastest: {fastest['method']} at {fastest['speed_mbps']:.1f} MB/s")
+            else:
+                print("❌ All methods failed for this scenario")
+        
+        # Overall performance summary
+        self._print_overall_summary(all_results)
+    
+    def _print_overall_summary(self, all_results: List[Dict[str, Any]]):
+        """Print overall performance summary across all scenarios"""
+        print(f"\n{'='*80}")
+        print("OVERALL PERFORMANCE COMPARISON")
+        print(f"{'='*80}")
+        
+        # Aggregate results by method
+        method_stats = {}
+        
+        for scenario_results in all_results:
+            if 'error' in scenario_results:
+                continue
+                
+            for result in scenario_results['results']:
+                method = result['method']
+                if method not in method_stats:
+                    method_stats[method] = {'speeds': [], 'successes': 0, 'failures': 0}
+                
+                if result['success']:
+                    method_stats[method]['speeds'].append(result['speed_mbps'])
+                    method_stats[method]['successes'] += 1
+                else:
+                    method_stats[method]['failures'] += 1
+        
+        # Print method summaries
+        for method, stats in method_stats.items():
+            if stats['speeds']:
+                avg_speed = sum(stats['speeds']) / len(stats['speeds'])
+                max_speed = max(stats['speeds'])
+                print(f"\n{method.upper()}:")
+                print(f"  Average Speed: {avg_speed:.1f} MB/s")
+                print(f"  Peak Speed: {max_speed:.1f} MB/s")
+                print(f"  Success Rate: {stats['successes']}/{stats['successes'] + stats['failures']}")
+            else:
+                print(f"\n{method.upper()}: Failed all tests")
+
+
+def main():
+    """Main test execution function"""
+    print("Native 7-Zip vs Buffered Python Performance Test")
+    print("=" * 50)
+    
+    # Initialize test suite
+    test_suite = PerformanceTestSuite()
+    
+    # Run comprehensive tests
+    results = test_suite.run_comprehensive_test()
+    
+    # Print summary
+    test_suite.print_summary(results)
+    
+    print(f"\n{'='*80}")
+    print("Test completed. Check results above for performance comparison.")
+    print("Expected: Native 7-Zip should be 7-14x faster than Buffered Python")
+    print(f"{'='*80}")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
 Copy & Verify Controller - Orchestrates copy and verify operations
-Follows SOA architecture with full service integration
+Follows SOA architecture with full service integration and resource coordination
 """
 
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 
 from .base_controller import BaseController
+from core.resource_coordinators import WorkerResourceCoordinator
 from core.services.interfaces import ICopyVerifyService, IValidationService
 from core.workers.copy_verify_worker import CopyVerifyWorker
 from core.result_types import Result
@@ -16,16 +17,21 @@ from core.logger import logger
 
 
 class CopyVerifyController(BaseController):
-    """Controller for copy and verify operations"""
+    """Controller for copy and verify operations with resource management"""
     
     def __init__(self):
         """Initialize copy verify controller"""
         super().__init__("CopyVerifyController")
         self.current_worker: Optional[CopyVerifyWorker] = None
+        self._current_worker_id: Optional[str] = None
         
         # Service dependencies (lazy loaded)
         self._copy_service = None
         self._validation_service = None
+        
+    def _create_resource_coordinator(self, component_id: str) -> WorkerResourceCoordinator:
+        """Use specialized worker coordinator for managing copy operations"""
+        return WorkerResourceCoordinator(component_id)
         
     @property
     def copy_service(self) -> ICopyVerifyService:
@@ -108,6 +114,16 @@ class CopyVerifyController(BaseController):
             )
             
             self.current_worker = worker
+            
+            # Track worker with resource coordinator
+            if self.resources:
+                self._current_worker_id = self.resources.track_worker(
+                    worker,
+                    name=f"copy_verify_{destination.name}"
+                )
+                self._log_operation("worker_tracked", 
+                                  f"Worker tracked with ID: {self._current_worker_id}")
+            
             self._log_operation("worker_created", 
                               f"Worker created for {len(source_items)} items")
             
@@ -212,6 +228,11 @@ class CopyVerifyController(BaseController):
             if self.current_worker and self.current_worker.isRunning():
                 self.current_worker.cancel()
                 self._log_operation("cancel_operation", "Operation cancelled")
+            
+            # Clear worker references (resource coordinator handles cleanup)
+            self.current_worker = None
+            self._current_worker_id = None
+            
             return Result.success(None)
         except Exception as e:
             error = FileOperationError(
