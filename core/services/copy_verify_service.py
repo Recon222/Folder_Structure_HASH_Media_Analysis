@@ -12,7 +12,7 @@ from typing import List, Dict, Any, Optional, Tuple
 
 from .interfaces import ICopyVerifyService
 from .base_service import BaseService
-from .success_message_data import CopyVerifyOperationData, SuccessMessageData
+from .success_message_data import CopyVerifyOperationData
 from ..result_types import Result
 from ..exceptions import ValidationError, FileOperationError, ErrorSeverity
 from ..settings_manager import settings
@@ -242,9 +242,9 @@ class CopyVerifyService(BaseService, ICopyVerifyService):
         results: Dict[str, Any],
         calculate_hash: bool,
         performance_stats: Optional[Dict[str, Any]] = None
-    ) -> Result[SuccessMessageData]:
+    ) -> Result[CopyVerifyOperationData]:
         """
-        Process operation results and build success message data
+        Process operation results and build operation data
         
         Args:
             results: Operation results dictionary
@@ -252,7 +252,7 @@ class CopyVerifyService(BaseService, ICopyVerifyService):
             performance_stats: Performance metrics from worker
             
         Returns:
-            Result containing SuccessMessageData
+            Result containing CopyVerifyOperationData
         """
         try:
             # Check if results is a FileOperationResult-style dict with metadata
@@ -316,15 +316,11 @@ class CopyVerifyService(BaseService, ICopyVerifyService):
                 preserve_structure=True  # Would come from operation params
             )
             
-            # Build success message
-            from .success_message_builder import SuccessMessageBuilder
-            message_builder = SuccessMessageBuilder()
-            message_data = message_builder.build_copy_verify_success_message(copy_data)
-            
             self._log_operation("process_operation_results", 
                               f"Processed results: {files_processed} files, {failed_count} failures")
             
-            return Result.success(message_data)
+            # Return the operation data directly - let the tab handle success message
+            return Result.success(copy_data)
             
         except Exception as e:
             error = FileOperationError(

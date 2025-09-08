@@ -20,6 +20,7 @@ from PySide6.QtGui import QFont
 from ui.components import FilesPanel, LogConsole
 from ui.components.elided_label import ElidedLabel
 from ui.dialogs.success_dialog import SuccessDialog
+from .copy_verify_success import CopyVerifySuccessBuilder
 from controllers.copy_verify_controller import CopyVerifyController
 from core.settings_manager import settings
 from core.logger import logger
@@ -41,6 +42,9 @@ class CopyVerifyTab(QWidget):
         
         # Controller for orchestration (handles its own resource management)
         self.controller = CopyVerifyController()
+        
+        # Success builder for this tab
+        self.success_builder = CopyVerifySuccessBuilder()
         
         # State management
         self.operation_active = False
@@ -587,7 +591,7 @@ class CopyVerifyTab(QWidget):
             elif hasattr(result, 'performance_stats'):
                 performance_stats = result.performance_stats
             
-            # Process results through controller to get success message
+            # Process results through controller to get operation data
             # Pass the raw result value and let the service extract what it needs
             message_result = self.controller.process_operation_results(
                 result,  # Pass the full result object
@@ -595,7 +599,11 @@ class CopyVerifyTab(QWidget):
             )
             
             if message_result.success:
-                message_data = message_result.value
+                # Get the CopyVerifyOperationData from service
+                copy_data = message_result.value
+                
+                # Build success message using tab's builder
+                message_data = self.success_builder.build_copy_verify_success_message(copy_data)
                 
                 # Log the summary
                 self._log(message_data.to_display_message())
@@ -640,12 +648,17 @@ class CopyVerifyTab(QWidget):
                 if export_result.success:
                     self._log(f"CSV report exported to: {file_path}")
                     
-                    # Show simple success message
-                    QMessageBox.information(
-                        self,
-                        "Export Complete",
-                        f"CSV report exported successfully to:\n{Path(file_path).name}"
+                    # Count records in last_results
+                    record_count = len(self.last_results) if isinstance(self.last_results, dict) else 0
+                    
+                    # Build success message using tab's builder
+                    export_message = self.success_builder.build_csv_export_success(
+                        file_path=Path(file_path),
+                        record_count=record_count
                     )
+                    
+                    # Show success dialog
+                    SuccessDialog.show_success_message(export_message, self)
                 else:
                     error_msg = export_result.error.user_message if export_result.error else "Export failed"
                     self._show_error(error_msg)
