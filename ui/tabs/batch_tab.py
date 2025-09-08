@@ -21,8 +21,6 @@ from ui.components.batch_queue_widget import BatchQueueWidget
 from ui.components.elided_label import PathLabel
 from core.exceptions import UIError, ErrorSeverity
 from core.error_handler import handle_error
-from core.services.service_registry import get_service
-from core.services.interfaces import IResourceManagementService, ResourceType
 
 
 class BatchTab(QWidget):
@@ -43,20 +41,10 @@ class BatchTab(QWidget):
         self.form_data = form_data
         self.main_window = parent
         self.output_directory = None  # Dedicated output directory for batch tab
-        
-        # Resource management
-        self._resource_manager = None
-        self._batch_queue_widget_resource_id = None
         self.logger = logging.getLogger(__name__)
-        
-        # Register with ResourceManagementService
-        self._register_with_resource_manager()
         
         self._create_ui()
         self._connect_signals()
-        
-        # Track the batch queue widget as a resource after UI creation
-        self._track_batch_queue_widget()
         
     def _create_ui(self):
         """Create the tab UI"""
@@ -296,96 +284,15 @@ class BatchTab(QWidget):
         """Get the form panel"""
         return self.form_panel
     
-    def _register_with_resource_manager(self):
-        """Register this tab with the resource management service"""
-        try:
-            self._resource_manager = get_service(IResourceManagementService)
-            if self._resource_manager:
-                self._resource_manager.register_component(
-                    self, 
-                    "BatchTab", 
-                    "tab"
-                )
-                # Register cleanup callback
-                self._resource_manager.register_cleanup(
-                    self,
-                    self._cleanup_resources,
-                    priority=10
-                )
-                self.logger.info("BatchTab registered with ResourceManagementService")
-        except Exception as e:
-            self.logger.warning(f"Could not register BatchTab with ResourceManagementService: {e}")
-            self._resource_manager = None
-    
-    def _track_batch_queue_widget(self):
-        """Track the batch queue widget as a primary resource"""
-        if self._resource_manager and hasattr(self, 'batch_queue_widget'):
-            try:
-                # Track BatchQueueWidget as the main sub-component
-                self._batch_queue_widget_resource_id = self._resource_manager.track_resource(
-                    self,
-                    ResourceType.CUSTOM,
-                    self.batch_queue_widget,
-                    metadata={
-                        'type': 'BatchQueueWidget',
-                        'description': 'Main queue management widget',
-                        'cleanup_func': lambda w: w.get_recovery_manager().stop_monitoring() if w else None
-                    }
-                )
-                
-                # Also track FormPanel and FilesPanel as secondary resources
-                if hasattr(self, 'form_panel'):
-                    self._resource_manager.track_resource(
-                        self,
-                        ResourceType.CUSTOM,
-                        self.form_panel,
-                        metadata={'type': 'FormPanel', 'shared': True}
-                    )
-                
-                if hasattr(self, 'files_panel'):
-                    self._resource_manager.track_resource(
-                        self,
-                        ResourceType.CUSTOM,
-                        self.files_panel,
-                        metadata={'type': 'FilesPanel'}
-                    )
-                    
-                self.logger.info("BatchTab sub-components tracked as resources")
-            except Exception as e:
-                self.logger.warning(f"Could not track BatchTab sub-components: {e}")
-    
-    def _cleanup_resources(self):
-        """Clean up tab-specific resources"""
-        self.logger.info("Cleaning up BatchTab resources")
+    def cleanup(self):
+        """Clean up tab resources"""
+        self.logger.info("Cleaning up BatchTab")
         
-        try:
-            # Save queue state before cleanup if there are pending jobs
-            if hasattr(self, 'batch_queue_widget'):
-                queue = self.batch_queue_widget.get_queue()
-                if queue and queue.jobs:
-                    # Save current queue state for recovery
-                    recovery_manager = self.batch_queue_widget.get_recovery_manager()
-                    if recovery_manager:
-                        recovery_manager._auto_save_state()
-                        self.logger.info(f"Saved batch queue state with {len(queue.jobs)} jobs")
-                
-                # Stop any active processing
-                if self.batch_queue_widget.processing_active:
-                    self.batch_queue_widget._cancel_processing()
-                    self.logger.info("Cancelled active batch processing during cleanup")
-                
-                # Stop monitoring
-                recovery_manager = self.batch_queue_widget.get_recovery_manager()
-                if recovery_manager:
-                    recovery_manager.stop_monitoring()
-            
-            # Clear output directory reference
-            self.output_directory = None
-            
-            # Note: We don't clear form_panel or files_panel as they might be shared
-            # The ResourceManagementService will handle their cleanup based on reference counting
-            
-            self.logger.info("BatchTab cleanup complete")
-            
-        except Exception as e:
-            self.logger.error(f"Error during BatchTab cleanup: {e}")
+        # Delegate cleanup to batch queue widget
+        if hasattr(self, 'batch_queue_widget'):
+            self.batch_queue_widget.cleanup()
+        
+        # Clear output directory reference
+        self.output_directory = None
+        
+        self.logger.info("BatchTab cleanup complete")
