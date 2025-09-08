@@ -19,7 +19,8 @@
       "mcp__memory__delete_observations",
       "mcp__memory__read_graph",
       "mcp__context7__get-library-docs",
-      "mcp__perplexity-ask__perplexity_ask"
+      "mcp__perplexity-ask__perplexity_ask",
+      "Read(//mnt/c/Users/kriss/Desktop/Working_Apps_for_CFSA/**)"
     ],
     "deny": []
   }
