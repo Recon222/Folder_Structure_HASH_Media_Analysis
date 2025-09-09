@@ -5,7 +5,7 @@ Service configuration and registration - streamlined
 from .service_registry import register_service
 from .interfaces import (
     IPathService, IFileOperationService, IReportService,
-    IArchiveService, IValidationService, ISuccessMessageService,
+    IArchiveService, IValidationService,
     ICopyVerifyService, IMediaAnalysisService, IResourceManagementService
 )
 from .path_service import PathService
@@ -13,7 +13,6 @@ from .file_operation_service import FileOperationService
 from .report_service import ReportService
 from .archive_service import ArchiveService
 from .validation_service import ValidationService
-from .success_message_builder import SuccessMessageBuilder
 from .copy_verify_service import CopyVerifyService
 from .media_analysis_service import MediaAnalysisService
 from .thread_management_service import ThreadManagementService, IThreadManagementService
@@ -35,9 +34,6 @@ def configure_services(zip_controller=None):
         
         # Archive service requires zip controller dependency
         register_service(IArchiveService, ArchiveService(zip_controller))
-        
-        # ✅ SUCCESS MESSAGE SERVICE: Integrates existing SuccessMessageBuilder
-        register_service(ISuccessMessageService, SuccessMessageBuilder())
         
         # ✅ COPY VERIFY SERVICE: SOA-compliant copy and verify operations
         register_service(ICopyVerifyService, CopyVerifyService())
@@ -72,7 +68,6 @@ def get_configured_services():
         IReportService,
         IArchiveService,
         IValidationService,
-        ISuccessMessageService,
         ICopyVerifyService,
         IMediaAnalysisService,
         IThreadManagementService,

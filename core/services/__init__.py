@@ -12,7 +12,7 @@ This package provides a comprehensive service-oriented architecture with:
 from .service_registry import ServiceRegistry, get_service, register_service, register_factory
 from .interfaces import (
     IService, IPathService, IFileOperationService, 
-    IReportService, IArchiveService, IValidationService, ISuccessMessageService
+    IReportService, IArchiveService, IValidationService
 )
 from .base_service import BaseService
 
@@ -33,7 +33,7 @@ from .service_config import configure_services, verify_service_configuration
 __all__ = [
     'ServiceRegistry', 'get_service', 'register_service', 'register_factory',
     'IService', 'IPathService', 'IFileOperationService', 
-    'IReportService', 'IArchiveService', 'IValidationService', 'ISuccessMessageService',
+    'IReportService', 'IArchiveService', 'IValidationService',
     'BaseService',
     'PathService', 'FileOperationService', 'ReportService', 
     'ArchiveService', 'ValidationService',

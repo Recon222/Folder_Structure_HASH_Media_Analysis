@@ -23,7 +23,6 @@ from core.error_handler import handle_error
 from core.logger import logger
 from core.settings_manager import settings
 from ui.dialogs.zip_prompt import ZipPromptDialog
-from ui.dialogs.success_dialog import SuccessDialog
 
 
 class ForensicOperationState:
@@ -299,10 +298,7 @@ class ForensicController(BaseController):
                         }
                     }
                 
-                # Store in workflow controller
-                self.workflow_controller.store_operation_results(
-                    file_result=self.operation_state.file_result
-                )
+                # Operation state is already stored, no need to duplicate
                 
                 self._log_operation("operation_completed", "File operation successful")
                 
@@ -359,7 +355,6 @@ class ForensicController(BaseController):
                 
                 # Store results
                 self.operation_state.report_results = generated
-                self.workflow_controller.store_operation_results(report_results=generated)
                 
                 self._log_operation("reports_generated", f"{len(generated)} reports created")
             else:
@@ -443,7 +438,6 @@ class ForensicController(BaseController):
         self.operation_state.record_phase_time('zip')
         
         if result.success:
-            self.workflow_controller.store_operation_results(zip_result=result)
             self._log_operation("zip_completed", "Archives created successfully")
         else:
             self._log_operation("zip_failed", str(result.error), "warning")
@@ -462,15 +456,18 @@ class ForensicController(BaseController):
             self._complete_operation()
     
     def _complete_operation(self):
-        """Complete the operation and show success"""
+        """Complete the operation and notify parent"""
         try:
             self.operation_state.end_time = datetime.now()
             
-            # Build and show success message
-            success_data = self.workflow_controller.build_success_message()
-            
-            if self.parent_widget:
-                SuccessDialog.show_success_message(success_data, self.parent_widget)
+            # Notify parent widget that operation is complete
+            # Parent will handle success display
+            if self.parent_widget and hasattr(self.parent_widget, 'on_forensic_operation_complete'):
+                self.parent_widget.on_forensic_operation_complete(
+                    self.operation_state.file_result,
+                    self.operation_state.report_results,
+                    self.operation_state.zip_result
+                )
             
             # Notify UI of completion
             if self.parent_widget and hasattr(self.parent_widget, 'set_processing_state'):
@@ -558,8 +555,6 @@ class ForensicController(BaseController):
             # Clear operation state
             self.operation_state.clear()
             
-            # Clear workflow controller stored results
-            self.workflow_controller.clear_stored_results()
             
             self._log_operation("memory_cleanup_completed", "Resources released")
             

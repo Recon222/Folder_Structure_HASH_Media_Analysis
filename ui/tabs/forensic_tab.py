@@ -20,6 +20,8 @@ from ui.components import FormPanel, FilesPanel, LogConsole, TemplateSelector
 from controllers.forensic_controller import ForensicController
 from core.exceptions import UIError
 from core.error_handler import handle_error
+from ui.tabs.forensic_success import ForensicSuccessBuilder
+from ui.dialogs.success_dialog import SuccessDialog
 
 
 class ForensicTab(QWidget):
@@ -45,6 +47,9 @@ class ForensicTab(QWidget):
         
         # Initialize controller
         self.controller = ForensicController(self)
+        
+        # Initialize success builder
+        self.success_builder = ForensicSuccessBuilder()
         
         # Inject ZIP controller if available from MainWindow
         if hasattr(parent, 'zip_controller'):
@@ -269,6 +274,33 @@ class ForensicTab(QWidget):
         """Handle template selection change"""
         template_name = self.template_selector.template_combo.currentText()
         self.log(f"Template changed to: {template_name}")
+    
+    def on_forensic_operation_complete(self, file_result, report_results, zip_result):
+        """
+        Handle forensic operation completion - called by ForensicController
+        This is where the tab takes ownership of success message building
+        
+        Args:
+            file_result: FileOperationResult from file processing
+            report_results: Dict of report generation results
+            zip_result: ArchiveOperationResult from ZIP creation
+        """
+        try:
+            # Build success message using our local builder
+            success_data = self.success_builder.create_success_message(
+                file_result=file_result,
+                report_results=report_results,
+                zip_result=zip_result
+            )
+            
+            # Show success dialog
+            SuccessDialog.show_success_message(success_data, self)
+            
+            self.log("Forensic processing completed successfully!")
+            
+        except Exception as e:
+            self.logger.error(f"Error showing success message: {e}")
+            self.log("Operation completed but could not show success dialog")
     
     def cleanup(self):
         """Simple cleanup that delegates to controller"""

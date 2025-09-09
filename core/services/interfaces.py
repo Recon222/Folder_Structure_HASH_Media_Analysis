@@ -233,43 +233,6 @@ class IValidationService(ABC):
         """Validate file paths"""
         pass
 
-class ISuccessMessageService(ABC):
-    """Interface for success message building services"""
-    
-    @abstractmethod
-    def build_forensic_success_message(
-        self,
-        file_result: FileOperationResult,
-        report_results: Optional[Dict[str, ReportGenerationResult]] = None,
-        zip_result: Optional[ArchiveOperationResult] = None
-    ) -> SuccessMessageData:
-        """Build forensic operation success message"""
-        pass
-    
-    @abstractmethod
-    def build_queue_save_success_message(
-        self,
-        queue_data: QueueOperationData
-    ) -> SuccessMessageData:
-        """Build queue save success message"""
-        pass
-    
-    @abstractmethod
-    def build_queue_load_success_message(
-        self,
-        queue_data: QueueOperationData
-    ) -> SuccessMessageData:
-        """Build queue load success message"""
-        pass
-    
-    @abstractmethod
-    def build_batch_success_message(
-        self,
-        batch_data: Any  # BatchOperationData when implemented
-    ) -> SuccessMessageData:
-        """Build batch operation success message"""
-        pass
-
 
 class IMediaAnalysisService(IService):
     """Interface for media analysis operations"""

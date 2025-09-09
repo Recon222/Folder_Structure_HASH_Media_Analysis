@@ -9,11 +9,10 @@ from datetime import datetime
 from .base_controller import BaseController
 from core.resource_coordinators import WorkerResourceCoordinator
 from core.models import FormData
-from core.services.interfaces import IPathService, IFileOperationService, IValidationService, ISuccessMessageService
+from core.services.interfaces import IPathService, IFileOperationService, IValidationService
 from core.workers import FolderStructureThread
 from core.result_types import Result, FileOperationResult, ArchiveOperationResult
 from core.exceptions import FileOperationError
-from core.services.success_message_data import SuccessMessageData
 
 class WorkflowController(BaseController):
     """Orchestrates complete file processing workflows"""
@@ -27,12 +26,6 @@ class WorkflowController(BaseController):
         self._path_service = None
         self._file_service = None  
         self._validation_service = None
-        self._success_message_service = None
-        
-        # Result storage for success message integration
-        self._last_file_result = None
-        self._last_report_results = None
-        self._last_zip_result = None
     
     def _create_resource_coordinator(self, component_id: str) -> WorkerResourceCoordinator:
         """Use WorkerResourceCoordinator for thread management"""
@@ -59,12 +52,6 @@ class WorkflowController(BaseController):
             self._validation_service = self._get_service(IValidationService)
         return self._validation_service
     
-    @property
-    def success_message_service(self) -> ISuccessMessageService:
-        """Lazy load success message service"""
-        if self._success_message_service is None:
-            self._success_message_service = self._get_service(ISuccessMessageService)
-        return self._success_message_service
     
     def process_forensic_workflow(
         self,
@@ -251,56 +238,6 @@ class WorkflowController(BaseController):
             "can_cancel": self.current_operation.isRunning()
         }
     
-    # ✅ SUCCESS MESSAGE INTEGRATION METHODS
-    
-    def store_operation_results(
-        self,
-        file_result: Optional[FileOperationResult] = None,
-        report_results: Optional[Dict] = None,
-        zip_result: Optional[ArchiveOperationResult] = None
-    ):
-        """Store operation results for success message building"""
-        if file_result is not None:
-            self._last_file_result = file_result
-        if report_results is not None:
-            self._last_report_results = report_results
-        if zip_result is not None:
-            self._last_zip_result = zip_result
-    
-    def build_success_message(
-        self,
-        file_result: Optional[FileOperationResult] = None,
-        report_results: Optional[Dict] = None,
-        zip_result: Optional[ArchiveOperationResult] = None
-    ) -> SuccessMessageData:
-        """
-        Build success message for completed workflow using service layer
-        
-        Uses stored results if parameters not provided, enabling flexible usage
-        from UI components that may call this at different times.
-        """
-        # Use provided results or fall back to stored results
-        file_result = file_result or self._last_file_result
-        report_results = report_results or self._last_report_results
-        zip_result = zip_result or self._last_zip_result
-        
-        # DEBUG: Log what we're passing to the service
-        self.logger.debug(f"DEBUG WorkflowController: file_result type = {type(file_result)}")
-        self.logger.debug(f"DEBUG WorkflowController: report_results type = {type(report_results)}")
-        self.logger.debug(f"DEBUG WorkflowController: zip_result type = {type(zip_result)}")
-        if file_result:
-            self.logger.debug(f"DEBUG WorkflowController: file_result has files_processed? {hasattr(file_result, 'files_processed')}")
-        
-        return self.success_message_service.build_forensic_success_message(
-            file_result, report_results, zip_result
-        )
-    
-    def clear_stored_results(self):
-        """Clear stored results to prevent memory leaks"""
-        self._last_file_result = None
-        self._last_report_results = None
-        self._last_zip_result = None
-        self._log_operation("results_cleared", "Stored operation results cleared")
     
     def cleanup_operation_resources(
         self,
@@ -357,9 +294,6 @@ class WorkflowController(BaseController):
                     self._log_operation("zip_thread_cleaned", "ZIP thread cleaned up")
                 except Exception as e:
                     self._log_operation("zip_thread_cleanup_error", str(e), "warning")
-            
-            # Clear stored results in controller
-            self.clear_stored_results()
             
             # Clear current operation reference
             if self.current_operation:
