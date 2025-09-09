@@ -30,6 +30,7 @@ from core.error_handler import handle_error
 from ui.dialogs.success_dialog import SuccessDialog
 from ui.components.elided_label import ElidedLabel
 from controllers.batch_controller import BatchController
+from ui.tabs.batch_success import BatchSuccessBuilder
 
 
 class BatchQueueWidget(QWidget):
@@ -47,6 +48,9 @@ class BatchQueueWidget(QWidget):
         
         # Create controller to manage resources and operations
         self.controller = BatchController()
+        
+        # Create batch-specific success builder
+        self.success_builder = BatchSuccessBuilder()
         
         # Get references from controller
         self.batch_queue = self.controller.get_queue()
@@ -358,10 +362,8 @@ class BatchQueueWidget(QWidget):
                 
                 self.log_message.emit(f"Saved batch queue to {file_path}")
                 
-                # ✅ NEW: Use proper success dialog instead of abusing error system
-                from core.services.success_message_builder import SuccessMessageBuilder
+                # ✅ Use batch-specific success builder
                 from core.services.success_message_data import QueueOperationData
-                from ui.dialogs.success_dialog import SuccessDialog
                 
                 # Create operation data
                 queue_data = QueueOperationData(
@@ -372,9 +374,8 @@ class BatchQueueWidget(QWidget):
                     duration_seconds=duration
                 )
                 
-                # Build success message
-                message_builder = SuccessMessageBuilder()
-                message_data = message_builder.build_queue_save_success_message(queue_data)
+                # Build success message using batch-specific builder
+                message_data = self.success_builder.build_queue_save_success_message(queue_data)
                 
                 # Show proper success dialog
                 SuccessDialog.show_success_message(message_data, self)
@@ -404,10 +405,8 @@ class BatchQueueWidget(QWidget):
                 
                 self.log_message.emit(f"Loaded batch queue from {file_path}")
                 
-                # ✅ NEW: Use proper success dialog instead of abusing error system
-                from core.services.success_message_builder import SuccessMessageBuilder
+                # ✅ Use batch-specific success builder
                 from core.services.success_message_data import QueueOperationData
-                from ui.dialogs.success_dialog import SuccessDialog
                 
                 # Create operation data
                 queue_data = QueueOperationData(
@@ -419,9 +418,8 @@ class BatchQueueWidget(QWidget):
                     duplicate_jobs_skipped=max(0, (original_count + loaded_jobs) - new_count)
                 )
                 
-                # Build success message
-                message_builder = SuccessMessageBuilder()
-                message_data = message_builder.build_queue_load_success_message(queue_data)
+                # Build success message using batch-specific builder
+                message_data = self.success_builder.build_queue_load_success_message(queue_data)
                 
                 # Show proper success dialog
                 SuccessDialog.show_success_message(message_data, self)
@@ -573,8 +571,7 @@ class BatchQueueWidget(QWidget):
     def _on_batch_result_ready(self, result):
         """Handle batch result with enhanced success message support (NEW)"""
         from core.result_types import Result
-        from core.services.success_message_builder import SuccessMessageBuilder
-        from core.services.success_message_data import EnhancedBatchOperationData
+        from core.services.success_message_data import EnhancedBatchOperationData, BatchOperationData
         
         # Handle UI state updates (moved from _on_queue_completed)
         self.processing_active = False
@@ -604,10 +601,9 @@ class BatchQueueWidget(QWidget):
                     'enhanced_batch_data' in result.metadata and 
                     isinstance(result.metadata['enhanced_batch_data'], EnhancedBatchOperationData)):
                     
-                    # Use enhanced success message
+                    # Use enhanced success message with batch-specific builder
                     enhanced_data = result.metadata['enhanced_batch_data']
-                    message_builder = SuccessMessageBuilder()
-                    message_data = message_builder.build_enhanced_batch_success_message(enhanced_data)
+                    message_data = self.success_builder.build_enhanced_batch_success_message(enhanced_data)
                     
                     # Show enhanced success dialog
                     SuccessDialog.show_success_message(
@@ -628,7 +624,6 @@ class BatchQueueWidget(QWidget):
                         successful_jobs = result.metadata.get('successful_jobs', 0) 
                         failed_jobs = result.metadata.get('failed_jobs', 0)
                         
-                        from core.services.success_message_data import BatchOperationData
                         basic_data = BatchOperationData(
                             total_jobs=total_jobs,
                             successful_jobs=successful_jobs,
@@ -636,8 +631,8 @@ class BatchQueueWidget(QWidget):
                             processing_time_seconds=0  # Not available in basic metadata
                         )
                         
-                        message_builder = SuccessMessageBuilder()
-                        message_data = message_builder.build_batch_success_message(basic_data)
+                        # Use batch-specific success builder
+                        message_data = self.success_builder.build_batch_success_message(basic_data)
                         
                         SuccessDialog.show_success_message(
                             message_data,
@@ -657,7 +652,7 @@ class BatchQueueWidget(QWidget):
         except Exception as e:
             # If anything goes wrong with enhanced processing, log and continue
             self.log_message.emit(f"Enhanced batch success processing failed: {e}")
-            # Let legacy handler take over
+            self.logger.error(f"Exception in batch success processing: {e}")
         
     def _update_ui_for_processing_state(self):
         """Update UI elements based on processing state"""
