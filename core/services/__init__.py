@@ -23,8 +23,7 @@ from .report_service import ReportService
 from .archive_service import ArchiveService
 from .validation_service import ValidationService
 
-# Existing services
-from .success_message_builder import SuccessMessageBuilder
+# Data structures for success messages
 from .success_message_data import SuccessMessageData, QueueOperationData
 
 # Service configuration
@@ -37,6 +36,6 @@ __all__ = [
     'BaseService',
     'PathService', 'FileOperationService', 'ReportService', 
     'ArchiveService', 'ValidationService',
-    'SuccessMessageBuilder', 'SuccessMessageData', 'QueueOperationData',
+    'SuccessMessageData', 'QueueOperationData',
     'configure_services', 'verify_service_configuration'
 ]
