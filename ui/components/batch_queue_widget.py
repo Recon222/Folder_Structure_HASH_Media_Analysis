@@ -30,7 +30,8 @@ from core.error_handler import handle_error
 from ui.dialogs.success_dialog import SuccessDialog
 from ui.components.elided_label import ElidedLabel
 from controllers.batch_controller import BatchController
-from ui.tabs.batch_success import BatchSuccessBuilder
+from core.services import get_service
+from core.services.interfaces import IBatchSuccessService
 
 
 class BatchQueueWidget(QWidget):
@@ -49,8 +50,8 @@ class BatchQueueWidget(QWidget):
         # Create controller to manage resources and operations
         self.controller = BatchController()
         
-        # Create batch-specific success builder
-        self.success_builder = BatchSuccessBuilder()
+        # Get success builder through dependency injection
+        self.success_builder = get_service(IBatchSuccessService)
         
         # Get references from controller
         self.batch_queue = self.controller.get_queue()

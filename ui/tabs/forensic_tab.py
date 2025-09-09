@@ -20,7 +20,8 @@ from ui.components import FormPanel, FilesPanel, LogConsole, TemplateSelector
 from controllers.forensic_controller import ForensicController
 from core.exceptions import UIError
 from core.error_handler import handle_error
-from ui.tabs.forensic_success import ForensicSuccessBuilder
+from core.services import get_service
+from core.services.interfaces import IForensicSuccessService
 from ui.dialogs.success_dialog import SuccessDialog
 
 
@@ -48,8 +49,8 @@ class ForensicTab(QWidget):
         # Initialize controller
         self.controller = ForensicController(self)
         
-        # Initialize success builder
-        self.success_builder = ForensicSuccessBuilder()
+        # Get success builder through dependency injection
+        self.success_builder = get_service(IForensicSuccessService)
         
         # Inject ZIP controller if available from MainWindow
         if hasattr(parent, 'zip_controller'):

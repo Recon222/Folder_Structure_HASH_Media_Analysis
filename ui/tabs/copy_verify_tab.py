@@ -20,7 +20,8 @@ from PySide6.QtGui import QFont
 from ui.components import FilesPanel, LogConsole
 from ui.components.elided_label import ElidedLabel
 from ui.dialogs.success_dialog import SuccessDialog
-from .copy_verify_success import CopyVerifySuccessBuilder
+from core.services import get_service
+from core.services.interfaces import ICopyVerifySuccessService
 from controllers.copy_verify_controller import CopyVerifyController
 from core.settings_manager import settings
 from core.logger import logger
@@ -43,8 +44,8 @@ class CopyVerifyTab(QWidget):
         # Controller for orchestration (handles its own resource management)
         self.controller = CopyVerifyController()
         
-        # Success builder for this tab
-        self.success_builder = CopyVerifySuccessBuilder()
+        # Get success builder through dependency injection
+        self.success_builder = get_service(ICopyVerifySuccessService)
         
         # State management
         self.operation_active = False

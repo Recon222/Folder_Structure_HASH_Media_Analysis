@@ -31,7 +31,8 @@ from core.exiftool.exiftool_models import (
 from core.models import FormData
 from ui.components.geo import GeoVisualizationWidget
 from core.services.success_message_data import MediaAnalysisOperationData, ExifToolOperationData
-from .media_analysis_success import MediaAnalysisSuccessBuilder
+from core.services import get_service
+from core.services.interfaces import IMediaAnalysisSuccessService
 from core.settings_manager import settings
 from core.logger import logger
 from core.exceptions import UIError, ErrorSeverity
@@ -73,8 +74,8 @@ class MediaAnalysisTab(QWidget):
         # Settings
         self.analysis_settings = self._load_settings()
         
-        # Success message builder for this tab
-        self.success_builder = MediaAnalysisSuccessBuilder()
+        # Get success builder through dependency injection
+        self.success_builder = get_service(IMediaAnalysisSuccessService)
         
         self._create_ui()
         self._connect_signals()

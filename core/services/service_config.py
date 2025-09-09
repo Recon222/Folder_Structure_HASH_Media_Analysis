@@ -6,7 +6,11 @@ from .service_registry import register_service
 from .interfaces import (
     IPathService, IFileOperationService, IReportService,
     IArchiveService, IValidationService,
-    ICopyVerifyService, IMediaAnalysisService, IResourceManagementService
+    ICopyVerifyService, IMediaAnalysisService, IResourceManagementService,
+    # Success Builder Interfaces
+    IForensicSuccessService, IHashingSuccessService, 
+    ICopyVerifySuccessService, IMediaAnalysisSuccessService,
+    IBatchSuccessService
 )
 from .path_service import PathService
 from .file_operation_service import FileOperationService
@@ -18,6 +22,12 @@ from .media_analysis_service import MediaAnalysisService
 from .thread_management_service import ThreadManagementService, IThreadManagementService
 from .performance_formatter_service import PerformanceFormatterService, IPerformanceFormatterService
 from .resource_management_service import ResourceManagementService
+# Success Builder Implementations
+from .success_builders.forensic_success import ForensicSuccessBuilder
+from .success_builders.hashing_success import HashingSuccessBuilder
+from .success_builders.copy_verify_success import CopyVerifySuccessBuilder
+from .success_builders.media_analysis_success import MediaAnalysisSuccessBuilder
+from .success_builders.batch_success import BatchSuccessBuilder
 
 def configure_services(zip_controller=None):
     """Configure and register all application services"""
@@ -47,6 +57,13 @@ def configure_services(zip_controller=None):
         # ✅ PERFORMANCE FORMATTER SERVICE: Performance data formatting and extraction
         register_service(IPerformanceFormatterService, PerformanceFormatterService())
         
+        # ✅ SUCCESS BUILDER SERVICES: Tab-specific success message builders (SOA-compliant)
+        register_service(IForensicSuccessService, ForensicSuccessBuilder())
+        register_service(IHashingSuccessService, HashingSuccessBuilder())
+        register_service(ICopyVerifySuccessService, CopyVerifySuccessBuilder())
+        register_service(IMediaAnalysisSuccessService, MediaAnalysisSuccessBuilder())
+        register_service(IBatchSuccessService, BatchSuccessBuilder())
+        
         # Optional: Log successful configuration
         import logging
         logger = logging.getLogger("ServiceConfiguration")
@@ -71,7 +88,13 @@ def get_configured_services():
         ICopyVerifyService,
         IMediaAnalysisService,
         IThreadManagementService,
-        IPerformanceFormatterService
+        IPerformanceFormatterService,
+        # Success Builder Services
+        IForensicSuccessService,
+        IHashingSuccessService,
+        ICopyVerifySuccessService,
+        IMediaAnalysisSuccessService,
+        IBatchSuccessService
     ]
 
 def verify_service_configuration():

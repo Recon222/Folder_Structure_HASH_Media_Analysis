@@ -580,3 +580,107 @@ class IResourceManagementService(IService):
             Dictionary with statistics about resource usage
         """
         pass
+
+
+# Success Builder Service Interfaces
+# These interfaces define contracts for tab-specific success message builders
+# following SOA principles with dependency injection
+
+class IForensicSuccessService(IService):
+    """Interface for forensic success message building service"""
+    
+    @abstractmethod
+    def create_success_message(
+        self,
+        file_result: Optional[FileOperationResult] = None,
+        report_results: Optional[Dict[str, ReportGenerationResult]] = None,
+        zip_result: Optional[ArchiveOperationResult] = None
+    ) -> SuccessMessageData:
+        """Build comprehensive forensic operation success message"""
+        pass
+
+
+class IHashingSuccessService(IService):
+    """Interface for hashing success message building service"""
+    
+    @abstractmethod
+    def build_single_hash_success(
+        self,
+        files_processed: int,
+        total_size: int,
+        duration: float,
+        algorithm: str = "SHA-256",
+        csv_path: Optional[Path] = None
+    ) -> SuccessMessageData:
+        """Build success message for single hash calculation"""
+        pass
+    
+    @abstractmethod
+    def build_verification_success(
+        self,
+        total_files: int,
+        passed: int,
+        failed: int,
+        duration: float,
+        algorithm: str = "SHA-256",
+        csv_path: Optional[Path] = None
+    ) -> SuccessMessageData:
+        """Build success message for hash verification"""
+        pass
+    
+    @abstractmethod
+    def build_export_success(
+        self,
+        export_type: str,
+        file_path: Path,
+        record_count: int
+    ) -> SuccessMessageData:
+        """Build success message for CSV export operations"""
+        pass
+
+
+class ICopyVerifySuccessService(IService):
+    """Interface for copy & verify success message building service"""
+    
+    @abstractmethod
+    def build_copy_verify_success(
+        self,
+        operation_data: Any,
+        csv_report_path: Optional[Path] = None,
+        verify_results: Optional[Dict[str, Any]] = None
+    ) -> SuccessMessageData:
+        """Build success message for copy & verify operations"""
+        pass
+
+
+class IMediaAnalysisSuccessService(IService):
+    """Interface for media analysis success message building service"""
+    
+    @abstractmethod
+    def build_media_analysis_success_message(
+        self, 
+        analysis_data: Any
+    ) -> SuccessMessageData:
+        """Build success message for media analysis operations"""
+        pass
+    
+    @abstractmethod
+    def build_exiftool_success_message(
+        self,
+        exiftool_data: Any
+    ) -> SuccessMessageData:
+        """Build success message for ExifTool metadata extraction"""
+        pass
+
+
+class IBatchSuccessService(IService):
+    """Interface for batch processing success message building service"""
+    
+    @abstractmethod
+    def build_batch_success_message(
+        self,
+        queue_data: QueueOperationData,
+        job_results: Optional[List[Result]] = None
+    ) -> SuccessMessageData:
+        """Build success message for batch operations"""
+        pass

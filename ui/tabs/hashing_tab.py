@@ -27,7 +27,8 @@ from ui.components.elided_label import ElidedLabel
 from core.exceptions import UIError, ErrorSeverity
 from core.error_handler import handle_error
 from ui.dialogs.success_dialog import SuccessDialog
-from .hashing_success import HashingSuccessBuilder
+from core.services import get_service
+from core.services.interfaces import IHashingSuccessService
 
 
 class OperationStatusCard(QFrame):
@@ -344,7 +345,7 @@ class HashingTab(QWidget):
         # Controllers and utilities
         self.hash_controller = hash_controller or HashController()
         self.report_generator = HashReportGenerator()
-        self.success_builder = HashingSuccessBuilder()  # NEW: Tab-specific success builder
+        self.success_builder = get_service(IHashingSuccessService)  # Get through DI
         
         # Current operation results
         self.current_single_results = None
