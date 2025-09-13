@@ -111,18 +111,17 @@ class ForensicTab(QWidget):
         
         # Process button
         self.process_btn = QPushButton("Process Files")
-        self.process_btn.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; min-width: 120px; }")
+        self.process_btn.setObjectName("primaryAction")  # For themed styling
         button_layout.addWidget(self.process_btn)
-        
+
         # Pause button
         self.pause_btn = QPushButton("Pause")
         self.pause_btn.setEnabled(False)
         button_layout.addWidget(self.pause_btn)
-        
+
         # Cancel button
-        self.cancel_btn = QPushButton("Cancel") 
+        self.cancel_btn = QPushButton("Cancel")
         self.cancel_btn.setEnabled(False)
-        self.cancel_btn.setStyleSheet("QPushButton { background-color: #f44336; color: white; }")
         button_layout.addWidget(self.cancel_btn)
         
         layout.addLayout(button_layout)
@@ -239,7 +238,6 @@ class ForensicTab(QWidget):
             self.progress_bar.setValue(0)
             self.is_paused = False
             self.pause_btn.setText("Pause")
-            self.pause_btn.setStyleSheet("")
             # Notify MainWindow
             self.operation_completed.emit()
     
@@ -254,7 +252,6 @@ class ForensicTab(QWidget):
                 self.current_thread.resume()
             self.is_paused = False
             self.pause_btn.setText("Pause")
-            self.pause_btn.setStyleSheet("")
             self.log("Resumed processing")
         else:
             # Pause
@@ -262,7 +259,6 @@ class ForensicTab(QWidget):
                 self.current_thread.pause()
             self.is_paused = True
             self.pause_btn.setText("Resume")
-            self.pause_btn.setStyleSheet("QPushButton { background-color: #FF9800; color: white; }")
             self.log("Paused processing")
     
     def _cancel_processing(self):

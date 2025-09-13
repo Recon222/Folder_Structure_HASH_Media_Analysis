@@ -175,8 +175,7 @@ class BatchQueueWidget(QWidget):
         processing_controls = QHBoxLayout()
         
         self.start_batch_btn = QPushButton("Start Batch Process")
-        # Working original CSS - no issues with this button
-        self.start_batch_btn.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; min-width: 120px; }")
+        self.start_batch_btn.setObjectName("primaryAction")  # For themed styling
         processing_controls.addWidget(self.start_batch_btn)
         
         self.pause_btn = QPushButton("Pause")
@@ -185,7 +184,6 @@ class BatchQueueWidget(QWidget):
         
         self.cancel_btn = QPushButton("Cancel")
         self.cancel_btn.setEnabled(False)
-        self.cancel_btn.setStyleSheet("QPushButton { background-color: #f44336; color: white; }")
         processing_controls.addWidget(self.cancel_btn)
         
         processing_controls.addStretch()

@@ -100,7 +100,7 @@ class CopyVerifyTab(QWidget):
         title_layout.addWidget(title_label)
         
         desc_label = QLabel("Copy files and folders directly from source to destination with optional hash verification")
-        desc_label.setStyleSheet("color: #6c757d; font-size: 11px;")
+        desc_label.setObjectName("mutedText")
         desc_label.setWordWrap(True)
         title_layout.addWidget(desc_label)
         
@@ -109,7 +109,7 @@ class CopyVerifyTab(QWidget):
         
         # Status indicator
         self.status_indicator = QLabel("🟢 Ready")
-        self.status_indicator.setStyleSheet("color: #28a745; font-weight: bold;")
+        # Status indicator will use theme colors
         header_layout.addWidget(self.status_indicator)
         
         return header
@@ -121,7 +121,7 @@ class CopyVerifyTab(QWidget):
         
         # Source files section
         source_label = QLabel("📁 Source Files and Folders:")
-        source_label.setStyleSheet("font-weight: bold; margin-top: 8px;")
+        source_label.setObjectName("sectionHeader")
         layout.addWidget(source_label)
         
         self.files_panel = FilesPanel(show_remove_selected=True, compact_buttons=False)
@@ -130,12 +130,12 @@ class CopyVerifyTab(QWidget):
         
         # File count
         self.file_count_label = QLabel("No files selected")
-        self.file_count_label.setStyleSheet("color: #6c757d; font-size: 10px; margin: 4px;")
+        self.file_count_label.setObjectName("mutedText")
         layout.addWidget(self.file_count_label)
         
         # Destination section
         dest_label = QLabel("📂 Destination Folder:")
-        dest_label.setStyleSheet("font-weight: bold; margin-top: 12px;")
+        dest_label.setObjectName("sectionHeader")
         layout.addWidget(dest_label)
         
         dest_layout = QHBoxLayout()
@@ -152,7 +152,7 @@ class CopyVerifyTab(QWidget):
         
         # Destination info
         self.dest_info_label = ElidedLabel("No destination selected", max_width=400)
-        self.dest_info_label.setStyleSheet("color: #6c757d; font-size: 10px; margin: 4px;")
+        self.dest_info_label.setObjectName("mutedText")
         layout.addWidget(self.dest_info_label)
         
         return panel
@@ -164,7 +164,7 @@ class CopyVerifyTab(QWidget):
         
         # Copy options
         options_label = QLabel("⚙️ Copy Options:")
-        options_label.setStyleSheet("font-weight: bold; margin-bottom: 8px;")
+        options_label.setObjectName("sectionHeader")
         layout.addWidget(options_label)
         
         self.preserve_structure_check = QCheckBox("Preserve folder structure")
@@ -205,119 +205,44 @@ class CopyVerifyTab(QWidget):
         # Hash algorithm info
         algorithm = settings.hash_algorithm.upper()
         algo_label = QLabel(f"Hash Algorithm: {algorithm}")
-        algo_label.setStyleSheet("color: #6c757d; font-size: 10px; margin-top: 8px;")
+        algo_label.setObjectName("mutedText")
         layout.addWidget(algo_label)
         
         layout.addStretch()
         
         # Progress section
         progress_label = QLabel("📊 Operation Progress:")
-        progress_label.setStyleSheet("font-weight: bold; margin-top: 12px;")
+        progress_label.setObjectName("sectionHeader")
         layout.addWidget(progress_label)
         
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
-        self.progress_bar.setStyleSheet("""
-            QProgressBar {
-                border: 2px solid #dee2e6;
-                border-radius: 8px;
-                text-align: center;
-                background-color: #f8f9fa;
-            }
-            QProgressBar::chunk {
-                background-color: #28a745;
-                border-radius: 6px;
-            }
-        """)
+        # Progress bar will use theme styling
         layout.addWidget(self.progress_bar)
         
         self.progress_label = ElidedLabel("Ready to copy files", max_width=350)
-        self.progress_label.setStyleSheet("color: #495057; font-size: 11px;")
+        self.progress_label.setObjectName("mutedText")  # For theme styling
         layout.addWidget(self.progress_label)
         
         # Action buttons
         button_layout = QHBoxLayout()
         button_layout.addStretch()
         
-        self.copy_btn = QPushButton("🚀 Start Copy")
+        self.copy_btn = QPushButton("Start Copy")
         self.copy_btn.setEnabled(False)
-        self.copy_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #28a745;
-                color: white;
-                border: none;
-                border-radius: 6px;
-                padding: 10px 20px;
-                font-weight: bold;
-                font-size: 12px;
-            }
-            QPushButton:hover {
-                background-color: #218838;
-            }
-            QPushButton:disabled {
-                background-color: #6c757d;
-            }
-        """)
+        self.copy_btn.setObjectName("primaryAction")  # For theme styling
         button_layout.addWidget(self.copy_btn)
         
-        self.pause_btn = QPushButton("⏸️ Pause")
+        self.pause_btn = QPushButton("Pause")
         self.pause_btn.setEnabled(False)
-        self.pause_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #2196F3;
-                color: white;
-                border: none;
-                border-radius: 6px;
-                padding: 10px 20px;
-                font-weight: bold;
-                font-size: 12px;
-            }
-            QPushButton:hover {
-                background-color: #1976D2;
-            }
-            QPushButton:disabled {
-                background-color: #6c757d;
-            }
-        """)
         button_layout.addWidget(self.pause_btn)
         
-        self.cancel_btn = QPushButton("🛑 Cancel")
+        self.cancel_btn = QPushButton("Cancel")
         self.cancel_btn.setEnabled(False)
-        self.cancel_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #dc3545;
-                color: white;
-                border: none;
-                border-radius: 6px;
-                padding: 10px 20px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #c82333;
-            }
-            QPushButton:disabled {
-                background-color: #6c757d;
-            }
-        """)
         button_layout.addWidget(self.cancel_btn)
         
-        self.export_csv_btn = QPushButton("📄 Export CSV")
+        self.export_csv_btn = QPushButton("Export CSV")
         self.export_csv_btn.setEnabled(False)
-        self.export_csv_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #17a2b8;
-                color: white;
-                border: none;
-                border-radius: 6px;
-                padding: 10px 20px;
-            }
-            QPushButton:hover {
-                background-color: #138496;
-            }
-            QPushButton:disabled {
-                background-color: #6c757d;
-            }
-        """)
         button_layout.addWidget(self.export_csv_btn)
         
         layout.addLayout(button_layout)
@@ -511,46 +436,18 @@ class CopyVerifyTab(QWidget):
             # Resume operation through controller
             self.controller.resume_operation()
             self.is_paused = False
-            self.pause_btn.setText("⏸️ Pause")
-            self.pause_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #2196F3;
-                    color: white;
-                    border: none;
-                    border-radius: 6px;
-                    padding: 10px 20px;
-                    font-weight: bold;
-                    font-size: 12px;
-                }
-                QPushButton:hover {
-                    background-color: #1976D2;
-                }
-            """)
+            self.pause_btn.setText("Pause")
             self._log("Operation resumed")
             self.status_indicator.setText("🟡 Processing")
-            self.status_indicator.setStyleSheet("color: #ffc107; font-weight: bold;")
+            # Status indicator updated
         else:
             # Pause operation through controller
             self.controller.pause_operation()
             self.is_paused = True
-            self.pause_btn.setText("▶️ Resume")
-            self.pause_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #FF9800;
-                    color: white;
-                    border: none;
-                    border-radius: 6px;
-                    padding: 10px 20px;
-                    font-weight: bold;
-                    font-size: 12px;
-                }
-                QPushButton:hover {
-                    background-color: #F57C00;
-                }
-            """)
+            self.pause_btn.setText("Resume")
             self._log("Operation paused")
             self.status_indicator.setText("⏸️ Paused")
-            self.status_indicator.setStyleSheet("color: #FF9800; font-weight: bold;")
+            # Status indicator updated
     
     def _cancel_operation(self):
         """Cancel the current operation using controller"""
@@ -685,34 +582,17 @@ class CopyVerifyTab(QWidget):
         # Reset pause state when operation ends
         if not active:
             self.is_paused = False
-            self.pause_btn.setText("⏸️ Pause")
-            self.pause_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #2196F3;
-                    color: white;
-                    border: none;
-                    border-radius: 6px;
-                    padding: 10px 20px;
-                    font-weight: bold;
-                    font-size: 12px;
-                }
-                QPushButton:hover {
-                    background-color: #1976D2;
-                }
-                QPushButton:disabled {
-                    background-color: #6c757d;
-                }
-            """)
+            self.pause_btn.setText("Pause")
         
         # Update status
         if active:
             self.status_indicator.setText("🟡 Processing")
-            self.status_indicator.setStyleSheet("color: #ffc107; font-weight: bold;")
+            # Status indicator updated
             self.progress_bar.setVisible(True)
             self.status_message.emit("Copy operation in progress...")
         else:
             self.status_indicator.setText("🟢 Ready")
-            self.status_indicator.setStyleSheet("color: #28a745; font-weight: bold;")
+            # Status indicator will use theme colors
             self.progress_bar.setVisible(False)
             self.progress_bar.setValue(0)
             self.progress_label.setText("Ready to copy files")

@@ -97,13 +97,10 @@ class BatchTab(QWidget):
         actions_layout = QHBoxLayout()
         
         self.set_output_btn = QPushButton("Set Output Directory")
-        # SIZE-NEUTRAL FIX: Color only, let Qt handle sizing to match other buttons
-        self.set_output_btn.setStyleSheet("QPushButton { background-color: #FF9800; color: white; min-width: 120px; } QPushButton:hover { background-color: #F57C00; }")
         actions_layout.addWidget(self.set_output_btn)
         
         self.add_to_queue_btn = QPushButton("Add to Batch Queue")
-        # SIZE-NEUTRAL FIX: Color only, let Qt handle sizing to match other buttons
-        self.add_to_queue_btn.setStyleSheet("QPushButton { background-color: #2196F3; color: white; min-width: 120px; } QPushButton:hover { background-color: #1976D2; } QPushButton:disabled { background-color: #CCCCCC; color: #666666; }")
+        self.add_to_queue_btn.setObjectName("primaryAction")  # For themed styling
         actions_layout.addWidget(self.add_to_queue_btn)
         
         self.clear_form_btn = QPushButton("Clear Form/Files")
