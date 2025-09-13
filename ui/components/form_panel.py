@@ -21,7 +21,7 @@ class FormPanel(QGroupBox):
     form_data_changed = Signal(str, object)  # field_name, new_value
     
     def __init__(self, form_data: FormData, parent=None):
-        super().__init__("Case Information", parent)
+        super().__init__("📋 Extraction Information", parent)
         self.form_data = form_data
         self._setup_ui()
         

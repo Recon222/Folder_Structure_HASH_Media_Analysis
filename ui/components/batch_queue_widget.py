@@ -174,15 +174,15 @@ class BatchQueueWidget(QWidget):
         # Processing controls
         processing_controls = QHBoxLayout()
         
-        self.start_batch_btn = QPushButton("Start Batch Process")
+        self.start_batch_btn = QPushButton("▶️ Start Batch Process")
         self.start_batch_btn.setObjectName("primaryAction")  # For themed styling
         processing_controls.addWidget(self.start_batch_btn)
         
-        self.pause_btn = QPushButton("Pause")
+        self.pause_btn = QPushButton("⏸️ Pause")
         self.pause_btn.setEnabled(False)
         processing_controls.addWidget(self.pause_btn)
-        
-        self.cancel_btn = QPushButton("Cancel")
+
+        self.cancel_btn = QPushButton("⏹️ Cancel")
         self.cancel_btn.setEnabled(False)
         processing_controls.addWidget(self.cancel_btn)
         
@@ -498,7 +498,7 @@ class BatchQueueWidget(QWidget):
         result = self.controller.pause_processing()
         if result.success:
             is_paused = result.value
-            self.pause_btn.setText("Resume" if is_paused else "Pause")
+            self.pause_btn.setText("▶️ Resume" if is_paused else "⏸️ Pause")
             self.log_message.emit("Paused batch processing" if is_paused else "Resumed batch processing")
         else:
             self.log_message.emit(f"Failed to pause/resume: {result.error}")

@@ -42,7 +42,7 @@ class FilesPanel(QGroupBox):
             show_remove_selected: Whether to show the "Remove Selected" button
             compact_buttons: Whether to use compact button styling
         """
-        super().__init__("Files to Process", parent)
+        super().__init__("📁 Files && Folders", parent)
         
         # Configuration options
         self.show_remove_selected = show_remove_selected

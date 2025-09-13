@@ -491,7 +491,7 @@ class HashingTab(QWidget):
         layout.addWidget(self.single_count_label)
         
         # Action button
-        self.single_hash_btn = QPushButton("🚀 Calculate Hashes")
+        self.single_hash_btn = QPushButton("🧮 Calculate Hashes")
         self.single_hash_btn.setEnabled(False)
         self.single_hash_btn.setStyleSheet("""
             QPushButton {

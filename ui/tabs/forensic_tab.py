@@ -12,7 +12,7 @@ import logging
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-    QSplitter, QProgressBar
+    QSplitter, QProgressBar, QLabel
 )
 
 from core.models import FormData
@@ -80,11 +80,11 @@ class ForensicTab(QWidget):
         # Upper section: Form and Files
         upper_widget = QWidget()
         upper_layout = QHBoxLayout(upper_widget)
-        
+
         # Form panel (left)
         self.form_panel = FormPanel(self.form_data)
         upper_layout.addWidget(self.form_panel)
-        
+
         # Files panel (right)
         self.files_panel = FilesPanel()
         upper_layout.addWidget(self.files_panel)
@@ -110,17 +110,17 @@ class ForensicTab(QWidget):
         button_layout.addStretch()
         
         # Process button
-        self.process_btn = QPushButton("Process Files")
+        self.process_btn = QPushButton("▶️ Process Files")
         self.process_btn.setObjectName("primaryAction")  # For themed styling
         button_layout.addWidget(self.process_btn)
 
         # Pause button
-        self.pause_btn = QPushButton("Pause")
+        self.pause_btn = QPushButton("⏸️ Pause")
         self.pause_btn.setEnabled(False)
         button_layout.addWidget(self.pause_btn)
 
         # Cancel button
-        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn = QPushButton("⏹️ Cancel")
         self.cancel_btn.setEnabled(False)
         button_layout.addWidget(self.cancel_btn)
         
@@ -237,7 +237,7 @@ class ForensicTab(QWidget):
         if not active:
             self.progress_bar.setValue(0)
             self.is_paused = False
-            self.pause_btn.setText("Pause")
+            self.pause_btn.setText("⏸️ Pause")
             # Notify MainWindow
             self.operation_completed.emit()
     
@@ -251,14 +251,14 @@ class ForensicTab(QWidget):
             if hasattr(self.current_thread, 'resume'):
                 self.current_thread.resume()
             self.is_paused = False
-            self.pause_btn.setText("Pause")
+            self.pause_btn.setText("⏸️ Pause")
             self.log("Resumed processing")
         else:
             # Pause
             if hasattr(self.current_thread, 'pause'):
                 self.current_thread.pause()
             self.is_paused = True
-            self.pause_btn.setText("Resume")
+            self.pause_btn.setText("▶️ Resume")
             self.log("Paused processing")
     
     def _cancel_processing(self):
