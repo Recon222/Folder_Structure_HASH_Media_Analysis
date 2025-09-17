@@ -20,7 +20,8 @@
       "mcp__memory__read_graph",
       "mcp__context7__get-library-docs",
       "mcp__perplexity-ask__perplexity_ask",
-      "Read(//mnt/c/Users/kriss/Desktop/Working_Apps_for_CFSA/**)"
+      "Read(//mnt/c/Users/kriss/Desktop/Working_Apps_for_CFSA/**)",
+      "Bash(.venvScriptspython.exe main.py)"
     ],
     "deny": []
   }
