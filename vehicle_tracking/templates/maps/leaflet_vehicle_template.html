@@ -165,6 +165,309 @@
             color: #666;
             font-size: 16px;
         }
+
+        /* ==============================
+           TIMEDIMENSION CONTROL STYLING
+           ============================== */
+
+        /* Main control container - Modern glass morphism */
+        .leaflet-control-timecontrol {
+            background: linear-gradient(135deg, rgba(255,255,255,0.95) 0%, rgba(255,255,255,0.85) 100%);
+            backdrop-filter: blur(15px);
+            -webkit-backdrop-filter: blur(15px);
+            border: 1px solid rgba(255,255,255,0.5);
+            border-radius: 16px;
+            box-shadow:
+                0 8px 32px rgba(31, 38, 135, 0.15),
+                inset 0 1px 0 rgba(255,255,255,0.6);
+            padding: 12px 16px;
+            min-width: 400px;
+        }
+
+        /* Control buttons - Modern gradient with hover effects */
+        .leaflet-control-timecontrol button,
+        .leaflet-control-timecontrol .timecontrol-play,
+        .leaflet-control-timecontrol .timecontrol-pause,
+        .leaflet-control-timecontrol .timecontrol-backward,
+        .leaflet-control-timecontrol .timecontrol-forward,
+        .leaflet-control-timecontrol .timecontrol-stop,
+        a.timecontrol-date,
+        a.timecontrol-speed {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            border-radius: 10px;
+            color: white;
+            padding: 10px 14px;
+            margin: 0 3px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+            position: relative;
+            overflow: hidden;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .leaflet-control-timecontrol button:hover,
+        .leaflet-control-timecontrol .timecontrol-play:hover,
+        .leaflet-control-timecontrol .timecontrol-pause:hover,
+        .leaflet-control-timecontrol .timecontrol-backward:hover,
+        .leaflet-control-timecontrol .timecontrol-forward:hover,
+        .leaflet-control-timecontrol .timecontrol-stop:hover,
+        a.timecontrol-date:hover,
+        a.timecontrol-speed:hover {
+            transform: translateY(-2px);
+            box-shadow:
+                0 6px 20px rgba(102, 126, 234, 0.4),
+                0 2px 8px rgba(118, 75, 162, 0.2);
+            background: linear-gradient(135deg, #7c8ff9 0%, #8758b1 100%);
+        }
+
+        .leaflet-control-timecontrol button:active {
+            transform: translateY(0);
+            box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+        }
+
+        /* Replace button text with better Unicode symbols */
+        .timecontrol-backward {
+            font-size: 0 !important;
+        }
+        .timecontrol-backward::after {
+            content: '⏮';
+            font-size: 18px;
+            line-height: 1;
+        }
+
+        .timecontrol-play {
+            font-size: 0 !important;
+        }
+        .timecontrol-play::after {
+            content: '▶';
+            font-size: 18px;
+            line-height: 1;
+        }
+
+        .timecontrol-pause {
+            font-size: 0 !important;
+        }
+        .timecontrol-pause::after {
+            content: '⏸';
+            font-size: 18px;
+            line-height: 1;
+        }
+
+        .timecontrol-forward {
+            font-size: 0 !important;
+        }
+        .timecontrol-forward::after {
+            content: '⏭';
+            font-size: 18px;
+            line-height: 1;
+        }
+
+        .timecontrol-stop {
+            font-size: 0 !important;
+        }
+        .timecontrol-stop::after {
+            content: '⏹';
+            font-size: 18px;
+            line-height: 1;
+        }
+
+        .timecontrol-loop,
+        .timecontrol-loopButton {
+            font-size: 0 !important;
+        }
+        .timecontrol-loop::after,
+        .timecontrol-loopButton::after {
+            content: '🔁';
+            font-size: 18px;
+            line-height: 1;
+        }
+
+        .timecontrol-loop.looped::after,
+        .timecontrol-loopButton.looped::after {
+            content: '🔁';
+            font-size: 18px;
+            filter: sepia(100%) saturate(200%) hue-rotate(15deg) brightness(1.2);
+        }
+
+        /* Size buttons properly */
+        .leaflet-control-timecontrol button {
+            min-width: 42px;
+            height: 42px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* Date display styling */
+        .timecontrol-date,
+        a.timecontrol-date {
+            background: linear-gradient(135deg, #2d3748 0%, #1a202c 100%);
+            padding: 10px 16px;
+            min-width: 180px;
+            font-family: 'SF Mono', 'Monaco', 'Inconsolata', monospace;
+            font-size: 13px;
+            letter-spacing: 0.5px;
+            text-align: center;
+        }
+
+        /* Speed control styling */
+        .timecontrol-speed,
+        a.timecontrol-speed {
+            background: linear-gradient(135deg, #48bb78 0%, #38a169 100%);
+            min-width: 60px;
+            font-size: 13px;
+            font-weight: 700;
+        }
+
+        .timecontrol-speed:hover,
+        a.timecontrol-speed:hover {
+            background: linear-gradient(135deg, #68d391 0%, #48bb78 100%);
+        }
+
+        /* Timeline slider container */
+        .leaflet-control-timecontrol .timecontrol-slider {
+            margin: 12px 6px;
+            position: relative;
+        }
+
+        /* Timeline slider track */
+        .leaflet-control-timecontrol .ui-slider {
+            background: linear-gradient(90deg,
+                rgba(102, 126, 234, 0.2) 0%,
+                rgba(102, 126, 234, 0.4) 50%,
+                rgba(118, 75, 162, 0.2) 100%);
+            border: none;
+            height: 8px;
+            border-radius: 4px;
+            position: relative;
+            box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);
+        }
+
+        /* Timeline slider progress bar */
+        .leaflet-control-timecontrol .ui-slider-range {
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            border-radius: 4px;
+            box-shadow: 0 2px 4px rgba(102, 126, 234, 0.3);
+        }
+
+        /* Timeline slider handle */
+        .leaflet-control-timecontrol .ui-slider-handle {
+            width: 22px;
+            height: 22px;
+            background: radial-gradient(circle, #ffffff 0%, #f7fafc 100%);
+            border: 3px solid #667eea;
+            border-radius: 50%;
+            top: -7px;
+            margin-left: -11px;
+            cursor: grab;
+            box-shadow:
+                0 3px 8px rgba(102, 126, 234, 0.4),
+                inset 0 1px 0 rgba(255,255,255,0.9);
+            transition: all 0.2s ease;
+        }
+
+        .leaflet-control-timecontrol .ui-slider-handle:hover {
+            transform: scale(1.2);
+            box-shadow:
+                0 4px 12px rgba(102, 126, 234, 0.5),
+                inset 0 1px 0 rgba(255,255,255,0.9);
+            border-color: #764ba2;
+        }
+
+        .leaflet-control-timecontrol .ui-slider-handle:active {
+            cursor: grabbing;
+            transform: scale(1.1);
+        }
+
+        /* Speed slider styling */
+        .leaflet-control-timecontrol .speed-slider {
+            margin: 8px 6px;
+        }
+
+        .leaflet-control-timecontrol .speed-slider .ui-slider {
+            background: linear-gradient(90deg,
+                rgba(72, 187, 120, 0.2) 0%,
+                rgba(72, 187, 120, 0.4) 50%,
+                rgba(56, 161, 105, 0.2) 100%);
+        }
+
+        .leaflet-control-timecontrol .speed-slider .ui-slider-range {
+            background: linear-gradient(90deg, #48bb78 0%, #38a169 100%);
+        }
+
+        .leaflet-control-timecontrol .speed-slider .ui-slider-handle {
+            border-color: #48bb78;
+        }
+
+        .leaflet-control-timecontrol .speed-slider .ui-slider-handle:hover {
+            border-color: #38a169;
+        }
+
+        /* Display text styling */
+        .leaflet-control-timecontrol .timecontrol-dateslider .ui-slider-handle:after {
+            content: attr(title);
+            position: absolute;
+            bottom: 25px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.8);
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            white-space: nowrap;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.2s ease;
+        }
+
+        .leaflet-control-timecontrol .timecontrol-dateslider .ui-slider-handle:hover:after {
+            opacity: 1;
+        }
+
+        /* Disabled state */
+        .leaflet-control-timecontrol button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+
+        /* Active/playing animation */
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(102, 126, 234, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(102, 126, 234, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(102, 126, 234, 0); }
+        }
+
+        .leaflet-control-timecontrol .timecontrol-pause {
+            animation: pulse 2s infinite;
+        }
+
+        /* Mobile responsive adjustments */
+        @media (max-width: 768px) {
+            .leaflet-control-timecontrol {
+                min-width: 320px;
+                padding: 8px 12px;
+            }
+
+            .leaflet-control-timecontrol button {
+                min-width: 36px;
+                height: 36px;
+                padding: 8px 10px;
+            }
+
+            .leaflet-control-timecontrol .timecontrol-date {
+                min-width: 140px;
+                font-size: 12px;
+            }
+        }
     </style>
 </head>
 <body>
