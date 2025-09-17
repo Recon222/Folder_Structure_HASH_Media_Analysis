@@ -16,7 +16,9 @@ from core.services.base_service import BaseService
 from core.services.interfaces import IService
 from core.result_types import Result
 from core.exceptions import ValidationError, ConfigurationError
-from core.settings_manager import settings
+from core.settings_manager import SettingsManager
+
+settings = SettingsManager()
 
 logger = logging.getLogger(__name__)
 
@@ -46,13 +48,13 @@ class IMapTemplateService(IService):
 class MapTemplateService(BaseService, IMapTemplateService):
     """
     Service for managing map templates and providers
-    
+
     Enables hot-swapping between different map providers while maintaining
     the same JavaScript interface for vehicle animation.
     """
-    
-    # Default template directory
-    TEMPLATE_DIR = Path("templates/maps")
+
+    # Default template directory - relative to this service file
+    TEMPLATE_DIR = Path(__file__).parent.parent / "templates" / "maps"
     
     # Built-in providers
     PROVIDERS = {

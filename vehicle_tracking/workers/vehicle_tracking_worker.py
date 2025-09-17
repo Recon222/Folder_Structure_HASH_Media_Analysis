@@ -9,16 +9,21 @@ Follows FSA worker patterns with Result-based error handling.
 from pathlib import Path
 from typing import List, Optional, Any
 from datetime import datetime
+import time
 
 from core.workers.base_worker import BaseWorkerThread
 from core.result_types import Result
 from core.exceptions import ValidationError, FileOperationError, ErrorSeverity
+from core.models import FormData
 
 # Import models
 from vehicle_tracking.models.vehicle_tracking_models import (
     VehicleData, VehicleTrackingSettings, AnimationData,
     VehicleTrackingResult, VehicleColor
 )
+
+# Import service interface
+from vehicle_tracking.vehicle_tracking_interfaces import IVehicleTrackingService
 
 
 class VehicleTrackingWorker(BaseWorkerThread):
@@ -33,29 +38,36 @@ class VehicleTrackingWorker(BaseWorkerThread):
         self,
         file_paths: List[Path],
         settings: VehicleTrackingSettings,
-        controller: Any = None,  # VehicleTrackingController
+        service: IVehicleTrackingService,  # Direct service injection
+        form_data: Optional[FormData] = None,
         parent=None
     ):
         """
         Initialize vehicle tracking worker
-        
+
         Args:
             file_paths: List of CSV files to process
             settings: Processing settings
-            controller: Optional controller reference for service access
+            service: Vehicle tracking service instance (injected)
+            form_data: Optional form data for context
             parent: Parent QObject for Qt lifecycle
         """
         super().__init__(parent)
-        
+
         self.file_paths = file_paths
         self.settings = settings
-        self.controller = controller
+        self.service = service  # Direct service access
+        self.form_data = form_data
         
         # Results storage
         self.vehicles: List[VehicleData] = []
         self.animation_data: Optional[AnimationData] = None
         self.skipped_files: List[tuple] = []
-        
+
+        # Progress throttling
+        self.last_progress_time = 0
+        self.progress_throttle_seconds = 0.1  # Max 10 updates per second
+
         # Set descriptive operation name
         file_count = len(file_paths) if file_paths else 0
         self.set_operation_name(f"Vehicle Tracking ({file_count} files)")
@@ -77,17 +89,15 @@ class VehicleTrackingWorker(BaseWorkerThread):
             
             # Check for cancellation
             self.check_cancellation()
-            
-            # Get service from controller or fail
-            if not self.controller or not hasattr(self.controller, 'vehicle_service'):
+
+            # Service is now directly injected, no controller dependency
+            if not self.service:
                 error = ValidationError(
-                    {'controller': 'Controller or service not available'},
-                    user_message="System error: Vehicle service not available"
+                    {'service': 'Vehicle tracking service not available'},
+                    user_message="System error: Vehicle service not initialized"
                 )
                 self.handle_error(error)
                 return Result.error(error)
-            
-            vehicle_service = self.controller.vehicle_service
             
             # Process each CSV file
             total_points = 0
@@ -101,13 +111,13 @@ class VehicleTrackingWorker(BaseWorkerThread):
                 
                 # Update progress
                 file_progress = (idx / len(self.file_paths)) * 70  # Reserve 30% for animation prep
-                self.emit_progress(
+                self._emit_progress_throttled(
                     int(file_progress),
                     f"Loading {file_path.name} ({idx + 1}/{len(self.file_paths)})"
                 )
                 
                 # Parse CSV
-                parse_result = vehicle_service.parse_csv_file(
+                parse_result = self.service.parse_csv_file(
                     file_path,
                     self.settings,
                     progress_callback=lambda p, m: self._handle_file_progress(p, m, idx)
@@ -121,12 +131,12 @@ class VehicleTrackingWorker(BaseWorkerThread):
                 
                 # Calculate speeds if enabled
                 if self.settings.calculate_speeds:
-                    self.emit_progress(
+                    self._emit_progress_throttled(
                         int(file_progress + 10),
                         f"Calculating speeds for {vehicle_data.vehicle_id}"
                     )
                     
-                    speed_result = vehicle_service.calculate_speeds(
+                    speed_result = self.service.calculate_speeds(
                         vehicle_data,
                         progress_callback=lambda p, m: self._handle_file_progress(p, m, idx, 10)
                     )
@@ -136,12 +146,12 @@ class VehicleTrackingWorker(BaseWorkerThread):
                 
                 # Interpolate if enabled
                 if self.settings.interpolation_enabled:
-                    self.emit_progress(
+                    self._emit_progress_throttled(
                         int(file_progress + 20),
                         f"Interpolating path for {vehicle_data.vehicle_id}"
                     )
                     
-                    interp_result = vehicle_service.interpolate_path(
+                    interp_result = self.service.interpolate_path(
                         vehicle_data,
                         self.settings,
                         progress_callback=lambda p, m: self._handle_file_progress(p, m, idx, 20)
@@ -162,7 +172,7 @@ class VehicleTrackingWorker(BaseWorkerThread):
                 self.vehicles.append(vehicle_data)
                 total_points += vehicle_data.point_count
                 
-                self.emit_progress(
+                self._emit_progress_throttled(
                     int((idx + 1) / len(self.file_paths) * 70),
                     f"Completed {vehicle_data.vehicle_id}: {vehicle_data.point_count:,} points"
                 )
@@ -189,7 +199,7 @@ class VehicleTrackingWorker(BaseWorkerThread):
             # Prepare animation data
             self.emit_progress(75, "Preparing animation data...")
             
-            animation_result = vehicle_service.prepare_animation_data(
+            animation_result = self.service.prepare_animation_data(
                 self.vehicles,
                 self.settings
             )
@@ -275,15 +285,15 @@ class VehicleTrackingWorker(BaseWorkerThread):
         return Result.success(None)
     
     def _handle_file_progress(
-        self, 
-        progress: float, 
-        message: str, 
-        file_index: int, 
+        self,
+        progress: float,
+        message: str,
+        file_index: int,
         stage_offset: int = 0
     ):
         """
-        Handle progress updates from service operations
-        
+        Handle progress updates from service operations with throttling
+
         Args:
             progress: Progress percentage for current operation
             message: Progress message
@@ -294,12 +304,34 @@ class VehicleTrackingWorker(BaseWorkerThread):
         file_weight = 70.0 / len(self.file_paths)  # 70% for file processing
         base_progress = file_index * file_weight
         stage_progress = (progress / 100) * (file_weight / 3)  # Divide file weight by stages
-        
+
         overall_progress = base_progress + stage_offset + stage_progress
-        
-        # Don't emit micro-updates
-        if int(overall_progress) % 5 == 0:
-            self.emit_progress(int(overall_progress), message)
+
+        # Throttled progress emission
+        self._emit_progress_throttled(int(overall_progress), message)
+
+    def _emit_progress_throttled(self, percentage: int, message: str):
+        """
+        Emit progress with throttling to avoid UI flooding
+
+        Args:
+            percentage: Progress percentage (0-100)
+            message: Status message
+        """
+        current_time = time.time()
+        time_since_last = current_time - self.last_progress_time
+
+        # Only emit if enough time has passed OR it's a major milestone
+        should_emit = (
+            time_since_last >= self.progress_throttle_seconds or
+            percentage == 0 or  # Start
+            percentage == 100 or  # Complete
+            percentage % 10 == 0  # Major milestones
+        )
+
+        if should_emit:
+            self.emit_progress(percentage, message)
+            self.last_progress_time = current_time
     
     def _create_partial_result(
         self, 
@@ -344,7 +376,24 @@ class VehicleTrackingWorker(BaseWorkerThread):
         self.vehicles.clear()
         self.animation_data = None
         self.skipped_files.clear()
-        
-        # Let controller handle service cleanup
-        if self.controller and hasattr(self.controller, 'cleanup_resources'):
-            self.controller.cleanup_resources()
+
+        # Clear service cache if needed
+        if self.service and hasattr(self.service, 'clear_cache'):
+            try:
+                self.service.clear_cache()
+            except Exception as e:
+                # Log but don't fail cleanup
+                self._log_operation("cleanup", f"Cache clear failed: {e}")
+
+        # Clear references
+        self.service = None
+        self.file_paths = []
+        self.form_data = None
+
+    def _log_operation(self, operation: str, message: str):
+        """Log operation for debugging (if logger available)"""
+        try:
+            from core.logger import logger
+            logger.debug(f"[VehicleTrackingWorker] {operation}: {message}")
+        except ImportError:
+            pass  # Logger not available, skip logging

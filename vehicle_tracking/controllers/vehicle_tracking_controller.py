@@ -14,6 +14,7 @@ from controllers.base_controller import BaseController
 from core.result_types import Result
 from core.exceptions import ValidationError, FileOperationError, ErrorSeverity
 from core.resource_coordinators import WorkerResourceCoordinator
+from core.models import FormData
 from core.services.interfaces import IService
 
 # Import models
@@ -25,8 +26,8 @@ from vehicle_tracking.models.vehicle_tracking_models import (
 # Import service interface (will be properly registered via DI)
 from vehicle_tracking.services.vehicle_tracking_service import IVehicleTrackingService
 
-# Import worker (to be created)
-# from vehicle_tracking.workers.vehicle_tracking_worker import VehicleTrackingWorker
+# Import worker
+from vehicle_tracking.workers.vehicle_tracking_worker import VehicleTrackingWorker
 
 
 class VehicleTrackingController(BaseController):
@@ -40,20 +41,20 @@ class VehicleTrackingController(BaseController):
     def __init__(self):
         """Initialize vehicle tracking controller"""
         super().__init__("VehicleTrackingController")
-        
+
         # Service dependencies (injected via DI)
         self._vehicle_service: Optional[IVehicleTrackingService] = None
         self._map_template_service = None  # Future: IMapTemplateService
         self._analysis_service = None  # Future: IVehicleAnalysisService
-        
+
         # Current operation state
-        self.current_worker = None
+        self.current_worker: Optional[VehicleTrackingWorker] = None
+        self._current_worker_id: Optional[str] = None  # Track worker ID
         self.current_vehicles: List[VehicleData] = []
         self.current_animation: Optional[AnimationData] = None
         self.current_settings: VehicleTrackingSettings = VehicleTrackingSettings()
-        
-        # Resource tracking
-        self._operation_id: Optional[str] = None
+
+        # Resource tracking - will be set by base class
         self._resource_coordinator: Optional[WorkerResourceCoordinator] = None
     
     def _create_resource_coordinator(self, component_id: str) -> WorkerResourceCoordinator:
@@ -106,9 +107,11 @@ class VehicleTrackingController(BaseController):
             if settings:
                 self.current_settings = settings
             
-            # Initialize resource coordinator
-            self._operation_id = f"vehicle_load_{datetime.now().timestamp()}"
-            self._resource_coordinator = self._create_resource_coordinator(self._operation_id)
+            # Initialize resource coordinator if not already set
+            if not self._resource_coordinator:
+                self._resource_coordinator = self._create_resource_coordinator(
+                    f"vehicle_load_{datetime.now().timestamp()}"
+                )
             
             # Process each CSV file
             vehicles = []
@@ -284,35 +287,35 @@ class VehicleTrackingController(BaseController):
                 self.current_settings = settings
             
             if use_worker:
-                # Import worker here to avoid circular dependency
-                try:
-                    from vehicle_tracking.workers.vehicle_tracking_worker import VehicleTrackingWorker
-                    
-                    # Create and configure worker
-                    self.current_worker = VehicleTrackingWorker(
-                        file_paths=file_paths,
-                        settings=self.current_settings,
-                        controller=self
+                # Create worker with service injection
+                self.current_worker = VehicleTrackingWorker(
+                    file_paths=file_paths,
+                    settings=self.current_settings,
+                    service=self.vehicle_service,  # Direct service injection
+                    form_data=None  # Can be added if needed for reports
+                )
+
+                # Track worker with resource coordinator (Media Analysis pattern)
+                if self.resources:  # Use base class resources if available
+                    self._current_worker_id = self.resources.track_worker(
+                        self.current_worker,
+                        name=f"vehicle_tracking_{datetime.now():%H%M%S}",
+                        cancel_on_cleanup=True,
+                        auto_release=True
                     )
-                    
-                    # Track worker as resource
-                    if self._resource_coordinator:
-                        self._resource_coordinator.track_worker(
-                            "vehicle_tracking_worker",
-                            self.current_worker
-                        )
-                    
-                    # Start worker
-                    self.current_worker.start()
-                    
-                    self._log_operation("start_workflow", "Worker thread started")
-                    return Result.success(self.current_worker)
-                    
-                except ImportError:
-                    # Worker not implemented yet, fall back to synchronous
-                    self._log_operation("start_workflow", 
-                                      "Worker not available, running synchronously")
-                    use_worker = False
+                elif self._resource_coordinator:
+                    self._current_worker_id = self._resource_coordinator.track_worker(
+                        self.current_worker,
+                        name=f"vehicle_tracking_{datetime.now():%H%M%S}",
+                        cancel_on_cleanup=True,
+                        auto_release=True
+                    )
+
+                # Start worker
+                self.current_worker.start()
+
+                self._log_operation("start_workflow", "Worker thread started")
+                return Result.success(self.current_worker)
             
             if not use_worker:
                 # Run synchronously in main thread
@@ -390,31 +393,48 @@ class VehicleTrackingController(BaseController):
             self._handle_error(error, {'method': 'update_vehicle', 'vehicle_id': vehicle_id})
             return Result.error(error)
     
+    def cancel_current_operation(self):
+        """Cancel the current vehicle tracking operation if running"""
+        if self.current_worker and self.current_worker.isRunning():
+            self._log_operation("cancel_current_operation", "Cancelling vehicle tracking")
+            self.current_worker.cancel()
+            self.current_worker.wait(5000)  # Wait up to 5 seconds
+
+            if self.current_worker.isRunning():
+                self._log_operation("cancel_current_operation",
+                                  "Worker did not stop gracefully, terminating",
+                                  "warning")
+                self.current_worker.terminate()
+
+        # Clear references - coordinator handles cleanup
+        self.current_worker = None
+        self._current_worker_id = None
+
+        self._log_operation("cancel_current_operation", "Vehicle tracking cancelled")
+
     def cleanup_resources(self):
         """Clean up all resources and cancel operations"""
         try:
             self._log_operation("cleanup", "Starting resource cleanup")
-            
-            # Cancel worker if running
-            if self.current_worker and self.current_worker.isRunning():
-                self.current_worker.cancel()
-                self.current_worker.wait(5000)  # Wait up to 5 seconds
-                
+
+            # Cancel any running operations
+            self.cancel_current_operation()
+
             # Clean up through resource coordinator
             if self._resource_coordinator:
                 self._resource_coordinator.cleanup_all()
-                
+
             # Clear service cache
             if self._vehicle_service:
                 self._vehicle_service.clear_cache()
-            
+
             # Clear local state
             self.current_vehicles.clear()
             self.current_animation = None
-            self.current_worker = None
-            
+            self._resource_coordinator = None
+
             self._log_operation("cleanup", "Resource cleanup complete")
-            
+
         except Exception as e:
             self._log_operation("cleanup", f"Cleanup error: {e}", "error")
     

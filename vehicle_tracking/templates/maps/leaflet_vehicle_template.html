@@ -197,7 +197,11 @@
             <div class="loading-text">Loading map...</div>
         </div>
     </div>
-    
+
+    <!-- QWebChannel - Only loads in Qt context -->
+    <!-- Note: This will fail in regular browser but that's OK -->
+    <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+
     <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     
@@ -206,9 +210,25 @@
     <script src="https://cdn.jsdelivr.net/npm/leaflet-timedimension@1.1.1/dist/leaflet.timedimension.min.js"></script>
     
     <script>
+        console.log('[Script] Vehicle tracking map script starting...');
+        console.log('[Script] Current URL:', window.location.href);
+        console.log('[Script] Document readyState:', document.readyState);
+
+        // Wait for DOM to be ready
+        function initializeWhenReady() {
+            if (document.readyState === 'loading') {
+                console.log('[Script] DOM not ready, waiting...');
+                document.addEventListener('DOMContentLoaded', initializeEverything);
+            } else {
+                console.log('[Script] DOM ready, initializing now...');
+                initializeEverything();
+            }
+        }
+
         // Vehicle Map Implementation using TimestampedGeoJson
         class VehicleMapTemplate {
             constructor() {
+                console.log('[VehicleMapTemplate] Constructor started');
                 this.map = null;
                 this.timeDimension = null;
                 this.timeDimensionControl = null;
@@ -216,29 +236,104 @@
                 this.vehicleGeoJsonLayers = new Map();
                 this.vehicleColors = new Map();
                 this.currentTimeLayer = null;
-                
+
+                console.log('[VehicleMapTemplate] Calling initializeMap()...');
                 this.initializeMap();
             }
-            
+
             initializeMap() {
-                // Create Leaflet map
-                this.map = L.map('map', {
-                    center: [45.4215, -75.6972],
-                    zoom: 13,
-                    timeDimension: true,
-                    timeDimensionOptions: {
-                        timeInterval: "2020-01-01/2030-12-31",
+                try {
+                    console.log('[VehicleMapTemplate] initializeMap() started');
+                    console.log('[VehicleMapTemplate] Checking for Leaflet: ', typeof L !== 'undefined' ? 'Found' : 'NOT FOUND!');
+
+                    // Check if map container exists
+                    const mapElement = document.getElementById('map');
+                    console.log('[VehicleMapTemplate] Map container element:', mapElement ? 'Found' : 'NOT FOUND!');
+
+                    if (!mapElement) {
+                        console.error('[VehicleMapTemplate] ERROR: Map container element not found!');
+                        return;
+                    }
+
+                    // Create Leaflet map
+                    console.log('[VehicleMapTemplate] Creating Leaflet map...');
+
+                    // Start with basic map, add TimeDimension later when we have data
+                    this.map = L.map('map', {
+                        center: [45.4215, -75.6972],
+                        zoom: 13
+                    });
+
+                    console.log('[VehicleMapTemplate] Basic map created, will add TimeDimension when data loaded');
+                    console.log('[VehicleMapTemplate] Map created successfully:', this.map);
+
+                    // Add base tile layer
+                    console.log('[VehicleMapTemplate] Adding OpenStreetMap tile layer...');
+                    const tileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                        attribution: '© OpenStreetMap contributors',
+                        maxZoom: 19
+                    }).addTo(this.map);
+                    console.log('[VehicleMapTemplate] Tile layer added:', tileLayer);
+
+                    // TimeDimension will be created when data is loaded
+                    // this.timeDimension = this.map.timeDimension;
+                    console.log('[VehicleMapTemplate] TimeDimension will be initialized when vehicle data is loaded');
+
+                    // Hide loading overlay
+                    console.log('[VehicleMapTemplate] Hiding loading overlay...');
+                    const loadingElement = document.getElementById('loading');
+                    if (loadingElement) {
+                        loadingElement.classList.add('hidden');
+                        console.log('[VehicleMapTemplate] Loading overlay hidden');
+                    } else {
+                        console.warn('[VehicleMapTemplate] Loading overlay element not found');
+                    }
+
+                    // Dispatch ready event
+                    console.log('[VehicleMapTemplate] Dispatching ready event...');
+                    this.dispatchReadyEvent();
+                    console.log('[VehicleMapTemplate] Map initialization complete!');
+
+                } catch (error) {
+                    console.error('[VehicleMapTemplate] ERROR during initialization:', error);
+                    console.error('[VehicleMapTemplate] Stack trace:', error.stack);
+
+                    // Try to hide loading overlay even if error
+                    const loadingElement = document.getElementById('loading');
+                    if (loadingElement) {
+                        loadingElement.classList.add('hidden');
+                    }
+                }
+            }
+            
+            initializeTimeDimension(startTime, endTime) {
+                console.log('[VehicleMapTemplate] Initializing TimeDimension with range:', startTime, endTime);
+
+                if (!this.timeDimension && startTime && endTime) {
+                    // Create TimeDimension with actual data range
+                    const startDate = new Date(startTime);
+                    const endDate = new Date(endTime);
+
+                    // Format dates as ISO strings
+                    const timeInterval = `${startDate.toISOString()}/${endDate.toISOString()}`;
+                    console.log('[VehicleMapTemplate] Time interval:', timeInterval);
+
+                    // Add TimeDimension to existing map
+                    this.timeDimension = L.timeDimension({
+                        timeInterval: timeInterval,
                         period: "PT1S",  // 1 second intervals
-                        currentTime: new Date().getTime()
-                    },
-                    timeDimensionControl: true,
-                    timeDimensionControlOptions: {
+                        currentTime: startTime
+                    });
+                    this.map.timeDimension = this.timeDimension;
+
+                    // Add time control
+                    this.timeDimensionControl = L.control.timeDimension({
                         autoPlay: false,
                         playerOptions: {
                             buffer: 5,
                             minBufferReady: 1,
                             loop: true,
-                            transitionTime: 100  // Smooth transitions
+                            transitionTime: 100
                         },
                         speedSlider: true,
                         speedSliderOptions: {
@@ -247,37 +342,24 @@
                             stepValue: 0.1,
                             startValue: 1
                         }
-                    }
-                });
-                
-                // Add base tile layer
-                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                    attribution: '© OpenStreetMap contributors',
-                    maxZoom: 19
-                }).addTo(this.map);
-                
-                // Get TimeDimension instance
-                this.timeDimension = this.map.timeDimension;
-                
-                // Hide loading overlay
-                document.getElementById('loading').classList.add('hidden');
-                
-                // Dispatch ready event
-                this.dispatchReadyEvent();
+                    }).addTo(this.map);
+
+                    console.log('[VehicleMapTemplate] TimeDimension initialized successfully');
+                }
             }
-            
+
             loadVehicles(vehicleData) {
                 console.log('Loading vehicles with TimestampedGeoJson:', vehicleData);
-                
+
                 try {
                     // Clear existing data
                     this.clearVehicles();
-                    
+
                     if (!vehicleData || !vehicleData.vehicles) {
                         console.error('Invalid vehicle data');
                         return;
                     }
-                    
+
                     // Process each vehicle
                     let allFeatures = [];
                     let minTime = null;
@@ -324,23 +406,27 @@
                                 this.bindVehiclePopup(feature, layer);
                             }
                         });
-                        
-                        // Create TimeDimension layer
+
+                        // Initialize TimeDimension with actual data range FIRST
+                        if (minTime && maxTime) {
+                            // Initialize TimeDimension if not already done
+                            this.initializeTimeDimension(minTime, maxTime);
+                        }
+
+                        // NOW create TimeDimension layer (after TimeDimension is initialized)
                         const timeDimensionLayer = L.timeDimension.layer.geoJson(geoJsonLayer, {
                             updateTimeDimension: true,
                             updateTimeDimensionMode: 'replace',
                             addlastPoint: false,
                             duration: 'PT2S'  // Show points for 2 seconds
                         });
-                        
+
                         timeDimensionLayer.addTo(this.map);
                         this.currentTimeLayer = timeDimensionLayer;
-                        
-                        // Update TimeDimension bounds
+
+                        // Update time range UI
                         if (minTime && maxTime) {
-                            this.timeDimension.setAvailableTimes(minTime, maxTime);
-                            this.timeDimension.setCurrentTime(minTime);
-                            
+
                             // Update UI
                             this.updateTimeRange(new Date(minTime), new Date(maxTime));
                         }
@@ -468,19 +554,25 @@
             startAnimation() {
                 if (this.timeDimension) {
                     this.timeDimension.start();
+                } else {
+                    console.warn('[VehicleMapTemplate] Cannot start animation - TimeDimension not initialized');
                 }
             }
-            
+
             stopAnimation() {
                 if (this.timeDimension) {
                     this.timeDimension.stop();
                     this.timeDimension.setCurrentTime(this.timeDimension.getLowerLimit());
+                } else {
+                    console.warn('[VehicleMapTemplate] Cannot stop animation - TimeDimension not initialized');
                 }
             }
-            
+
             pauseAnimation() {
                 if (this.timeDimension) {
                     this.timeDimension.stop();
+                } else {
+                    console.warn('[VehicleMapTemplate] Cannot pause animation - TimeDimension not initialized');
                 }
             }
             
@@ -572,59 +664,119 @@
             
             onVehicleClick(vehicleId) {
                 console.log('Vehicle clicked:', vehicleId);
-                if (window.qtBridge && window.qtBridge.onVehicleClick) {
+                if (window.qtBridge) {
                     window.qtBridge.onVehicleClick(vehicleId);
                 }
             }
             
             handleError(message) {
                 console.error('Map error:', message);
-                if (window.qtBridge && window.qtBridge.onError) {
+                if (window.qtBridge) {
                     window.qtBridge.onError(message);
                 }
             }
             
             dispatchReadyEvent() {
+                console.log('[VehicleMapTemplate] Dispatching ready event');
+                mapReadyState = true; // Set the flag
                 window.dispatchEvent(new Event('mapReady'));
-                if (window.qtBridge && window.qtBridge.onMapReady) {
+
+                // Notify Qt bridge if it's already connected
+                if (window.qtBridge) {
+                    console.log('[VehicleMapTemplate] Qt bridge found, calling onMapReady()');
                     window.qtBridge.onMapReady();
+                } else {
+                    console.log('[VehicleMapTemplate] Qt bridge not yet connected, will notify when ready');
                 }
             }
         }
         
-        // Initialize map
-        window.vehicleMap = new VehicleMapTemplate();
-        
-        // Qt WebChannel integration
-        if (typeof QWebChannel !== 'undefined') {
-            new QWebChannel(qt.webChannelTransport, function(channel) {
-                window.qtBridge = channel.objects.bridge;
-                
-                if (window.qtBridge) {
-                    // Connect signals from Qt
-                    window.qtBridge.loadVehiclesSignal.connect(function(data) {
-                        window.vehicleMap.loadVehicles(JSON.parse(data));
-                    });
-                    
-                    window.qtBridge.controlSignal.connect(function(command) {
-                        switch(command) {
-                            case 'play': window.vehicleMap.startAnimation(); break;
-                            case 'pause': window.vehicleMap.pauseAnimation(); break;
-                            case 'stop': window.vehicleMap.stopAnimation(); break;
-                            case 'clear': window.vehicleMap.clearVehicles(); break;
-                        }
-                    });
-                    
-                    window.qtBridge.seekSignal.connect(function(timestamp) {
-                        window.vehicleMap.seekToTime(timestamp * 1000);
-                    });
-                    
-                    window.qtBridge.speedSignal.connect(function(speed) {
-                        window.vehicleMap.setPlaybackSpeed(speed);
-                    });
-                }
-            });
+        // Main initialization function
+        function initializeEverything() {
+            console.log('[Main] Starting map initialization...');
+            console.log('[Main] Document ready state:', document.readyState);
+            console.log('[Main] Leaflet available?', typeof L !== 'undefined');
+
+            // Initialize map
+            console.log('[Main] Creating VehicleMapTemplate instance...');
+            try {
+                window.vehicleMap = new VehicleMapTemplate();
+                console.log('[Main] VehicleMapTemplate instance created:', window.vehicleMap);
+            } catch (error) {
+                console.error('[Main] Failed to create VehicleMapTemplate:', error);
+                console.error('[Main] Stack:', error.stack);
+            }
+
+            // Qt WebChannel integration
+            setupQtBridge();
         }
+
+        // Qt WebChannel integration
+        let qtBridgeRetries = 0;
+        const MAX_QT_RETRIES = 10; // Try for 1 second then give up
+        let mapReadyState = false; // Track if map is ready
+
+        function setupQtBridge() {
+            qtBridgeRetries++;
+
+            if (qtBridgeRetries === 1) {
+                console.log('[QtBridge] Attempting to connect to Qt WebChannel...');
+            }
+
+            if (typeof QWebChannel !== 'undefined' && typeof qt !== 'undefined' && qt.webChannelTransport) {
+                console.log('[QtBridge] Qt WebChannel found, connecting...');
+                new QWebChannel(qt.webChannelTransport, function(channel) {
+                    window.qtBridge = channel.objects.bridge;
+
+                    if (window.qtBridge) {
+                        console.log('[QtBridge] ✓ Successfully connected to Qt bridge');
+
+                        // If map is already ready, notify Qt immediately
+                        if (mapReadyState && window.vehicleMap) {
+                            console.log('[QtBridge] Map was already ready, notifying Qt now');
+                            window.qtBridge.onMapReady();
+                        }
+
+                        // Connect signals from Qt
+                        window.qtBridge.loadVehiclesSignal.connect(function(data) {
+                            window.vehicleMap.loadVehicles(JSON.parse(data));
+                        });
+
+                        window.qtBridge.controlSignal.connect(function(command) {
+                            switch(command) {
+                                case 'play': window.vehicleMap.startAnimation(); break;
+                                case 'pause': window.vehicleMap.pauseAnimation(); break;
+                                case 'stop': window.vehicleMap.stopAnimation(); break;
+                                case 'clear': window.vehicleMap.clearVehicles(); break;
+                            }
+                        });
+
+                        window.qtBridge.seekSignal.connect(function(timestamp) {
+                            window.vehicleMap.seekToTime(timestamp * 1000);
+                        });
+
+                        window.qtBridge.speedSignal.connect(function(speed) {
+                            window.vehicleMap.setPlaybackSpeed(speed);
+                        });
+                    }
+                });
+            } else {
+                if (qtBridgeRetries < MAX_QT_RETRIES) {
+                    // Keep trying
+                    setTimeout(setupQtBridge, 100);
+                } else {
+                    // Give up after max retries
+                    console.log('[QtBridge] Qt WebChannel not available after ' + MAX_QT_RETRIES + ' attempts');
+                    console.log('[QtBridge] Running in standalone mode (no Qt communication)');
+                }
+            }
+        }
+
+        // Try to set up Qt bridge (called from initializeEverything)
+        // setupQtBridge(); // Removed - now called from initializeEverything
+
+        // Start initialization when DOM is ready
+        initializeWhenReady();
     </script>
 </body>
 </html>

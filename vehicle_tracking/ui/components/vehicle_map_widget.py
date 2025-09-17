@@ -15,7 +15,7 @@ from PySide6.QtCore import Qt, QUrl, Signal, Slot, QObject
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QToolBar,
     QLabel, QComboBox, QPushButton, QSlider,
-    QMessageBox, QSplitter, QGroupBox
+    QMessageBox, QSplitter, QGroupBox, QCheckBox
 )
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWebChannel import QWebChannel
@@ -342,13 +342,13 @@ class VehicleMapWidget(QWidget):
         self.web_view.setHtml(fallback_html)
     
     def load_vehicle_data(
-        self, 
+        self,
         vehicles: List[VehicleData],
         animation_data: Optional[AnimationData] = None
     ):
         """
         Load vehicle data into the map
-        
+
         Args:
             vehicles: List of vehicle data
             animation_data: Optional animation data
@@ -356,30 +356,43 @@ class VehicleMapWidget(QWidget):
         try:
             self.current_vehicles = vehicles
             self.current_animation = animation_data
-            
+
             # Prepare data for JavaScript
             vehicle_dict = {
                 'vehicles': [self._vehicle_to_dict(v) for v in vehicles]
             }
-            
+
             if animation_data:
                 vehicle_dict['animation_data'] = self._animation_to_dict(animation_data)
-            
+
+            logger.info(f"Prepared vehicle data: {len(vehicle_dict['vehicles'])} vehicles")
+            logger.info(f"Map loaded status: {self._map_loaded}")
+
             # If map is ready, send data immediately
             if self._map_loaded:
+                logger.info("Sending data to JavaScript via bridge...")
                 self.map_bridge.loadVehicles(vehicle_dict)
                 self.status_label.setText(f"Loaded {len(vehicles)} vehicles")
-                
+
+                # Also try direct JavaScript injection as backup
+                import json
+                vehicle_json = json.dumps(vehicle_dict)
+                js_code = f"if (window.vehicleMap) {{ window.vehicleMap.loadVehicles({vehicle_json}); console.log('Data sent directly to map'); }}"
+                self.web_view.page().runJavaScript(js_code)
+
                 # Enable timeline if we have animation data
                 if animation_data:
                     self._setup_timeline(animation_data)
             else:
                 # Store data to send when map is ready
+                logger.info("Map not ready, storing data for later...")
                 self._pending_data = vehicle_dict
                 self.status_label.setText("Waiting for map to initialize...")
-                
+
         except Exception as e:
             logger.error(f"Error loading vehicle data: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             self.status_label.setText(f"Error: {str(e)}")
     
     def _vehicle_to_dict(self, vehicle: VehicleData) -> Dict[str, Any]:
@@ -468,9 +481,11 @@ class VehicleMapWidget(QWidget):
         """Handle map ready signal"""
         self._map_loaded = True
         self.status_label.setText("Map ready")
-        
+        logger.info("Map is ready - setting _map_loaded to True")
+
         # Send pending data if any
         if self._pending_data:
+            logger.info(f"Sending pending data: {len(self._pending_data.get('vehicles', []))} vehicles")
             self.map_bridge.loadVehicles(self._pending_data)
             self._pending_data = None
     
