@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vehicle Tracking - TimestampedGeoJson</title>
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
+    <!-- Leaflet TimeDimension CSS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet-timedimension@1.1.1/dist/leaflet.timedimension.control.min.css" />
+    
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+        
+        #map {
+            height: 100%;
+            width: 100%;
+        }
+        
+        /* Vehicle info panel */
+        .vehicle-panel {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: white;
+            padding: 12px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            z-index: 1000;
+            min-width: 250px;
+        }
+        
+        .vehicle-panel h3 {
+            margin: 0 0 10px 0;
+            font-size: 16px;
+            color: #333;
+        }
+        
+        .vehicle-stats {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            font-size: 14px;
+        }
+        
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+        }
+        
+        .stat-label {
+            color: #666;
+        }
+        
+        .stat-value {
+            font-weight: 600;
+            color: #333;
+        }
+        
+        /* Vehicle list */
+        .vehicle-list {
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #e0e0e0;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        
+        .vehicle-item {
+            display: flex;
+            align-items: center;
+            padding: 5px;
+            cursor: pointer;
+            border-radius: 4px;
+            transition: background 0.2s;
+        }
+        
+        .vehicle-item:hover {
+            background: #f5f5f5;
+        }
+        
+        .vehicle-color {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+            border: 1px solid white;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+        }
+        
+        /* Custom marker styles */
+        .vehicle-marker-icon {
+            background: white;
+            border: 2px solid;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+            font-size: 14px;
+        }
+        
+        /* Override TimeDimension control styles for better appearance */
+        .leaflet-control-timecontrol {
+            background: white;
+            border-radius: 8px;
+            padding: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        }
+        
+        .leaflet-bar-timecontrol {
+            background: white;
+            border: none;
+        }
+        
+        /* Loading indicator */
+        .loading-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(255, 255, 255, 0.95);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 2000;
+            transition: opacity 0.3s;
+        }
+        
+        .loading-overlay.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+        
+        .loading-content {
+            text-align: center;
+        }
+        
+        .loading-spinner {
+            width: 50px;
+            height: 50px;
+            margin: 0 auto 20px;
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .loading-text {
+            color: #666;
+            font-size: 16px;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    
+    <!-- Vehicle Info Panel -->
+    <div class="vehicle-panel">
+        <h3>🚗 Vehicle Tracking</h3>
+        <div class="vehicle-stats">
+            <div class="stat-row">
+                <span class="stat-label">Active Vehicles:</span>
+                <span class="stat-value" id="vehicle-count">0</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">Total Points:</span>
+                <span class="stat-value" id="point-count">0</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">Time Range:</span>
+                <span class="stat-value" id="time-range">--</span>
+            </div>
+        </div>
+        <div class="vehicle-list" id="vehicle-list"></div>
+    </div>
+    
+    <!-- Loading Overlay -->
+    <div id="loading" class="loading-overlay">
+        <div class="loading-content">
+            <div class="loading-spinner"></div>
+            <div class="loading-text">Loading map...</div>
+        </div>
+    </div>
+    
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <!-- Leaflet TimeDimension -->
+    <script src="https://cdn.jsdelivr.net/npm/iso8601-js-period@0.2.1/iso8601.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/leaflet-timedimension@1.1.1/dist/leaflet.timedimension.min.js"></script>
+    
+    <script>
+        // Vehicle Map Implementation using TimestampedGeoJson
+        class VehicleMapTemplate {
+            constructor() {
+                this.map = null;
+                this.timeDimension = null;
+                this.timeDimensionControl = null;
+                this.vehicles = new Map();
+                this.vehicleGeoJsonLayers = new Map();
+                this.vehicleColors = new Map();
+                this.currentTimeLayer = null;
+                
+                this.initializeMap();
+            }
+            
+            initializeMap() {
+                // Create Leaflet map
+                this.map = L.map('map', {
+                    center: [45.4215, -75.6972],
+                    zoom: 13,
+                    timeDimension: true,
+                    timeDimensionOptions: {
+                        timeInterval: "2020-01-01/2030-12-31",
+                        period: "PT1S",  // 1 second intervals
+                        currentTime: new Date().getTime()
+                    },
+                    timeDimensionControl: true,
+                    timeDimensionControlOptions: {
+                        autoPlay: false,
+                        playerOptions: {
+                            buffer: 5,
+                            minBufferReady: 1,
+                            loop: true,
+                            transitionTime: 100  // Smooth transitions
+                        },
+                        speedSlider: true,
+                        speedSliderOptions: {
+                            minValue: 0.1,
+                            maxValue: 10,
+                            stepValue: 0.1,
+                            startValue: 1
+                        }
+                    }
+                });
+                
+                // Add base tile layer
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    attribution: '© OpenStreetMap contributors',
+                    maxZoom: 19
+                }).addTo(this.map);
+                
+                // Get TimeDimension instance
+                this.timeDimension = this.map.timeDimension;
+                
+                // Hide loading overlay
+                document.getElementById('loading').classList.add('hidden');
+                
+                // Dispatch ready event
+                this.dispatchReadyEvent();
+            }
+            
+            loadVehicles(vehicleData) {
+                console.log('Loading vehicles with TimestampedGeoJson:', vehicleData);
+                
+                try {
+                    // Clear existing data
+                    this.clearVehicles();
+                    
+                    if (!vehicleData || !vehicleData.vehicles) {
+                        console.error('Invalid vehicle data');
+                        return;
+                    }
+                    
+                    // Process each vehicle
+                    let allFeatures = [];
+                    let minTime = null;
+                    let maxTime = null;
+                    let totalPoints = 0;
+                    
+                    vehicleData.vehicles.forEach(vehicle => {
+                        this.vehicles.set(vehicle.vehicle_id, vehicle);
+                        this.vehicleColors.set(vehicle.vehicle_id, vehicle.color || '#0066CC');
+                        
+                        // Convert vehicle GPS points to GeoJSON features with time
+                        const features = this.vehicleToGeoJsonFeatures(vehicle);
+                        allFeatures = allFeatures.concat(features);
+                        
+                        // Track time bounds
+                        if (vehicle.gps_points && vehicle.gps_points.length > 0) {
+                            totalPoints += vehicle.gps_points.length;
+                            
+                            const times = vehicle.gps_points.map(p => new Date(p.timestamp).getTime());
+                            const vMinTime = Math.min(...times);
+                            const vMaxTime = Math.max(...times);
+                            
+                            minTime = minTime ? Math.min(minTime, vMinTime) : vMinTime;
+                            maxTime = maxTime ? Math.max(maxTime, vMaxTime) : vMaxTime;
+                        }
+                        
+                        // Add to vehicle list UI
+                        this.addVehicleToList(vehicle);
+                    });
+                    
+                    // Create GeoJSON layer with all features
+                    if (allFeatures.length > 0) {
+                        const geoJsonData = {
+                            type: "FeatureCollection",
+                            features: allFeatures
+                        };
+                        
+                        // Create GeoJSON layer
+                        const geoJsonLayer = L.geoJSON(geoJsonData, {
+                            pointToLayer: (feature, latlng) => {
+                                return this.createVehicleMarker(feature, latlng);
+                            },
+                            onEachFeature: (feature, layer) => {
+                                this.bindVehiclePopup(feature, layer);
+                            }
+                        });
+                        
+                        // Create TimeDimension layer
+                        const timeDimensionLayer = L.timeDimension.layer.geoJson(geoJsonLayer, {
+                            updateTimeDimension: true,
+                            updateTimeDimensionMode: 'replace',
+                            addlastPoint: false,
+                            duration: 'PT2S'  // Show points for 2 seconds
+                        });
+                        
+                        timeDimensionLayer.addTo(this.map);
+                        this.currentTimeLayer = timeDimensionLayer;
+                        
+                        // Update TimeDimension bounds
+                        if (minTime && maxTime) {
+                            this.timeDimension.setAvailableTimes(minTime, maxTime);
+                            this.timeDimension.setCurrentTime(minTime);
+                            
+                            // Update UI
+                            this.updateTimeRange(new Date(minTime), new Date(maxTime));
+                        }
+                        
+                        // Fit map bounds
+                        this.fitMapToData(allFeatures);
+                    }
+                    
+                    // Update statistics
+                    this.updateStats(vehicleData.vehicles.length, totalPoints);
+                    
+                } catch (error) {
+                    console.error('Error loading vehicles:', error);
+                    this.handleError(error.message);
+                }
+            }
+            
+            vehicleToGeoJsonFeatures(vehicle) {
+                const features = [];
+                const color = vehicle.color || '#0066CC';
+                
+                // Create a feature for each GPS point with its timestamp
+                vehicle.gps_points.forEach((point, index) => {
+                    const feature = {
+                        type: "Feature",
+                        properties: {
+                            vehicle_id: vehicle.vehicle_id,
+                            vehicle_label: vehicle.label || vehicle.vehicle_id,
+                            color: color,
+                            speed: point.speed || 0,
+                            time: point.timestamp,  // ISO string timestamp
+                            index: index,
+                            interpolated: point.interpolated || false
+                        },
+                        geometry: {
+                            type: "Point",
+                            coordinates: [point.longitude, point.latitude]
+                        }
+                    };
+                    features.push(feature);
+                });
+                
+                // Also create a LineString for the trail
+                if (vehicle.gps_points.length > 1) {
+                    const trailFeature = {
+                        type: "Feature",
+                        properties: {
+                            vehicle_id: vehicle.vehicle_id,
+                            vehicle_label: vehicle.label || vehicle.vehicle_id,
+                            color: color,
+                            type: 'trail',
+                            times: vehicle.gps_points.map(p => p.timestamp)  // Array of timestamps
+                        },
+                        geometry: {
+                            type: "LineString",
+                            coordinates: vehicle.gps_points.map(p => [p.longitude, p.latitude])
+                        }
+                    };
+                    features.push(trailFeature);
+                }
+                
+                return features;
+            }
+            
+            createVehicleMarker(feature, latlng) {
+                const color = feature.properties.color || '#0066CC';
+                const label = feature.properties.vehicle_label || '';
+                
+                // Create different markers for points vs trails
+                if (feature.geometry.type === 'LineString') {
+                    // This is a trail, will be handled by onEachFeature
+                    return null;
+                }
+                
+                // Create custom div icon for vehicle point
+                const icon = L.divIcon({
+                    className: 'vehicle-marker-icon',
+                    html: `<div style="border-color: ${color};">🚗</div>`,
+                    iconSize: [24, 24],
+                    iconAnchor: [12, 12],
+                    popupAnchor: [0, -12]
+                });
+                
+                return L.marker(latlng, { 
+                    icon: icon,
+                    title: label
+                });
+            }
+            
+            bindVehiclePopup(feature, layer) {
+                if (feature.geometry.type === 'Point') {
+                    const props = feature.properties;
+                    const time = new Date(props.time).toLocaleString();
+                    const popup = `
+                        <div style="min-width: 200px;">
+                            <b>${props.vehicle_label}</b><br>
+                            <small style="color: #666;">Vehicle ID: ${props.vehicle_id}</small><br>
+                            <hr style="margin: 5px 0;">
+                            <b>Time:</b> ${time}<br>
+                            <b>Speed:</b> ${props.speed ? props.speed.toFixed(1) + ' km/h' : 'N/A'}<br>
+                            ${props.interpolated ? '<small><i>Interpolated point</i></small>' : ''}
+                        </div>
+                    `;
+                    layer.bindPopup(popup);
+                    
+                    // Click handler
+                    layer.on('click', () => {
+                        this.onVehicleClick(props.vehicle_id);
+                    });
+                } else if (feature.geometry.type === 'LineString') {
+                    // Style the trail
+                    if (layer.setStyle) {
+                        layer.setStyle({
+                            color: feature.properties.color,
+                            weight: 3,
+                            opacity: 0.6,
+                            smoothFactor: 1
+                        });
+                    }
+                }
+            }
+            
+            // Required interface methods
+            
+            startAnimation() {
+                if (this.timeDimension) {
+                    this.timeDimension.start();
+                }
+            }
+            
+            stopAnimation() {
+                if (this.timeDimension) {
+                    this.timeDimension.stop();
+                    this.timeDimension.setCurrentTime(this.timeDimension.getLowerLimit());
+                }
+            }
+            
+            pauseAnimation() {
+                if (this.timeDimension) {
+                    this.timeDimension.stop();
+                }
+            }
+            
+            seekToTime(timestamp) {
+                if (this.timeDimension) {
+                    this.timeDimension.setCurrentTime(new Date(timestamp).getTime());
+                }
+            }
+            
+            setPlaybackSpeed(speed) {
+                if (this.map.timeDimensionControl) {
+                    // TimeDimension uses transition time, lower = faster
+                    const transitionTime = Math.max(50, 1000 / speed);
+                    this.map.timeDimensionControl.setTransitionTime(transitionTime);
+                }
+            }
+            
+            updateVehicles(vehicleData) {
+                this.loadVehicles(vehicleData);
+            }
+            
+            clearVehicles() {
+                // Remove TimeDimension layer
+                if (this.currentTimeLayer) {
+                    this.map.removeLayer(this.currentTimeLayer);
+                    this.currentTimeLayer = null;
+                }
+                
+                // Clear data
+                this.vehicles.clear();
+                this.vehicleColors.clear();
+                
+                // Clear UI
+                document.getElementById('vehicle-list').innerHTML = '';
+                this.updateStats(0, 0);
+            }
+            
+            focusVehicle(vehicleId) {
+                const vehicle = this.vehicles.get(vehicleId);
+                if (vehicle && vehicle.gps_points && vehicle.gps_points.length > 0) {
+                    const firstPoint = vehicle.gps_points[0];
+                    this.map.setView([firstPoint.latitude, firstPoint.longitude], 16);
+                }
+            }
+            
+            setMapStyle(style) {
+                console.log('Map style change requested:', style);
+                // Would need to change tile layer for different styles
+            }
+            
+            // Helper methods
+            
+            fitMapToData(features) {
+                const bounds = L.geoJSON({
+                    type: "FeatureCollection",
+                    features: features
+                }).getBounds();
+                
+                if (bounds.isValid()) {
+                    this.map.fitBounds(bounds, { padding: [50, 50] });
+                }
+            }
+            
+            addVehicleToList(vehicle) {
+                const listContainer = document.getElementById('vehicle-list');
+                const color = vehicle.color || '#0066CC';
+                
+                const item = document.createElement('div');
+                item.className = 'vehicle-item';
+                item.innerHTML = `
+                    <div class="vehicle-color" style="background-color: ${color};"></div>
+                    <div>${vehicle.label || vehicle.vehicle_id}</div>
+                `;
+                item.onclick = () => this.focusVehicle(vehicle.vehicle_id);
+                
+                listContainer.appendChild(item);
+            }
+            
+            updateStats(vehicleCount, pointCount) {
+                document.getElementById('vehicle-count').textContent = vehicleCount;
+                document.getElementById('point-count').textContent = pointCount.toLocaleString();
+            }
+            
+            updateTimeRange(startTime, endTime) {
+                const start = startTime.toLocaleTimeString();
+                const end = endTime.toLocaleTimeString();
+                document.getElementById('time-range').textContent = `${start} - ${end}`;
+            }
+            
+            onVehicleClick(vehicleId) {
+                console.log('Vehicle clicked:', vehicleId);
+                if (window.qtBridge && window.qtBridge.onVehicleClick) {
+                    window.qtBridge.onVehicleClick(vehicleId);
+                }
+            }
+            
+            handleError(message) {
+                console.error('Map error:', message);
+                if (window.qtBridge && window.qtBridge.onError) {
+                    window.qtBridge.onError(message);
+                }
+            }
+            
+            dispatchReadyEvent() {
+                window.dispatchEvent(new Event('mapReady'));
+                if (window.qtBridge && window.qtBridge.onMapReady) {
+                    window.qtBridge.onMapReady();
+                }
+            }
+        }
+        
+        // Initialize map
+        window.vehicleMap = new VehicleMapTemplate();
+        
+        // Qt WebChannel integration
+        if (typeof QWebChannel !== 'undefined') {
+            new QWebChannel(qt.webChannelTransport, function(channel) {
+                window.qtBridge = channel.objects.bridge;
+                
+                if (window.qtBridge) {
+                    // Connect signals from Qt
+                    window.qtBridge.loadVehiclesSignal.connect(function(data) {
+                        window.vehicleMap.loadVehicles(JSON.parse(data));
+                    });
+                    
+                    window.qtBridge.controlSignal.connect(function(command) {
+                        switch(command) {
+                            case 'play': window.vehicleMap.startAnimation(); break;
+                            case 'pause': window.vehicleMap.pauseAnimation(); break;
+                            case 'stop': window.vehicleMap.stopAnimation(); break;
+                            case 'clear': window.vehicleMap.clearVehicles(); break;
+                        }
+                    });
+                    
+                    window.qtBridge.seekSignal.connect(function(timestamp) {
+                        window.vehicleMap.seekToTime(timestamp * 1000);
+                    });
+                    
+                    window.qtBridge.speedSignal.connect(function(speed) {
+                        window.vehicleMap.setPlaybackSpeed(speed);
+                    });
+                }
+            });
+        }
+    </script>
+</body>
+</html>
