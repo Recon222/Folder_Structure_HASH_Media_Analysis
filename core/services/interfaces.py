@@ -684,3 +684,32 @@ class IBatchSuccessService(IService):
     ) -> SuccessMessageData:
         """Build success message for batch operations"""
         pass
+
+
+class IVehicleTrackingService(IService):
+    """
+    Minimal interface for vehicle tracking service
+
+    Main entry point for GPS data processing from vehicle infotainment systems.
+    Full implementation details are internal to the vehicle_tracking module.
+    """
+
+    @abstractmethod
+    def process_vehicle_files(
+        self,
+        files: List[Path],
+        settings: Optional[Dict[str, Any]] = None,
+        progress_callback: Optional[Callable[[float, str], None]] = None
+    ) -> Result:
+        """
+        Process vehicle GPS data files
+
+        Args:
+            files: List of CSV files containing GPS data
+            settings: Optional processing settings dictionary
+            progress_callback: Optional callback for progress updates
+
+        Returns:
+            Result containing processed vehicle data or error
+        """
+        pass

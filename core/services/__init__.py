@@ -11,8 +11,9 @@ This package provides a comprehensive service-oriented architecture with:
 
 from .service_registry import ServiceRegistry, get_service, register_service, register_factory
 from .interfaces import (
-    IService, IPathService, IFileOperationService, 
-    IReportService, IArchiveService, IValidationService
+    IService, IPathService, IFileOperationService,
+    IReportService, IArchiveService, IValidationService,
+    IVehicleTrackingService  # Optional vehicle tracking module
 )
 from .base_service import BaseService
 
@@ -31,10 +32,11 @@ from .service_config import configure_services, verify_service_configuration
 
 __all__ = [
     'ServiceRegistry', 'get_service', 'register_service', 'register_factory',
-    'IService', 'IPathService', 'IFileOperationService', 
+    'IService', 'IPathService', 'IFileOperationService',
     'IReportService', 'IArchiveService', 'IValidationService',
+    'IVehicleTrackingService',  # Optional vehicle tracking interface
     'BaseService',
-    'PathService', 'FileOperationService', 'ReportService', 
+    'PathService', 'FileOperationService', 'ReportService',
     'ArchiveService', 'ValidationService',
     'SuccessMessageData', 'QueueOperationData',
     'configure_services', 'verify_service_configuration'

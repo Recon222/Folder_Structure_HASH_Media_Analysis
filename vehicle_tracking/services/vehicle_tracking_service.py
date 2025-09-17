@@ -15,7 +15,7 @@ from typing import List, Dict, Any, Optional, Tuple, Callable
 import logging
 
 from core.services.base_service import BaseService
-from core.services.interfaces import IService
+from core.services.interfaces import IService, IVehicleTrackingService
 from core.result_types import Result
 from core.exceptions import ValidationError, FileOperationError, FSAError
 
@@ -739,3 +739,97 @@ class VehicleTrackingService(BaseService, IVehicleTrackingService):
     def get_cached_vehicle(self, vehicle_id: str) -> Optional[VehicleData]:
         """Get cached vehicle data if available"""
         return self._vehicle_cache.get(vehicle_id)
+
+    def process_vehicle_files(
+        self,
+        files: List[Path],
+        settings: Optional[Dict[str, Any]] = None,
+        progress_callback: Optional[Callable[[float, str], None]] = None
+    ) -> Result:
+        """
+        Process vehicle GPS data files - Main interface method
+
+        This is the minimal interface method exposed to the core application.
+        It processes multiple CSV files and returns analyzed vehicle data.
+
+        Args:
+            files: List of CSV files containing GPS data
+            settings: Optional processing settings dictionary
+            progress_callback: Optional callback for progress updates
+
+        Returns:
+            Result containing VehicleTrackingResult with processed data or error
+        """
+        try:
+            # Convert settings dict to VehicleTrackingSettings if provided
+            if settings:
+                # Handle dict to VehicleTrackingSettings conversion
+                tracking_settings = VehicleTrackingSettings(**settings) if isinstance(settings, dict) else settings
+            else:
+                tracking_settings = VehicleTrackingSettings()
+
+            processed_vehicles = []
+            total_points = 0
+            import time
+            start_time = time.time()
+
+            # Process each file
+            for i, file_path in enumerate(files):
+                if progress_callback:
+                    progress = (i / len(files)) * 100
+                    progress_callback(progress, f"Processing {file_path.name}")
+
+                # Parse CSV file
+                result = self.parse_csv_file(file_path, tracking_settings, progress_callback)
+
+                if result.success:
+                    vehicle_data = result.value
+
+                    # Calculate speeds if needed
+                    if tracking_settings.calculate_speeds:
+                        speed_result = self.calculate_speeds(vehicle_data, progress_callback)
+                        if speed_result.success:
+                            vehicle_data = speed_result.value
+
+                    # Interpolate if enabled
+                    if tracking_settings.interpolation_enabled:
+                        interp_result = self.interpolate_path(vehicle_data, tracking_settings, progress_callback)
+                        if interp_result.success:
+                            vehicle_data = interp_result.value
+
+                    processed_vehicles.append(vehicle_data)
+                    total_points += vehicle_data.point_count
+
+            # Prepare animation data
+            animation_data = None
+            if processed_vehicles:
+                animation_result = self.prepare_animation_data(processed_vehicles, tracking_settings)
+                if animation_result.success:
+                    animation_data = animation_result.value
+
+            # Create tracking result
+            if processed_vehicles:
+                tracking_result = VehicleTrackingResult(
+                    vehicles_processed=len(processed_vehicles),
+                    total_points_processed=total_points,
+                    processing_time_seconds=time.time() - start_time,
+                    vehicle_data=processed_vehicles,
+                    animation_data=animation_data
+                )
+
+                return Result.success(tracking_result)
+            else:
+                return Result.error(
+                    ValidationError(
+                        {'files': 'No valid vehicle data processed'},
+                        user_message="Could not process any vehicle files"
+                    )
+                )
+
+        except Exception as e:
+            error = VehicleTrackingError(
+                f"Vehicle file processing failed: {e}",
+                user_message="Error processing vehicle tracking files"
+            )
+            self._handle_error(error)
+            return Result.error(error)

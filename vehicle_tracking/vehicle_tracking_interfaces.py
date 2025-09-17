@@ -1,9 +1,23 @@
 #!/usr/bin/env python3
 """
-Vehicle Tracking Service Interfaces
+Vehicle Tracking Service Interfaces - Local Reference
 
-These interface definitions should be added to core/services/interfaces.py
-for proper dependency injection integration.
+INTEGRATION STATUS (as of latest commit):
+✅ IVehicleTrackingService     - Added to core (minimal version)
+❌ IMapTemplateService          - Local only (internal use)
+❌ IVehicleAnalysisService      - Local only (future implementation)
+❌ IVehicleTrackingSuccessService - Local only (internal use)
+
+MINIMAL INTEGRATION APPROACH:
+Only IVehicleTrackingService has been added to core/services/interfaces.py
+with a single entry point method. Other interfaces remain local to the
+vehicle_tracking module for internal organization and future extensibility.
+
+TO USE THESE INTERFACES LOCALLY:
+    from vehicle_tracking.vehicle_tracking_interfaces import IMapTemplateService
+
+The services can implement these interfaces without global registration,
+maintaining module independence while following proper architectural patterns.
 """
 
 from abc import ABC, abstractmethod
@@ -11,6 +25,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional, Callable
 
 from core.result_types import Result
+from core.services.interfaces import IService  # Import base interface
 
 # Import vehicle tracking models
 from vehicle_tracking.models.vehicle_tracking_models import (

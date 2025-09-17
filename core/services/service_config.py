@@ -8,9 +8,11 @@ from .interfaces import (
     IArchiveService, IValidationService,
     ICopyVerifyService, IMediaAnalysisService, IResourceManagementService,
     # Success Builder Interfaces
-    IForensicSuccessService, IHashingSuccessService, 
+    IForensicSuccessService, IHashingSuccessService,
     ICopyVerifySuccessService, IMediaAnalysisSuccessService,
-    IBatchSuccessService
+    IBatchSuccessService,
+    # Vehicle Tracking Interface (optional module)
+    IVehicleTrackingService
 )
 from .path_service import PathService
 from .file_operation_service import FileOperationService
@@ -63,7 +65,21 @@ def configure_services(zip_controller=None):
         register_service(ICopyVerifySuccessService, CopyVerifySuccessBuilder())
         register_service(IMediaAnalysisSuccessService, MediaAnalysisSuccessBuilder())
         register_service(IBatchSuccessService, BatchSuccessBuilder())
-        
+
+        # ✅ VEHICLE TRACKING SERVICE: Optional module with graceful fallback
+        # Only register if the module is available (plugin architecture)
+        try:
+            from vehicle_tracking.services.vehicle_tracking_service import VehicleTrackingService
+            register_service(IVehicleTrackingService, VehicleTrackingService())
+            import logging
+            logger = logging.getLogger("ServiceConfiguration")
+            logger.info("Vehicle tracking module registered successfully")
+        except ImportError:
+            # Vehicle tracking module not available - graceful degradation
+            import logging
+            logger = logging.getLogger("ServiceConfiguration")
+            logger.debug("Vehicle tracking module not available - skipping registration")
+
         # Optional: Log successful configuration
         import logging
         logger = logging.getLogger("ServiceConfiguration")
@@ -78,7 +94,7 @@ def configure_services(zip_controller=None):
 
 def get_configured_services():
     """Get list of all configured service interfaces for debugging"""
-    return [
+    services = [
         IResourceManagementService,  # Foundational service
         IPathService,
         IFileOperationService,
@@ -96,6 +112,15 @@ def get_configured_services():
         IMediaAnalysisSuccessService,
         IBatchSuccessService
     ]
+
+    # Include vehicle tracking if available
+    try:
+        import vehicle_tracking
+        services.append(IVehicleTrackingService)
+    except ImportError:
+        pass
+
+    return services
 
 def verify_service_configuration():
     """Verify all services are properly configured (for testing/debugging)"""
