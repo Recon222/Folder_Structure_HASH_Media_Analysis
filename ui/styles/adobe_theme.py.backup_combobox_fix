@@ -313,143 +313,45 @@ class AdobeTheme:
             selection-color: white;
         }}
 
-        /* ComboBox - AGGRESSIVE fix for white border issue */
+        /* ComboBox specific styling to remove white border */
         QComboBox {{
-            background: {self.variables.get('surface_sunken')};
             background-color: {self.variables.get('surface_sunken')};
             color: {self.variables.get('text_primary')};
-            border: 1px solid {self.variables.get('border_subtle')};
-            border-top: 1px solid {self.variables.get('border_subtle')};
-            border-left: 1px solid {self.variables.get('border_subtle')};
-            border-right: 1px solid {self.variables.get('border_subtle')};
-            border-bottom: 1px solid {self.variables.get('border_subtle')};
+            border: 1px solid {self.variables.get('background')};  /* Match background for invisible border */
             border-radius: {self.variables.get('border_radius')};
             padding: 5px 8px;
-            padding-right: 28px;
             selection-background-color: {self.variables.get('primary')};
             selection-color: white;
-            outline: none;
-        }}
-
-        QComboBox:!editable {{
-            background: {self.variables.get('surface_sunken')};
-            background-color: {self.variables.get('surface_sunken')};
-        }}
-
-        QComboBox:editable {{
-            background: {self.variables.get('surface_sunken')};
-            background-color: {self.variables.get('surface_sunken')};
-        }}
-
-        QComboBox:hover {{
-            border: 1px solid {self.variables.get('border_strong')};
-            border-top: 1px solid {self.variables.get('border_strong')};
-            border-left: 1px solid {self.variables.get('border_strong')};
-            border-right: 1px solid {self.variables.get('border_strong')};
-            border-bottom: 1px solid {self.variables.get('border_strong')};
-        }}
-
-        QComboBox:focus {{
-            border: 1px solid {self.variables.get('border_focus')};
-            border-top: 1px solid {self.variables.get('border_focus')};
-            border-left: 1px solid {self.variables.get('border_focus')};
-            border-right: 1px solid {self.variables.get('border_focus')};
-            border-bottom: 1px solid {self.variables.get('border_focus')};
-            background-color: #1a1a1a;
-            outline: none;
-        }}
-
-        QComboBox:on {{
-            border: 1px solid {self.variables.get('border_focus')};
-            background-color: #1a1a1a;
-        }}
-
-        /* Drop-down sub-control - completely override */
-        QComboBox::drop-down {{
-            subcontrol-origin: padding;
-            subcontrol-position: top right;
-            width: 24px;
-            border: none;
-            border-left: none;
-            background: {self.variables.get('surface_sunken')};
-            background-color: {self.variables.get('surface_sunken')};
-            border-top-right-radius: {self.variables.get('border_radius')};
-            border-bottom-right-radius: {self.variables.get('border_radius')};
-        }}
-
-        QComboBox:!editable::drop-down {{
-            background: {self.variables.get('surface_sunken')};
-            background-color: {self.variables.get('surface_sunken')};
-        }}
-
-        QComboBox:hover::drop-down {{
-            background: {self.variables.get('surface_sunken')};
-            background-color: {self.variables.get('surface_sunken')};
-        }}
-
-        QComboBox:focus::drop-down {{
-            background: #1a1a1a;
-            background-color: #1a1a1a;
-        }}
-
-        QComboBox:on::drop-down {{
-            background: #1a1a1a;
-            background-color: #1a1a1a;
-        }}
-
-        /* Down arrow styling */
-        QComboBox::down-arrow {{
-            image: none;
-            width: 0;
-            height: 0;
-            border: none;
-            border-left: 4px solid transparent;
-            border-right: 4px solid transparent;
-            border-top: 5px solid {self.variables.get('text_secondary')};
-            margin-right: 8px;
-        }}
-
-        QComboBox:hover::down-arrow {{
-            border-top: 5px solid {self.variables.get('text_primary')};
-        }}
-
-        QComboBox:on::down-arrow {{
-            border-top: 5px solid {self.variables.get('primary')};
-        }}
-
-        /* Disable native frame painting */
-        QComboBox:!frame {{
-            border: 1px solid {self.variables.get('border_subtle')};
-        }}
-
-        /* Popup list styling */
-        QComboBox QAbstractItemView {{
-            background-color: {self.variables.get('surface')};
-            border: 1px solid {self.variables.get('border_strong')};
-            selection-background-color: {self.variables.get('primary')};
-            selection-color: white;
-            color: {self.variables.get('text_primary')};
-            padding: 4px;
-            outline: none;
-        }}
-
-        QComboBox QAbstractItemView::item {{
-            min-height: 24px;
-            padding: 4px;
-            border: none;
-        }}
-
-        QComboBox QAbstractItemView::item:hover {{
-            background-color: {self.variables.get('surface_raised')};
-        }}
-
-        QComboBox QAbstractItemView::item:selected {{
-            background-color: {self.variables.get('primary')};
         }}
 
         QLineEdit:focus, QSpinBox:focus, QDateTimeEdit:focus {{
             border-color: {self.variables.get('border_focus')};
             background-color: #1a1a1a;
+        }}
+
+        QComboBox:focus {{
+            border-color: {self.variables.get('border_focus')};
+            background-color: #1a1a1a;
+        }}
+
+        /* ComboBox styling */
+        QComboBox::drop-down {{
+            border: none;
+            width: 20px;
+        }}
+
+        QComboBox::down-arrow {{
+            image: none;
+            border-style: solid;
+            border-width: 4px;
+            border-color: transparent;
+            border-top-color: {self.variables.get('text_secondary')};
+            margin-right: 6px;
+            margin-top: 4px;
+        }}
+
+        QComboBox:hover::down-arrow {{
+            border-top-color: {self.variables.get('text_primary')};
         }}
 
         /* List widgets */
