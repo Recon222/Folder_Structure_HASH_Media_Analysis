@@ -40,6 +40,8 @@ class TemplateSelector(QWidget):
         self.template_combo.setMinimumWidth(250)
         self.template_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.template_combo.setToolTip("Select folder structure template for current agency")
+        # Force non-native rendering to prevent white border issue
+        self.template_combo.setFrame(False)  # Disable native frame
         layout.addWidget(self.template_combo, 1)
         
         # Settings button with menu

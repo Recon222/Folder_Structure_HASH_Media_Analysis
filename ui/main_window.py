@@ -28,7 +28,7 @@ from ui.components import FormPanel, FilesPanel, LogConsole
 from ui.components.error_notification_system import ErrorNotificationManager
 from core.exceptions import UIError, ErrorSeverity
 from core.error_handler import handle_error
-from ui.styles import CarolinaBlueTheme
+from ui.styles.adobe_theme import AdobeTheme
 from ui.dialogs import ZipSettingsDialog, AboutDialog, UserSettingsDialog
 from ui.tabs import ForensicTab, HashingTab
 from ui.tabs.batch_tab import BatchTab
@@ -256,8 +256,9 @@ class MainWindow(QMainWindow):
         debug_menu.addAction(test_critical_action)
         
     def _apply_theme(self):
-        """Apply Carolina Blue theme"""
-        self.setStyleSheet(CarolinaBlueTheme.get_stylesheet())
+        """Apply Adobe-inspired professional theme"""
+        theme = AdobeTheme()
+        self.setStyleSheet(theme.get_stylesheet())
         
     def _load_settings(self):
         """Load saved settings"""
