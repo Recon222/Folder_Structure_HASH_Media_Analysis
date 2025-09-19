@@ -61,12 +61,12 @@ class VehicleTrackingService(BaseService, IVehicleTrackingService):
     
     # CSV column mappings (can be configured)
     DEFAULT_COLUMN_MAPPINGS = {
-        'latitude': ['latitude', 'lat', 'Latitude', 'LAT', 'GPS_Latitude'],
-        'longitude': ['longitude', 'lon', 'lng', 'Longitude', 'LON', 'LNG', 'GPS_Longitude'],
-        'timestamp': ['timestamp', 'time', 'datetime', 'Timestamp', 'TIME', 'DateTime'],
-        'speed': ['speed', 'speed_kmh', 'Speed', 'SPEED', 'Speed_KMH'],
-        'altitude': ['altitude', 'alt', 'elevation', 'Altitude', 'ALT'],
-        'heading': ['heading', 'bearing', 'direction', 'Heading', 'HEADING']
+        'latitude': ['latitude', 'lat', 'Latitude', 'LAT', 'GPS_Latitude', 'gps_lat'],
+        'longitude': ['longitude', 'lon', 'lng', 'Longitude', 'LON', 'LNG', 'GPS_Longitude', 'long', 'gps_lon'],
+        'timestamp': ['timestamp', 'time', 'datetime', 'Timestamp', 'TIME', 'DateTime', 'date_time', 'gps_time'],
+        'speed': ['speed', 'speed_kmh', 'Speed', 'SPEED', 'Speed_KMH', 'velocity'],
+        'altitude': ['altitude', 'alt', 'elevation', 'Altitude', 'ALT', 'height'],
+        'heading': ['heading', 'bearing', 'direction', 'Heading', 'HEADING', 'BEARING', 'course']
     }
     
     def __init__(self):
@@ -227,16 +227,28 @@ class VehicleTrackingService(BaseService, IVehicleTrackingService):
                 source_file=file_path
             )
             
-            with open(file_path, 'r', encoding='utf-8') as csvfile:
-                # Detect delimiter
+            with open(file_path, 'r', encoding='utf-8-sig') as csvfile:
+                # Detect delimiter (handle both comma and tab)
                 sample = csvfile.read(1024)
                 csvfile.seek(0)
-                sniffer = csv.Sniffer()
-                delimiter = sniffer.sniff(sample).delimiter
-                
+
+                # Try tab first since it's common for GPS data
+                if '\t' in sample:
+                    delimiter = '\t'
+                else:
+                    try:
+                        sniffer = csv.Sniffer()
+                        delimiter = sniffer.sniff(sample).delimiter
+                    except:
+                        delimiter = ','
+
                 reader = csv.DictReader(csvfile, delimiter=delimiter)
-                
-                # Map columns
+
+                # Clean fieldnames (remove BOM and strip whitespace)
+                if reader.fieldnames:
+                    reader.fieldnames = [field.strip() for field in reader.fieldnames]
+
+                # Map columns (case-insensitive)
                 column_mapping = self._detect_columns(reader.fieldnames)
                 if not column_mapping:
                     return Result.error(
@@ -286,60 +298,90 @@ class VehicleTrackingService(BaseService, IVehicleTrackingService):
             )
     
     def _detect_columns(self, columns: List[str]) -> Dict[str, str]:
-        """Detect column mappings from CSV headers"""
+        """Detect column mappings from CSV headers (case-insensitive)"""
         mapping = {}
-        
+
+        # Make columns lowercase for comparison
+        columns_lower = {col.lower(): col for col in columns if col}
+
         for field, possible_names in self.DEFAULT_COLUMN_MAPPINGS.items():
-            for col in columns:
-                if col in possible_names:
-                    mapping[field] = col
+            for possible_name in possible_names:
+                if possible_name.lower() in columns_lower:
+                    # Store the actual column name, not the lowercase version
+                    mapping[field] = columns_lower[possible_name.lower()]
                     break
-        
+
         # Check required fields
         if 'latitude' in mapping and 'longitude' in mapping and 'timestamp' in mapping:
+            logger.info(f"Column mapping detected: {mapping}")
             return mapping
-        
+
+        # Log what was missing for debugging
+        missing = []
+        if 'latitude' not in mapping:
+            missing.append('latitude')
+        if 'longitude' not in mapping:
+            missing.append('longitude')
+        if 'timestamp' not in mapping:
+            missing.append('timestamp')
+
+        logger.warning(f"Missing required columns: {missing}. Available columns: {columns}")
         return None
     
     def _create_gps_point(self, row: Dict[str, Any], column_mapping: Dict[str, str]) -> Optional[GPSPoint]:
         """Create GPSPoint from CSV row"""
         try:
-            # Required fields
-            lat = float(row[column_mapping['latitude']])
-            lon = float(row[column_mapping['longitude']])
-            
+            # Required fields - skip rows with empty lat/lon
+            lat_str = row.get(column_mapping['latitude'], '').strip()
+            lon_str = row.get(column_mapping['longitude'], '').strip()
+
+            if not lat_str or not lon_str:
+                return None
+
+            lat = float(lat_str)
+            lon = float(lon_str)
+
             # Parse timestamp
-            timestamp_str = row[column_mapping['timestamp']]
+            timestamp_str = row.get(column_mapping['timestamp'], '').strip()
+            if not timestamp_str:
+                return None
+
             timestamp = self._parse_timestamp(timestamp_str)
-            
+
             if not timestamp:
                 return None
-            
+
             # Create GPS point
             point = GPSPoint(
                 latitude=lat,
                 longitude=lon,
                 timestamp=timestamp
             )
-            
+
             # Optional fields
             if 'speed' in column_mapping and column_mapping['speed'] in row:
-                try:
-                    point.speed_kmh = float(row[column_mapping['speed']])
-                except (ValueError, TypeError):
-                    pass
-            
+                speed_str = row[column_mapping['speed']].strip()
+                if speed_str and speed_str != '':
+                    try:
+                        point.speed_kmh = float(speed_str)
+                    except (ValueError, TypeError):
+                        pass
+
             if 'altitude' in column_mapping and column_mapping['altitude'] in row:
-                try:
-                    point.altitude = float(row[column_mapping['altitude']])
-                except (ValueError, TypeError):
-                    pass
-            
+                alt_str = row[column_mapping['altitude']].strip()
+                if alt_str and alt_str != '':
+                    try:
+                        point.altitude = float(alt_str)
+                    except (ValueError, TypeError):
+                        pass
+
             if 'heading' in column_mapping and column_mapping['heading'] in row:
-                try:
-                    point.heading = float(row[column_mapping['heading']])
-                except (ValueError, TypeError):
-                    pass
+                heading_str = row[column_mapping['heading']].strip()
+                if heading_str and heading_str != '':
+                    try:
+                        point.heading = float(heading_str)
+                    except (ValueError, TypeError):
+                        pass
             
             return point
             
@@ -351,21 +393,36 @@ class VehicleTrackingService(BaseService, IVehicleTrackingService):
         """Parse timestamp string to datetime"""
         # Try common formats
         formats = [
+            '%Y-%m-%d %H:%M',  # Your format: 2024-11-09 15:26
             '%Y-%m-%d %H:%M:%S',
             '%Y-%m-%d %H:%M:%S.%f',
             '%Y/%m/%d %H:%M:%S',
+            '%Y/%m/%d %H:%M',
             '%m/%d/%Y %H:%M:%S',
+            '%m/%d/%Y %H:%M',
             '%d/%m/%Y %H:%M:%S',
+            '%d/%m/%Y %H:%M',
             '%Y-%m-%dT%H:%M:%S',
             '%Y-%m-%dT%H:%M:%S.%fZ',
+            '%Y-%m-%dT%H:%M:%SZ',
         ]
-        
+
+        # Clean up the timestamp string
+        timestamp_str = timestamp_str.strip()
+
         for fmt in formats:
             try:
                 return datetime.strptime(timestamp_str, fmt)
             except ValueError:
                 continue
-        
+
+        # Try parsing with dateutil if available
+        try:
+            from dateutil import parser
+            return parser.parse(timestamp_str)
+        except:
+            pass
+
         logger.debug(f"Could not parse timestamp: {timestamp_str}")
         return None
     

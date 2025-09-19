@@ -30,7 +30,7 @@ from vehicle_tracking.ui.components.vehicle_map_widget import VehicleMapWidget
 from core.models import FormData
 from core.result_types import Result
 from core.logger import logger
-from core.exceptions import UIError, ErrorSeverity
+from core.exceptions import UIError, ErrorSeverity, FSAError
 from core.error_handler import handle_error
 
 
@@ -73,6 +73,7 @@ class VehicleTrackingTab(QWidget):
         self.selected_files: List[Path] = []
         self.current_mode = TrackingMode.ANIMATION
         self.map_window: Optional[QWidget] = None
+        self.tauri_bridge = None  # Reference to keep bridge alive
 
         # Settings
         self.tracking_settings = VehicleTrackingSettings()
@@ -614,15 +615,49 @@ class VehicleTrackingTab(QWidget):
 
     def _start_tracking(self):
         """Start vehicle tracking with selected analysis"""
-        # Implementation will connect to controller
+        if not self.selected_files:
+            self.output_console.append_message("No files selected for tracking", "error")
+            return
+
+        # Disable UI during operation
+        self._set_ui_enabled(False)
         self.output_console.append_message("Starting vehicle tracking...", "info")
-        # TODO: Implement actual tracking logic
+
+        # Gather settings from UI
+        settings = self._gather_current_settings()
+
+        # Start the workflow
+        result = self.controller.start_vehicle_tracking_workflow(
+            file_paths=self.selected_files,
+            settings=settings,
+            use_worker=True
+        )
+
+        if result.success:
+            self.current_worker = result.value
+            self.operation_active = True
+
+            # Connect worker signals
+            self.current_worker.progress_update.connect(self._on_progress_update)
+            self.current_worker.result_ready.connect(self._on_tracking_complete)
+            self.current_worker.error_occurred.connect(self._on_tracking_error)
+
+            self.output_console.append_message(
+                f"Processing {len(self.selected_files)} vehicle files...",
+                "progress"
+            )
+        else:
+            self.output_console.append_message(
+                f"Failed to start tracking: {result.error.user_message}",
+                "error"
+            )
+            self._set_ui_enabled(True)
 
     def _open_map_window(self):
         """Open the map visualization window"""
         if self.last_results:
-            self.map_window = VehicleMapWindow(self.last_results)
-            self.map_window.show()
+            # Use Tauri for visualization
+            self._open_map_with_tauri()
 
     def _export_results(self):
         """Export analysis results"""
@@ -633,6 +668,205 @@ class VehicleTrackingTab(QWidget):
         """Cancel current operation"""
         if self.current_worker:
             self.current_worker.cancel()
+            self.output_console.append_message("Cancelling operation...", "warning")
+
+    def _gather_current_settings(self) -> VehicleTrackingSettings:
+        """Gather current settings from UI controls"""
+        settings = VehicleTrackingSettings()
+
+        # Animation settings
+        settings.show_trails = self.show_trails_check.isChecked()
+        settings.animate_movement = self.animate_movement_check.isChecked()
+        settings.show_timestamps = self.show_timestamps_check.isChecked()
+        settings.auto_center = self.auto_center_check.isChecked()
+
+        # Speed settings
+        speed_map = {"0.5x": 0.5, "1x": 1.0, "2x": 2.0, "5x": 5.0, "10x": 10.0}
+        settings.playback_speed = speed_map.get(self.speed_combo.currentText(), 1.0)
+
+        # Trail settings
+        trail_map = {
+            "5 seconds": 5, "10 seconds": 10, "30 seconds": 30,
+            "1 minute": 60, "Full": -1
+        }
+        settings.trail_length = trail_map.get(self.trail_combo.currentText(), 30)
+
+        # Interpolation settings
+        interp_map = {
+            "Linear": InterpolationMethod.LINEAR,
+            "Cubic": InterpolationMethod.CUBIC,
+            "Geodesic": InterpolationMethod.GEODESIC
+        }
+        settings.interpolation_method = interp_map.get(
+            self.interpolation_combo.currentText(),
+            InterpolationMethod.LINEAR
+        )
+
+        # Interpolation interval
+        interval_map = {
+            "0.5 seconds": 0.5, "1 second": 1.0,
+            "2 seconds": 2.0, "5 seconds": 5.0
+        }
+        settings.interpolation_interval = interval_map.get(
+            self.interval_combo.currentText(), 1.0
+        )
+
+        settings.interpolation_enabled = True
+        settings.smooth_transitions = self.smooth_path_check.isChecked()
+
+        # Analysis-specific settings based on current mode
+        if self.current_mode == TrackingMode.COLOCATION:
+            radius_map = {"50 meters": 50, "100 meters": 100, "200 meters": 200, "500 meters": 500}
+            settings.colocation_radius = radius_map.get(self.coloc_radius_combo.currentText(), 50)
+
+        elif self.current_mode == TrackingMode.IDLE:
+            settings.idle_speed_threshold = self.idle_speed_spin.value()
+
+        elif self.current_mode == TrackingMode.TIMEJUMP:
+            gap_map = {"5 minutes": 5, "15 minutes": 15, "30 minutes": 30, "1 hour": 60}
+            settings.time_gap_threshold = gap_map.get(self.gap_threshold_combo.currentText(), 15)
+
+        return settings
+
+    def _on_progress_update(self, progress: int, message: str):
+        """Handle progress updates from worker"""
+        self.progress_bar.setValue(progress)
+        self.progress_label.setText(message)
+        self.progress_bar.setVisible(True)
+        self.progress_label.setVisible(True)
+
+        # Log significant progress
+        if progress % 20 == 0 or progress >= 95:
+            self.output_console.append_message(f"[{progress}%] {message}", "progress")
+
+    def _on_tracking_complete(self, result: Result):
+        """Handle tracking completion"""
+        self.operation_active = False
+        self._set_ui_enabled(True)
+        self.progress_bar.setVisible(False)
+        self.progress_label.setVisible(False)
+
+        if result.success:
+            self.last_results = result.value
+            self.view_map_btn.setEnabled(True)
+
+            # Show success message
+            vehicles_count = len(result.value.vehicle_data) if result.value.vehicle_data else 0
+            points_count = result.value.total_points_processed
+            self.output_console.append_message(
+                f"✓ Successfully processed {vehicles_count} vehicles with {points_count:,} GPS points",
+                "success"
+            )
+
+            # Auto-open map if animation mode
+            if self.current_mode == TrackingMode.ANIMATION and self.auto_center_check.isChecked():
+                self._open_map_with_tauri()
+        else:
+            self.output_console.append_message(
+                f"✗ Tracking failed: {result.error.user_message}",
+                "error"
+            )
+
+    def _on_tracking_error(self, error: FSAError):
+        """Handle tracking errors"""
+        self.operation_active = False
+        self._set_ui_enabled(True)
+        self.progress_bar.setVisible(False)
+        self.progress_label.setVisible(False)
+
+        self.output_console.append_message(
+            f"✗ Error: {error.user_message}",
+            "error"
+        )
+
+    def _set_ui_enabled(self, enabled: bool):
+        """Enable/disable UI during operations"""
+        self.add_files_btn.setEnabled(enabled)
+        self.add_folder_btn.setEnabled(enabled)
+        self.clear_btn.setEnabled(enabled)
+        self.track_btn.setEnabled(enabled and len(self.selected_files) > 0)
+        self.cancel_btn.setEnabled(not enabled)
+        self.export_btn.setEnabled(enabled and self.last_results is not None)
+        self.analysis_tabs.setEnabled(enabled)
+
+    def _open_map_with_tauri(self):
+        """Open Tauri map and send vehicle data"""
+        if not self.last_results or not self.last_results.vehicle_data:
+            self.output_console.append_message("No vehicle data to display", "warning")
+            return
+
+        try:
+            # Import here to avoid circular dependency
+            from vehicle_tracking.services.tauri_bridge_service import TauriBridgeService
+
+            # Start Tauri bridge
+            self.output_console.append_message("Launching map visualization...", "info")
+            bridge = TauriBridgeService()
+            bridge_result = bridge.start()
+
+            if bridge_result.success:
+                # Convert data to JavaScript format
+                vehicle_data_js = self._convert_to_js_format(self.last_results)
+
+                # Send data to map
+                send_result = bridge.send_vehicle_data(vehicle_data_js)
+
+                if send_result.success:
+                    self.output_console.append_message(
+                        "✓ Map opened with vehicle data",
+                        "success"
+                    )
+                    # Store bridge reference to keep it alive
+                    self.tauri_bridge = bridge
+                else:
+                    self.output_console.append_message(
+                        f"Failed to send data to map: {send_result.error}",
+                        "error"
+                    )
+            else:
+                self.output_console.append_message(
+                    f"Failed to launch map: {bridge_result.error}",
+                    "error"
+                )
+
+        except Exception as e:
+            self.output_console.append_message(
+                f"Error opening map: {str(e)}",
+                "error"
+            )
+
+    def _convert_to_js_format(self, tracking_result: VehicleTrackingResult) -> Dict[str, Any]:
+        """Convert tracking result to JavaScript-compatible format"""
+        js_data = {
+            "vehicles": []
+        }
+
+        # Convert each vehicle
+        for vehicle in tracking_result.vehicle_data:
+            vehicle_obj = {
+                "id": vehicle.vehicle_id,
+                "label": vehicle.label or vehicle.vehicle_id,
+                "color": vehicle.color.value if vehicle.color else "#0099ff",
+                "gps_points": [
+                    {
+                        "latitude": point.latitude,
+                        "longitude": point.longitude,
+                        "timestamp": point.timestamp.isoformat() if hasattr(point.timestamp, 'isoformat') else str(point.timestamp),
+                        "speed": point.speed_kmh or 0,
+                        "altitude": point.altitude or 0,
+                        "heading": point.heading or 0
+                    }
+                    for point in vehicle.gps_points
+                ]
+            }
+            js_data["vehicles"].append(vehicle_obj)
+
+        # Add timeline info from animation data
+        if tracking_result.animation_data:
+            js_data["startTime"] = tracking_result.animation_data.timeline_start.isoformat()
+            js_data["endTime"] = tracking_result.animation_data.timeline_end.isoformat()
+
+        return js_data
 
 
 class VehicleFilesPanel(QGroupBox):
