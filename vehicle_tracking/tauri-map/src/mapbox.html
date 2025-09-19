@@ -1,0 +1,2530 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vehicle Tracking - Mapbox GL JS</title>
+    
+    <!-- Mapbox GL JS CSS -->
+    <link href="https://api.mapbox.com/mapbox-gl-js/v3.0.1/mapbox-gl.css" rel="stylesheet">
+    
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        html, body {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+            overflow: hidden;
+        }
+        
+        #map {
+            height: 100%;
+            width: 100%;
+            position: relative;
+        }
+        
+        /* Token Modal */
+        .token-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 3000;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.3s ease, visibility 0.3s ease;
+        }
+
+        .token-modal.show {
+            opacity: 1 !important;
+            visibility: visible !important;
+            display: flex !important;
+        }
+
+        .token-modal-content {
+            background: white;
+            padding: 32px;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            max-width: 480px;
+            width: 90%;
+            transform: translateY(20px);
+            transition: transform 0.3s ease;
+        }
+
+        .token-modal.show .token-modal-content {
+            transform: translateY(0);
+        }
+
+        .token-modal h2 {
+            margin: 0 0 16px 0;
+            color: #1a1a1a;
+            font-size: 24px;
+        }
+
+        .token-modal p {
+            color: #666;
+            margin: 0 0 24px 0;
+            line-height: 1.5;
+        }
+
+        .token-modal input {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e5e5e5;
+            border-radius: 8px;
+            font-size: 14px;
+            font-family: 'Monaco', 'Menlo', monospace;
+            transition: border-color 0.2s;
+            margin-bottom: 8px;
+        }
+
+        .token-modal input:focus {
+            outline: none;
+            border-color: #0066CC;
+        }
+
+        .token-modal input.error {
+            border-color: #ef4444;
+        }
+
+        .token-modal-hint {
+            font-size: 12px;
+            color: #999;
+            margin-bottom: 20px;
+        }
+
+        .token-modal-buttons {
+            display: flex;
+            gap: 12px;
+            justify-content: flex-end;
+        }
+
+        .token-modal button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .token-modal .btn-save {
+            background: #0066CC;
+            color: white;
+        }
+
+        .token-modal .btn-save:hover {
+            background: #0052A3;
+        }
+
+        .token-modal .btn-save:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .token-modal .btn-clear {
+            background: #f5f5f5;
+            color: #666;
+        }
+
+        .token-modal .btn-clear:hover {
+            background: #e5e5e5;
+        }
+
+        .token-modal-error {
+            color: #ef4444;
+            font-size: 13px;
+            margin-top: 8px;
+            display: none;
+        }
+
+        .token-modal-error.show {
+            display: block;
+        }
+
+        /* Error notification */
+        .error-notification {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #ef4444;
+            color: white;
+            padding: 12px 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            z-index: 2000;
+            display: none;
+            animation: slideDown 0.3s ease-out;
+            max-width: 80%;
+            word-wrap: break-word;
+        }
+
+        @keyframes slideDown {
+            from {
+                transform: translateX(-50%) translateY(-100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(-50%) translateY(0);
+                opacity: 1;
+            }
+        }
+
+        .error-notification.show {
+            display: block;
+        }
+        
+        /* Vehicle info panel */
+        .vehicle-panel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(255, 255, 255, 0.92);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            padding: 20px;
+            border-radius: 16px;
+            box-shadow: 
+                0 4px 6px rgba(0, 0, 0, 0.07),
+                0 10px 15px rgba(0, 0, 0, 0.1),
+                inset 0 1px 0 rgba(255, 255, 255, 0.1);
+            z-index: 1000;
+            min-width: 280px;
+            max-width: 320px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            transition: opacity 0.3s ease;
+        }
+
+        .vehicle-panel.disabled {
+            opacity: 0.5;
+            pointer-events: none;
+        }
+        
+        .vehicle-panel h3 {
+            margin: 0 0 16px 0;
+            font-size: 18px;
+            font-weight: 600;
+            color: #1a1a1a;
+            letter-spacing: -0.01em;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        /* Stats grid */
+        .vehicle-stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+        
+        .stat-card {
+            background: rgba(0, 0, 0, 0.02);
+            padding: 12px;
+            border-radius: 10px;
+            border: 1px solid rgba(0, 0, 0, 0.04);
+        }
+        
+        .stat-label {
+            color: #6b7280;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            font-weight: 500;
+            margin-bottom: 4px;
+        }
+        
+        .stat-value {
+            font-weight: 600;
+            color: #111827;
+            font-size: 16px;
+            font-variant-numeric: tabular-nums;
+        }
+        
+        /* Vehicle list */
+        .vehicle-list {
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid rgba(0, 0, 0, 0.06);
+            max-height: 300px;
+            overflow-y: auto;
+            overflow-x: hidden;
+        }
+        
+        .vehicle-list::-webkit-scrollbar {
+            width: 6px;
+        }
+        
+        .vehicle-list::-webkit-scrollbar-track {
+            background: rgba(0, 0, 0, 0.02);
+            border-radius: 3px;
+        }
+        
+        .vehicle-list::-webkit-scrollbar-thumb {
+            background: rgba(0, 0, 0, 0.15);
+            border-radius: 3px;
+        }
+        
+        .vehicle-list::-webkit-scrollbar-thumb:hover {
+            background: rgba(0, 0, 0, 0.25);
+        }
+
+        .vehicle-list-empty {
+            text-align: center;
+            color: #9ca3af;
+            font-size: 14px;
+            padding: 20px 0;
+        }
+        
+        .vehicle-item {
+            display: flex;
+            align-items: center;
+            padding: 10px;
+            margin-bottom: 4px;
+            cursor: pointer;
+            border-radius: 8px;
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+        }
+        
+        .vehicle-item:hover {
+            background: rgba(59, 130, 246, 0.08);
+            transform: translateX(4px);
+        }
+        
+        .vehicle-item.active {
+            background: linear-gradient(135deg, rgba(59, 130, 246, 0.15) 0%, rgba(147, 51, 234, 0.15) 100%);
+            border-left: 3px solid #3b82f6;
+            padding-left: 7px;
+        }
+        
+        .vehicle-color {
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            margin-right: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            color: white;
+            font-size: 14px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            flex-shrink: 0;
+        }
+        
+        .vehicle-info {
+            flex: 1;
+            min-width: 0;
+        }
+        
+        .vehicle-name {
+            font-weight: 600;
+            color: #1f2937;
+            font-size: 14px;
+            margin-bottom: 2px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        .vehicle-detail {
+            color: #6b7280;
+            font-size: 12px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        /* Timeline Control */
+        .timeline-control {
+            position: absolute;
+            bottom: 40px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-radius: 12px;
+            padding: 16px 20px;
+            box-shadow: 
+                0 4px 6px rgba(0, 0, 0, 0.07),
+                0 10px 15px rgba(0, 0, 0, 0.1);
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            min-width: 600px;
+            border: 1px solid rgba(0, 0, 0, 0.06);
+            transition: opacity 0.3s ease;
+        }
+
+        .timeline-control.disabled {
+            opacity: 0.5;
+            pointer-events: none;
+        }
+
+        .timeline-control.hidden {
+            display: none;
+        }
+        
+        /* Control buttons */
+        .control-btn {
+            width: 40px;
+            height: 40px;
+            border: none;
+            background: white;
+            border-radius: 50%;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            color: #374151;
+            position: relative;
+        }
+        
+        .control-btn:hover:not(:disabled) {
+            transform: scale(1.1);
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+            background: #f3f4f6;
+        }
+        
+        .control-btn:active:not(:disabled) {
+            transform: scale(0.95);
+        }
+        
+        .control-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+        
+        .control-btn.playing {
+            background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+            color: white;
+        }
+        
+        /* Timeline slider */
+        .timeline-slider {
+            flex: 1;
+            position: relative;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            min-width: 200px;
+        }
+        
+        .timeline-track {
+            width: 100%;
+            height: 6px;
+            background: #e5e7eb;
+            border-radius: 3px;
+            position: relative;
+            cursor: pointer;
+        }
+        
+        .timeline-progress {
+            height: 100%;
+            background: linear-gradient(90deg, #3b82f6 0%, #8b5cf6 100%);
+            border-radius: 3px;
+            transition: none; /* Disable transition for smooth animation */
+            position: relative;
+            will-change: width;
+        }
+        
+        .timeline-thumb {
+            position: absolute;
+            right: -8px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 16px;
+            height: 16px;
+            background: white;
+            border: 3px solid #3b82f6;
+            border-radius: 50%;
+            cursor: grab;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+            transition: transform 0.1s;
+        }
+        
+        .timeline-thumb:hover {
+            transform: translateY(-50%) scale(1.2);
+        }
+        
+        .timeline-thumb.dragging {
+            cursor: grabbing;
+            transform: translateY(-50%) scale(1.1);
+        }
+        
+        /* Time display */
+        .time-display {
+            background: rgba(0, 0, 0, 0.03);
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+            font-size: 13px;
+            color: #4b5563;
+            min-width: 140px;
+            text-align: center;
+            font-variant-numeric: tabular-nums;
+        }
+        
+        /* Speed selector */
+        .speed-selector {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px;
+            background: rgba(0, 0, 0, 0.03);
+            border-radius: 8px;
+        }
+        
+        .speed-option {
+            padding: 6px 10px;
+            border: none;
+            background: transparent;
+            color: #6b7280;
+            cursor: pointer;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 500;
+            transition: all 0.15s;
+        }
+        
+        .speed-option:hover:not(:disabled) {
+            background: rgba(0, 0, 0, 0.06);
+            color: #374151;
+        }
+
+        .speed-option:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+        
+        .speed-option.active {
+            background: #3b82f6;
+            color: white;
+        }
+        
+        /* Loading overlay */
+        .loading-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 3000;
+            transition: opacity 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        
+        .loading-overlay.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+        
+        .loading-content {
+            text-align: center;
+            color: white;
+        }
+        
+        .loading-spinner {
+            width: 60px;
+            height: 60px;
+            margin: 0 auto 24px;
+            border: 3px solid rgba(255, 255, 255, 0.2);
+            border-top: 3px solid white;
+            border-radius: 50%;
+            animation: spin 1s cubic-bezier(0.68, -0.55, 0.265, 1.55) infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .loading-text {
+            color: white;
+            font-size: 18px;
+            font-weight: 300;
+            letter-spacing: 0.02em;
+        }
+
+        /* WebGL Context Lost overlay */
+        .context-lost-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 2500;
+        }
+
+        .context-lost-overlay.show {
+            display: flex;
+        }
+
+        .context-lost-content {
+            text-align: center;
+            padding: 40px;
+        }
+
+        .context-lost-content h2 {
+            margin: 0 0 16px 0;
+            font-size: 24px;
+        }
+
+        .context-lost-content p {
+            margin: 0;
+            opacity: 0.8;
+        }
+
+        /* Mapbox popup styling */
+        .mapboxgl-popup-content {
+            border-radius: 12px;
+            padding: 16px;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+            max-width: 280px;
+        }
+
+        .mapboxgl-popup-close-button {
+            font-size: 18px;
+            padding: 8px;
+        }
+        
+        .popup-header {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #111827;
+        }
+        
+        .popup-info {
+            font-size: 14px;
+            color: #4b5563;
+            line-height: 1.5;
+        }
+        
+        .popup-info strong {
+            color: #1f2937;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <!-- Map container -->
+    <div id="map">
+        <div id="map-loading" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: white; font-size: 18px; z-index: 1;">Initializing Map...</div>
+    </div>
+
+    <!-- Error notification -->
+    <div id="error-notification" class="error-notification"></div>
+
+    <!-- Token Modal -->
+    <div id="tokenModal" class="token-modal" style="display: none;">
+        <div class="token-modal-content">
+            <h2>Mapbox Access Token Required</h2>
+            <p>Please enter your Mapbox access token to use the vehicle tracking map. The token will be stored locally for future use.</p>
+
+            <input type="text"
+                   id="tokenInput"
+                   placeholder="pk.eyJ1IjoiZXhhbXBsZSIsImEiOiJjaXJxc3d0..."
+                   autocomplete="off"
+                   spellcheck="false">
+
+            <div class="token-modal-hint">
+                Get your token from <a href="https://account.mapbox.com/access-tokens/" target="_blank" style="color: #0066CC;">mapbox.com</a>
+            </div>
+
+            <div class="token-modal-error" id="tokenError"></div>
+
+            <div class="token-modal-buttons">
+                <button class="btn-clear" onclick="tokenModalManager.clearToken()">Clear Stored</button>
+                <button class="btn-save" id="saveTokenBtn" onclick="tokenModalManager.saveToken()">Save Token</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- WebGL Context Lost overlay -->
+    <div id="context-lost" class="context-lost-overlay">
+        <div class="context-lost-content">
+            <h2>⚠️ Graphics Context Lost</h2>
+            <p>The map is recovering. Please wait...</p>
+        </div>
+    </div>
+    
+    <!-- Vehicle info panel -->
+    <div class="vehicle-panel" id="vehicle-panel">
+        <h3>
+            <span>🚗</span>
+            <span>Vehicle Tracking</span>
+        </h3>
+        <div class="vehicle-stats">
+            <div class="stat-card">
+                <div class="stat-label">Active Vehicles</div>
+                <div class="stat-value" id="active-count">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Total Points</div>
+                <div class="stat-value" id="point-count">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Current Speed</div>
+                <div class="stat-value" id="current-speed">-- km/h</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Time Range</div>
+                <div class="stat-value" id="time-range">--</div>
+            </div>
+        </div>
+        <div class="vehicle-list" id="vehicle-list">
+            <div class="vehicle-list-empty">No vehicles loaded</div>
+        </div>
+    </div>
+    
+    <!-- Timeline Control -->
+    <div class="timeline-control hidden" id="timeline-control">
+        <button class="control-btn" id="play-btn" title="Play">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M8 5v14l11-7z"/>
+            </svg>
+        </button>
+        
+        <button class="control-btn" id="pause-btn" title="Pause" style="display: none;">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z"/>
+            </svg>
+        </button>
+        
+        <button class="control-btn" id="stop-btn" title="Stop">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M6 6h12v12H6z"/>
+            </svg>
+        </button>
+        
+        <div class="timeline-slider">
+            <div class="timeline-track" id="timeline-track">
+                <div class="timeline-progress" id="timeline-progress" style="width: 0%">
+                    <div class="timeline-thumb" id="timeline-thumb"></div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="time-display" id="time-display">--:--:--</div>
+        
+        <div class="speed-selector">
+            <button class="speed-option" data-speed="0.5">0.5x</button>
+            <button class="speed-option active" data-speed="1">1x</button>
+            <button class="speed-option" data-speed="2">2x</button>
+            <button class="speed-option" data-speed="4">4x</button>
+        </div>
+    </div>
+    
+    <!-- Loading Overlay -->
+    <div id="loading" class="loading-overlay">
+        <div class="loading-content">
+            <div class="loading-spinner"></div>
+            <div class="loading-text">Initializing map...</div>
+        </div>
+    </div>
+
+    <!-- Mapbox GL JS -->
+    <script src="https://api.mapbox.com/mapbox-gl-js/v3.0.1/mapbox-gl.js"></script>
+
+    <!-- Load WebSocket configuration (if exists) -->
+    <script src="ws-config.js" onerror="console.warn('[ws-config.js] Config file not found, will use fallback methods')"></script>
+    
+    <script>
+        'use strict';
+
+        // Global configuration
+        const CONFIG = {
+            mapboxToken: null,
+            defaultCenter: [-75.6972, 45.4215],
+            defaultZoom: 11,
+            animationFPS: 60,
+            trailLength: 100,
+            maxVehicles: 100,
+            maxPointsPerVehicle: 10000,
+            errorDisplayDuration: 5000,
+            debounceDelay: 100
+        };
+
+        // Token Modal Manager
+        const tokenModalManager = {
+            saveToken() {
+                const input = document.getElementById('tokenInput');
+                const errorDiv = document.getElementById('tokenError');
+                const modal = document.getElementById('tokenModal');
+                const token = input.value.trim();
+
+                // Clear previous error
+                errorDiv.classList.remove('show');
+                input.classList.remove('error');
+
+                // Validate token format
+                if (!token) {
+                    this.showError('Please enter a token');
+                    return;
+                }
+
+                if (!token.startsWith('pk.')) {
+                    this.showError('Token must start with "pk."');
+                    return;
+                }
+
+                if (token.length < 80) {
+                    this.showError('Token appears to be too short');
+                    return;
+                }
+
+                // Save to localStorage
+                localStorage.setItem('mapbox_token', token);
+                sessionStorage.removeItem('mapbox_token_temp');
+
+                // Update config and close modal
+                CONFIG.mapboxToken = token;
+                modal.classList.remove('show');
+
+                // Resolve the promise
+                if (window.tokenModalResolve) {
+                    window.tokenModalResolve(token);
+                }
+
+                // Reinitialize the map with the new token
+                if (window.vehicleMap && !window.vehicleMap.map) {
+                    window.vehicleMap.initializeMap();
+                }
+            },
+
+            clearToken() {
+                const input = document.getElementById('tokenInput');
+                const errorDiv = document.getElementById('tokenError');
+
+                // Clear stored token
+                localStorage.removeItem('mapbox_token');
+                sessionStorage.removeItem('mapbox_token_temp');
+
+                // Clear input
+                input.value = '';
+
+                // Clear errors
+                errorDiv.classList.remove('show');
+                input.classList.remove('error');
+
+                // Show confirmation
+                errorDiv.textContent = 'Stored token cleared';
+                errorDiv.style.color = '#10b981';
+                errorDiv.classList.add('show');
+
+                setTimeout(() => {
+                    errorDiv.classList.remove('show');
+                    errorDiv.style.color = '';
+                }, 2000);
+            },
+
+            showError(message) {
+                const input = document.getElementById('tokenInput');
+                const errorDiv = document.getElementById('tokenError');
+
+                input.classList.add('error');
+                errorDiv.textContent = message;
+                errorDiv.classList.add('show');
+            }
+        };
+
+        // Add keyboard support for token input
+        document.addEventListener('DOMContentLoaded', () => {
+            const input = document.getElementById('tokenInput');
+            if (input) {
+                input.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') {
+                        tokenModalManager.saveToken();
+                    } else if (e.key === 'Escape') {
+                        const modal = document.getElementById('tokenModal');
+                        modal.classList.remove('show');
+                        if (window.tokenModalReject) {
+                            window.tokenModalReject(new Error('Token input cancelled'));
+                        }
+                    }
+                });
+
+                // Save to sessionStorage on input for persistence during session
+                input.addEventListener('input', (e) => {
+                    sessionStorage.setItem('mapbox_token_temp', e.target.value);
+                });
+            }
+        });
+
+        // Production-ready Vehicle Map Implementation
+        class VehicleMapTemplate {
+            constructor() {
+                // State management
+                this.state = {
+                    isInitialized: false,
+                    isDestroyed: false,
+                    isPlaying: false,
+                    isDragging: false,
+                    contextLost: false,
+                    hasData: false,
+                    currentTime: null,
+                    startTime: null,
+                    endTime: null,
+                    playbackSpeed: 1,
+                    lastFrameTime: 0,
+                    lastError: null
+                };
+
+                // Data storage
+                this.vehicles = new Map();
+                this.vehicleColors = new Map();
+                this.activePopups = [];
+                
+                // Animation
+                this.animationFrame = null;
+                
+                // Map reference
+                this.map = null;
+                
+                // Bound event handlers for cleanup
+                this.boundHandlers = new Map();
+                
+                // Cleanup registry
+                this.cleanupTasks = [];
+                
+                // Performance monitoring
+                this.performanceMetrics = {
+                    frameCount: 0,
+                    lastFPSUpdate: 0,
+                    fps: 0
+                };
+
+                // Initialize
+                this.initialize();
+            }
+
+            // ============= INITIALIZATION =============
+
+            async initialize() {
+                try {
+                    console.log('[VehicleMapTemplate] Initializing...');
+                    
+                    // Wait for config
+                    await this.waitForConfig();
+                    
+                    // Initialize map
+                    this.initializeMap();
+                    
+                } catch (error) {
+                    this.handleError('Initialization failed', error, true);
+                }
+            }
+
+            async waitForConfig() {
+                console.log('[waitForConfig] Starting token configuration...');
+
+                // First check localStorage for saved token
+                const savedToken = localStorage.getItem('mapbox_token');
+                console.log('[waitForConfig] Saved token:', savedToken ? 'Found' : 'Not found');
+
+                if (savedToken && savedToken.startsWith('pk.')) {
+                    console.log('[waitForConfig] Using saved token from localStorage');
+                    CONFIG.mapboxToken = savedToken;
+                    return;
+                }
+
+                // In Tauri context, check for token from config
+                if (window.__TAURI__ && window.__TAURI__.invoke) {
+                    console.log('[waitForConfig] Running in Tauri context');
+                    try {
+                        const config = await window.__TAURI__.invoke('get_map_config');
+                        console.log('[waitForConfig] Tauri config:', config);
+                        if (config.mapboxToken) {
+                            CONFIG.mapboxToken = config.mapboxToken;
+                            return;
+                        }
+                    } catch (error) {
+                        console.warn('[waitForConfig] Failed to get config from Tauri:', error);
+                    }
+                } else if (window.__TAURI__) {
+                    console.log('[waitForConfig] Tauri object exists but invoke is not ready');
+                }
+
+                // Show modal to get token
+                console.log('[waitForConfig] Showing token modal...');
+                await this.showTokenModal();
+            }
+
+            showTokenModal() {
+                return new Promise((resolve, reject) => {
+                    // Ensure DOM is ready before trying to show modal
+                    const checkAndShowModal = () => {
+                        const modal = document.getElementById('tokenModal');
+                        const input = document.getElementById('tokenInput');
+                        const mapLoading = document.getElementById('map-loading');
+
+                        console.log('[showTokenModal] Modal element:', modal);
+                        console.log('[showTokenModal] Input element:', input);
+
+                        if (!modal) {
+                            // DOM might not be ready yet, try again
+                            if (document.readyState === 'loading') {
+                                console.log('[showTokenModal] DOM still loading, retrying in 100ms...');
+                                setTimeout(checkAndShowModal, 100);
+                                return;
+                            }
+                            console.error('[showTokenModal] Token modal element not found after DOM ready!');
+                            reject(new Error('Token modal element not found'));
+                            return;
+                        }
+
+                        window.tokenModalResolve = resolve;
+                        window.tokenModalReject = reject;
+
+                        if (!input) {
+                            console.error('[showTokenModal] Token input element not found!');
+                        }
+
+                        // Hide the loading message
+                        if (mapLoading) {
+                            mapLoading.style.display = 'none';
+                        }
+
+                        // Load any previously entered (but not saved) value
+                        const previousValue = sessionStorage.getItem('mapbox_token_temp');
+                        if (previousValue && input) {
+                            input.value = previousValue;
+                        }
+
+                        console.log('[showTokenModal] Showing modal with forced styles');
+                        modal.classList.add('show');
+
+                        // Force visibility with !important inline styles
+                        modal.style.cssText = 'display: flex !important; opacity: 1 !important; visibility: visible !important; position: fixed !important; z-index: 99999 !important; top: 0 !important; left: 0 !important; right: 0 !important; bottom: 0 !important; width: 100% !important; height: 100% !important;';
+
+                        console.log('[showTokenModal] Modal should now be visible with styles:', modal.style.cssText);
+
+                        if (input) {
+                            setTimeout(() => input.focus(), 100);
+                        }
+                    };
+
+                    checkAndShowModal();
+                });
+            }
+
+            initializeMap() {
+                try {
+                    if (!CONFIG.mapboxToken) {
+                        throw new Error('Invalid or missing Mapbox token');
+                    }
+
+                    if (this.state.isDestroyed) {
+                        console.warn('Cannot initialize - instance is destroyed');
+                        return;
+                    }
+
+                    mapboxgl.accessToken = CONFIG.mapboxToken;
+
+                    // Create map with error handling
+                    this.map = new mapboxgl.Map({
+                        container: 'map',
+                        style: 'mapbox://styles/mapbox/dark-v11',
+                        center: CONFIG.defaultCenter,
+                        zoom: CONFIG.defaultZoom,
+                        antialias: true,
+                        refreshExpiredTiles: false,
+                        trackResize: true,
+                        fadeDuration: 0 // Disable fade for performance
+                    });
+
+                    // Set up event listeners
+                    this.setupMapEventListeners();
+                    
+                    // Mark as initialized
+                    this.state.isInitialized = true;
+                    
+                } catch (error) {
+                    this.handleError('Map initialization failed', error, true);
+                }
+            }
+
+            setupMapEventListeners() {
+                // Map load event
+                const onLoad = () => {
+                    console.log('[VehicleMapTemplate] Map loaded successfully');
+                    this.setupMapLayers();
+                    this.setupControls();
+                    this.hideLoading();
+                    this.dispatchReadyEvent();
+                };
+
+                // Map error event
+                const onError = (e) => {
+                    this.handleError('Map error', e.error || e, false);
+                };
+
+                // WebGL context events
+                const canvas = this.map.getCanvas();
+                const onContextLost = (e) => {
+                    e.preventDefault();
+                    this.handleContextLost();
+                };
+                const onContextRestored = () => {
+                    this.handleContextRestored();
+                };
+
+                // Register events
+                this.map.once('load', onLoad);
+                this.map.on('error', onError);
+                canvas.addEventListener('webglcontextlost', onContextLost);
+                canvas.addEventListener('webglcontextrestored', onContextRestored);
+
+                // Register cleanup
+                this.registerCleanup(() => {
+                    this.map.off('error', onError);
+                    canvas.removeEventListener('webglcontextlost', onContextLost);
+                    canvas.removeEventListener('webglcontextrestored', onContextRestored);
+                });
+            }
+
+            setupMapLayers() {
+                try {
+                    if (!this.map || this.state.isDestroyed) return;
+
+                    // Vehicle trails source
+                    this.map.addSource('vehicle-trails', {
+                        type: 'geojson',
+                        data: {
+                            type: 'FeatureCollection',
+                            features: []
+                        }
+                    });
+
+                    // Trail lines layer
+                    this.map.addLayer({
+                        id: 'vehicle-trails-lines',
+                        type: 'line',
+                        source: 'vehicle-trails',
+                        paint: {
+                            'line-color': ['get', 'color'],
+                            'line-width': [
+                                'interpolate',
+                                ['linear'],
+                                ['zoom'],
+                                10, 2,
+                                15, 4
+                            ],
+                            'line-opacity': 0.6,
+                            'line-blur': 1
+                        },
+                        layout: {
+                            'line-cap': 'round',
+                            'line-join': 'round'
+                        }
+                    });
+
+                    // Vehicle positions source
+                    this.map.addSource('vehicle-positions', {
+                        type: 'geojson',
+                        data: {
+                            type: 'FeatureCollection',
+                            features: []
+                        }
+                    });
+
+                    // Vehicle markers layer
+                    this.map.addLayer({
+                        id: 'vehicle-markers',
+                        type: 'circle',
+                        source: 'vehicle-positions',
+                        paint: {
+                            'circle-radius': [
+                                'interpolate',
+                                ['linear'],
+                                ['zoom'],
+                                10, 6,
+                                15, 12
+                            ],
+                            'circle-color': ['get', 'color'],
+                            'circle-stroke-color': '#ffffff',
+                            'circle-stroke-width': 2,
+                            'circle-pitch-alignment': 'map'
+                        }
+                    });
+
+                    // Vehicle labels layer
+                    this.map.addLayer({
+                        id: 'vehicle-labels',
+                        type: 'symbol',
+                        source: 'vehicle-positions',
+                        layout: {
+                            'text-field': ['get', 'name'],
+                            'text-font': ['DIN Pro Medium', 'Arial Unicode MS Regular'],
+                            'text-size': 12,
+                            'text-offset': [0, 1.5],
+                            'text-anchor': 'top'
+                        },
+                        paint: {
+                            'text-color': '#ffffff',
+                            'text-halo-color': 'rgba(0, 0, 0, 0.7)',
+                            'text-halo-width': 1
+                        }
+                    });
+
+                    // Click handlers
+                    this.setupMapInteractions();
+
+                } catch (error) {
+                    this.handleError('Failed to setup map layers', error, false);
+                }
+            }
+
+            setupMapInteractions() {
+                // Click handler for vehicles
+                const onClick = (e) => {
+                    if (e.features && e.features.length > 0) {
+                        const feature = e.features[0];
+                        this.onVehicleClick(feature.properties.vehicle_id);
+                        this.showVehiclePopup(feature);
+                    }
+                };
+
+                // Cursor change on hover
+                const onMouseEnter = () => {
+                    this.map.getCanvas().style.cursor = 'pointer';
+                };
+
+                const onMouseLeave = () => {
+                    this.map.getCanvas().style.cursor = '';
+                };
+
+                this.map.on('click', 'vehicle-markers', onClick);
+                this.map.on('mouseenter', 'vehicle-markers', onMouseEnter);
+                this.map.on('mouseleave', 'vehicle-markers', onMouseLeave);
+
+                // Register cleanup
+                this.registerCleanup(() => {
+                    this.map.off('click', 'vehicle-markers', onClick);
+                    this.map.off('mouseenter', 'vehicle-markers', onMouseEnter);
+                    this.map.off('mouseleave', 'vehicle-markers', onMouseLeave);
+                });
+            }
+
+            // ============= CONTROLS SETUP =============
+
+            setupControls() {
+                try {
+                    // Play/Pause/Stop buttons
+                    this.setupPlaybackControls();
+                    
+                    // Timeline slider
+                    this.setupTimelineControls();
+                    
+                    // Speed selector
+                    this.setupSpeedControls();
+                    
+                } catch (error) {
+                    this.handleError('Failed to setup controls', error, false);
+                }
+            }
+
+            setupPlaybackControls() {
+                const playBtn = document.getElementById('play-btn');
+                const pauseBtn = document.getElementById('pause-btn');
+                const stopBtn = document.getElementById('stop-btn');
+
+                if (!playBtn || !pauseBtn || !stopBtn) {
+                    console.warn('Playback controls not found in DOM');
+                    return;
+                }
+
+                const onPlay = () => this.startAnimation();
+                const onPause = () => this.pauseAnimation();
+                const onStop = () => this.stopAnimation();
+
+                playBtn.addEventListener('click', onPlay);
+                pauseBtn.addEventListener('click', onPause);
+                stopBtn.addEventListener('click', onStop);
+
+                this.registerCleanup(() => {
+                    playBtn.removeEventListener('click', onPlay);
+                    pauseBtn.removeEventListener('click', onPause);
+                    stopBtn.removeEventListener('click', onStop);
+                });
+            }
+
+            setupTimelineControls() {
+                const timelineTrack = document.getElementById('timeline-track');
+                const timelineThumb = document.getElementById('timeline-thumb');
+
+                if (!timelineTrack || !timelineThumb) {
+                    console.warn('Timeline controls not found in DOM');
+                    return;
+                }
+
+                // Mouse handlers
+                const onMouseDown = (e) => {
+                    e.preventDefault();
+                    this.state.isDragging = true;
+                    timelineThumb.classList.add('dragging');
+                };
+
+                const onMouseMove = (e) => {
+                    if (this.state.isDragging) {
+                        this.updateTimeFromPosition(e.clientX);
+                    }
+                };
+
+                const onMouseUp = () => {
+                    if (this.state.isDragging) {
+                        this.state.isDragging = false;
+                        const thumb = document.getElementById('timeline-thumb');
+                        if (thumb) {
+                            thumb.classList.remove('dragging');
+                        }
+                    }
+                };
+
+                const onTrackClick = (e) => {
+                    if (!this.state.isDragging && e.target === timelineTrack) {
+                        this.updateTimeFromPosition(e.clientX);
+                    }
+                };
+
+                // Touch support
+                const onTouchStart = (e) => {
+                    e.preventDefault();
+                    this.state.isDragging = true;
+                    timelineThumb.classList.add('dragging');
+                };
+
+                const onTouchMove = (e) => {
+                    if (this.state.isDragging && e.touches.length > 0) {
+                        this.updateTimeFromPosition(e.touches[0].clientX);
+                    }
+                };
+
+                const onTouchEnd = () => {
+                    this.state.isDragging = false;
+                    timelineThumb.classList.remove('dragging');
+                };
+
+                // Add event listeners
+                timelineThumb.addEventListener('mousedown', onMouseDown);
+                timelineThumb.addEventListener('touchstart', onTouchStart);
+                timelineTrack.addEventListener('click', onTrackClick);
+
+                // Document-level listeners
+                document.addEventListener('mousemove', onMouseMove);
+                document.addEventListener('mouseup', onMouseUp);
+                document.addEventListener('touchmove', onTouchMove);
+                document.addEventListener('touchend', onTouchEnd);
+
+                // Register cleanup
+                this.registerCleanup(() => {
+                    timelineThumb.removeEventListener('mousedown', onMouseDown);
+                    timelineThumb.removeEventListener('touchstart', onTouchStart);
+                    timelineTrack.removeEventListener('click', onTrackClick);
+                    document.removeEventListener('mousemove', onMouseMove);
+                    document.removeEventListener('mouseup', onMouseUp);
+                    document.removeEventListener('touchmove', onTouchMove);
+                    document.removeEventListener('touchend', onTouchEnd);
+                });
+            }
+
+            setupSpeedControls() {
+                const speedOptions = document.querySelectorAll('.speed-option');
+                
+                speedOptions.forEach(btn => {
+                    const onClick = (e) => {
+                        speedOptions.forEach(b => b.classList.remove('active'));
+                        e.target.classList.add('active');
+                        const speed = parseFloat(e.target.dataset.speed);
+                        if (!isNaN(speed)) {
+                            this.setPlaybackSpeed(speed);
+                        }
+                    };
+                    
+                    btn.addEventListener('click', onClick);
+                    
+                    this.registerCleanup(() => {
+                        btn.removeEventListener('click', onClick);
+                    });
+                });
+            }
+
+            updateTimeFromPosition(clientX) {
+                try {
+                    const timelineTrack = document.getElementById('timeline-track');
+                    if (!timelineTrack || !this.state.hasData) return;
+
+                    const rect = timelineTrack.getBoundingClientRect();
+                    const percent = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+                    const time = this.state.startTime + (this.state.endTime - this.state.startTime) * percent;
+                    
+                    this.seekToTime(time);
+                } catch (error) {
+                    console.error('Error updating time from position:', error);
+                }
+            }
+
+            // ============= DATA LOADING =============
+
+            loadVehicles(vehicleData) {
+                try {
+                    console.log('[VehicleMapTemplate] Loading vehicles...');
+
+                    // Validate input
+                    if (!this.validateVehicleData(vehicleData)) {
+                        throw new Error('Invalid vehicle data format');
+                    }
+
+                    // Clear existing data
+                    this.clearVehicles();
+
+                    // Process vehicles
+                    let totalPoints = 0;
+                    vehicleData.vehicles.forEach((vehicle, index) => {
+                        if (index >= CONFIG.maxVehicles) {
+                            console.warn(`Skipping vehicle ${vehicle.id}: exceeds max vehicle limit`);
+                            return;
+                        }
+
+                        const processedVehicle = this.processVehicle(vehicle);
+                        if (processedVehicle) {
+                            this.vehicles.set(processedVehicle.id, processedVehicle);
+                            this.vehicleColors.set(
+                                processedVehicle.id,
+                                processedVehicle.color || this.generateColor(processedVehicle.id)
+                            );
+                            totalPoints += processedVehicle.gps_points.length;
+                        }
+                    });
+
+                    if (this.vehicles.size === 0) {
+                        throw new Error('No valid vehicles found in data');
+                    }
+
+                    // Set time bounds
+                    this.state.startTime = this.parseTime(vehicleData.startTime) || Date.now();
+                    this.state.endTime = this.parseTime(vehicleData.endTime) || Date.now() + 3600000;
+                    this.state.currentTime = this.state.startTime;
+                    this.state.hasData = true;
+
+                    // Update UI
+                    this.updateVehicleList();
+                    this.updateStats();
+                    this.updateTimeDisplay();
+                    
+                    // Show timeline control
+                    const timelineControl = document.getElementById('timeline-control');
+                    if (timelineControl) {
+                        timelineControl.classList.remove('hidden');
+                    }
+
+                    // Initial render
+                    this.renderFrame();
+
+                    // Fit map to bounds
+                    this.fitMapToBounds();
+
+                    console.log(`[VehicleMapTemplate] Loaded ${this.vehicles.size} vehicles with ${totalPoints} points`);
+
+                } catch (error) {
+                    this.handleError('Failed to load vehicles', error, false);
+                }
+            }
+
+            validateVehicleData(data) {
+                if (!data || typeof data !== 'object') {
+                    console.error('Vehicle data must be an object');
+                    return false;
+                }
+
+                if (!Array.isArray(data.vehicles)) {
+                    console.error('Vehicle data must contain a vehicles array');
+                    return false;
+                }
+
+                if (data.vehicles.length === 0) {
+                    console.error('No vehicles in data');
+                    return false;
+                }
+
+                return true;
+            }
+
+            processVehicle(vehicle) {
+                try {
+                    // Validate vehicle
+                    if (!vehicle.id) {
+                        console.warn('Vehicle missing ID, skipping');
+                        return null;
+                    }
+
+                    if (!Array.isArray(vehicle.gps_points) || vehicle.gps_points.length === 0) {
+                        console.warn(`Vehicle ${vehicle.id} has no GPS points, skipping`);
+                        return null;
+                    }
+
+                    // Validate and filter GPS points
+                    const validPoints = [];
+                    for (let i = 0; i < Math.min(vehicle.gps_points.length, CONFIG.maxPointsPerVehicle); i++) {
+                        const point = vehicle.gps_points[i];
+                        if (this.validateGPSPoint(point)) {
+                            validPoints.push(this.normalizeGPSPoint(point));
+                        }
+                    }
+
+                    if (validPoints.length === 0) {
+                        console.warn(`Vehicle ${vehicle.id} has no valid GPS points, skipping`);
+                        return null;
+                    }
+
+                    // Sort points by timestamp
+                    validPoints.sort((a, b) => a.timestamp - b.timestamp);
+
+                    return {
+                        id: String(vehicle.id),
+                        name: vehicle.name || vehicle.id,
+                        color: vehicle.color,
+                        gps_points: validPoints
+                    };
+
+                } catch (error) {
+                    console.error(`Error processing vehicle ${vehicle.id}:`, error);
+                    return null;
+                }
+            }
+
+            validateGPSPoint(point) {
+                if (!point) return false;
+                
+                const lat = parseFloat(point.latitude);
+                const lon = parseFloat(point.longitude);
+                
+                return !isNaN(lat) && 
+                       !isNaN(lon) && 
+                       lat >= -90 && 
+                       lat <= 90 && 
+                       lon >= -180 && 
+                       lon <= 180;
+            }
+
+            normalizeGPSPoint(point) {
+                return {
+                    latitude: parseFloat(point.latitude),
+                    longitude: parseFloat(point.longitude),
+                    timestamp: this.parseTime(point.timestamp) || Date.now(),
+                    speed: parseFloat(point.speed) || 0,
+                    altitude: parseFloat(point.altitude) || 0,
+                    heading: parseFloat(point.heading) || 0,
+                    is_interpolated: Boolean(point.is_interpolated)
+                };
+            }
+
+            parseTime(timeValue) {
+                if (!timeValue) return null;
+                
+                if (typeof timeValue === 'number') {
+                    return timeValue;
+                }
+                
+                const parsed = new Date(timeValue).getTime();
+                return isNaN(parsed) ? null : parsed;
+            }
+
+            // ============= ANIMATION =============
+
+            startAnimation() {
+                if (this.state.isPlaying || !this.state.hasData || this.state.contextLost) {
+                    return;
+                }
+
+                this.state.isPlaying = true;
+                this.state.lastFrameTime = performance.now();
+
+                // Update UI
+                const playBtn = document.getElementById('play-btn');
+                const pauseBtn = document.getElementById('pause-btn');
+                if (playBtn) playBtn.style.display = 'none';
+                if (pauseBtn) pauseBtn.style.display = 'block';
+
+                // Start animation loop
+                this.animate();
+            }
+
+            pauseAnimation() {
+                this.state.isPlaying = false;
+
+                // Cancel animation frame
+                if (this.animationFrame) {
+                    cancelAnimationFrame(this.animationFrame);
+                    this.animationFrame = null;
+                }
+
+                // Update UI
+                const playBtn = document.getElementById('play-btn');
+                const pauseBtn = document.getElementById('pause-btn');
+                if (playBtn) playBtn.style.display = 'block';
+                if (pauseBtn) pauseBtn.style.display = 'none';
+            }
+
+            stopAnimation() {
+                this.pauseAnimation();
+                
+                if (this.state.hasData) {
+                    this.state.currentTime = this.state.startTime;
+                    this.renderFrame();
+                    this.updateTimeDisplay();
+                }
+            }
+
+            animate() {
+                // Guard conditions
+                if (!this.state.isPlaying || this.state.isDestroyed || this.state.contextLost) {
+                    return;
+                }
+
+                try {
+                    const now = performance.now();
+                    const deltaTime = now - this.state.lastFrameTime;
+                    this.state.lastFrameTime = now;
+
+                    // Update current time
+                    const timeIncrement = deltaTime * this.state.playbackSpeed;
+                    this.state.currentTime = Math.min(
+                        this.state.currentTime + timeIncrement,
+                        this.state.endTime
+                    );
+
+                    // Check if animation complete
+                    if (this.state.currentTime >= this.state.endTime) {
+                        this.stopAnimation();
+                        this.onAnimationComplete();
+                        return;
+                    }
+
+                    // Render current frame
+                    this.renderFrame();
+                    this.updateTimeDisplay();
+
+                    // Update FPS counter
+                    this.updateFPS(now);
+
+                    // Continue animation
+                    this.animationFrame = requestAnimationFrame(() => this.animate());
+
+                } catch (error) {
+                    this.handleError('Animation error', error, false);
+                    this.stopAnimation();
+                }
+            }
+
+            renderFrame() {
+                try {
+                    if (!this.map || !this.state.hasData || this.state.isDestroyed) {
+                        return;
+                    }
+
+                    const positions = [];
+                    const trails = [];
+
+                    // Process each vehicle
+                    this.vehicles.forEach((vehicle, vehicleId) => {
+                        try {
+                            if (!vehicle.gps_points || vehicle.gps_points.length === 0) {
+                                return;
+                            }
+
+                            const color = this.vehicleColors.get(vehicleId) || '#3b82f6';
+                            const currentPoint = this.findPointAtTime(
+                                vehicle.gps_points,
+                                this.state.currentTime
+                            );
+
+                            if (currentPoint) {
+                                // Add position marker
+                                positions.push({
+                                    type: 'Feature',
+                                    properties: {
+                                        vehicle_id: vehicleId,
+                                        name: vehicle.name,
+                                        color: color,
+                                        speed: currentPoint.speed,
+                                        timestamp: currentPoint.timestamp
+                                    },
+                                    geometry: {
+                                        type: 'Point',
+                                        coordinates: [currentPoint.longitude, currentPoint.latitude]
+                                    }
+                                });
+
+                                // Update current speed display if this is the selected vehicle
+                                const activeItem = document.querySelector('.vehicle-item.active');
+                                if (activeItem && activeItem.dataset.vehicleId === vehicleId) {
+                                    this.updateSpeedDisplay(currentPoint.speed);
+                                }
+
+                                // Create trail
+                                const trailPoints = this.getTrailPoints(
+                                    vehicle.gps_points,
+                                    this.state.currentTime,
+                                    CONFIG.trailLength
+                                );
+
+                                if (trailPoints.length > 1) {
+                                    trails.push({
+                                        type: 'Feature',
+                                        properties: {
+                                            vehicle_id: vehicleId,
+                                            color: color
+                                        },
+                                        geometry: {
+                                            type: 'LineString',
+                                            coordinates: trailPoints.map(p => [p.longitude, p.latitude])
+                                        }
+                                    });
+                                }
+                            }
+                        } catch (error) {
+                            console.warn(`Error rendering vehicle ${vehicleId}:`, error);
+                        }
+                    });
+
+                    // Update map sources
+                    this.updateMapSource('vehicle-positions', positions);
+                    this.updateMapSource('vehicle-trails', trails);
+
+                    // Update timeline progress
+                    this.updateTimelineProgress();
+
+                } catch (error) {
+                    console.error('Render frame error:', error);
+                }
+            }
+
+            updateMapSource(sourceId, features) {
+                try {
+                    const source = this.map?.getSource(sourceId);
+                    if (source && typeof source.setData === 'function') {
+                        source.setData({
+                            type: 'FeatureCollection',
+                            features: features || []
+                        });
+                    }
+                } catch (error) {
+                    console.warn(`Failed to update source ${sourceId}:`, error);
+                }
+            }
+
+            findPointAtTime(points, timestamp) {
+                if (!points || points.length === 0) return null;
+
+                // Binary search for efficiency
+                let left = 0;
+                let right = points.length - 1;
+
+                // Find the two points to interpolate between
+                while (left < right - 1) {
+                    const mid = Math.floor((left + right) / 2);
+                    if (points[mid].timestamp < timestamp) {
+                        left = mid;
+                    } else {
+                        right = mid;
+                    }
+                }
+
+                // Check bounds
+                if (timestamp <= points[0].timestamp) {
+                    return points[0];
+                }
+                if (timestamp >= points[points.length - 1].timestamp) {
+                    return points[points.length - 1];
+                }
+
+                // Interpolate between points
+                const p1 = points[left];
+                const p2 = points[right];
+                const ratio = (timestamp - p1.timestamp) / (p2.timestamp - p1.timestamp);
+
+                return {
+                    latitude: p1.latitude + (p2.latitude - p1.latitude) * ratio,
+                    longitude: p1.longitude + (p2.longitude - p1.longitude) * ratio,
+                    speed: p1.speed + (p2.speed - p1.speed) * ratio,
+                    timestamp: timestamp
+                };
+            }
+
+            getTrailPoints(points, currentTime, maxLength) {
+                const trail = [];
+                
+                for (let i = points.length - 1; i >= 0 && trail.length < maxLength; i--) {
+                    if (points[i].timestamp <= currentTime) {
+                        trail.unshift(points[i]);
+                    }
+                }
+                
+                return trail;
+            }
+
+            // ============= INTERFACE METHODS =============
+
+            seekToTime(timestamp) {
+                if (!this.state.hasData) return;
+
+                this.state.currentTime = Math.max(
+                    this.state.startTime,
+                    Math.min(this.state.endTime, timestamp)
+                );
+
+                this.renderFrame();
+                this.updateTimeDisplay();
+            }
+
+            setPlaybackSpeed(speed) {
+                if (speed > 0 && speed <= 10) {
+                    this.state.playbackSpeed = speed;
+                }
+            }
+
+            updateVehicles(vehicleData) {
+                this.loadVehicles(vehicleData);
+            }
+
+            clearVehicles() {
+                // Stop animation
+                this.stopAnimation();
+
+                // Clear data
+                this.vehicles.clear();
+                this.vehicleColors.clear();
+                this.state.hasData = false;
+
+                // Close popups
+                this.closeAllPopups();
+
+                // Clear map sources
+                this.updateMapSource('vehicle-positions', []);
+                this.updateMapSource('vehicle-trails', []);
+
+                // Reset UI
+                this.updateVehicleList();
+                this.updateStats();
+                
+                // Hide timeline
+                const timelineControl = document.getElementById('timeline-control');
+                if (timelineControl) {
+                    timelineControl.classList.add('hidden');
+                }
+            }
+
+            focusVehicle(vehicleId) {
+                const vehicle = this.vehicles.get(vehicleId);
+                if (!vehicle || !vehicle.gps_points || vehicle.gps_points.length === 0) {
+                    return;
+                }
+
+                // Find current position
+                const point = this.findPointAtTime(vehicle.gps_points, this.state.currentTime);
+                if (point && this.map) {
+                    this.map.flyTo({
+                        center: [point.longitude, point.latitude],
+                        zoom: 15,
+                        duration: 1000
+                    });
+                }
+
+                // Update UI selection
+                this.selectVehicleInList(vehicleId);
+            }
+
+            setMapStyle(style) {
+                if (!this.map) return;
+
+                const styles = {
+                    'dark': 'mapbox://styles/mapbox/dark-v11',
+                    'light': 'mapbox://styles/mapbox/light-v11',
+                    'streets': 'mapbox://styles/mapbox/streets-v12',
+                    'satellite': 'mapbox://styles/mapbox/satellite-streets-v12',
+                    'navigation': 'mapbox://styles/mapbox/navigation-night-v1'
+                };
+
+                const styleUrl = styles[style];
+                if (styleUrl) {
+                    this.map.setStyle(styleUrl);
+                    
+                    // Re-add layers after style loads
+                    this.map.once('style.load', () => {
+                        this.setupMapLayers();
+                        if (this.state.hasData) {
+                            this.renderFrame();
+                        }
+                    });
+                }
+            }
+
+            // ============= UI UPDATES =============
+
+            updateVehicleList() {
+                const listElement = document.getElementById('vehicle-list');
+                if (!listElement) return;
+
+                if (this.vehicles.size === 0) {
+                    listElement.innerHTML = '<div class="vehicle-list-empty">No vehicles loaded</div>';
+                    return;
+                }
+
+                listElement.innerHTML = '';
+
+                this.vehicles.forEach((vehicle, vehicleId) => {
+                    const color = this.vehicleColors.get(vehicleId) || '#3b82f6';
+                    const item = document.createElement('div');
+                    item.className = 'vehicle-item';
+                    item.dataset.vehicleId = vehicleId;
+                    
+                    const initials = vehicle.name ? 
+                        vehicle.name.substring(0, 2).toUpperCase() : 
+                        'V' + vehicleId.substring(0, 1);
+                    
+                    item.innerHTML = `
+                        <div class="vehicle-color" style="background: ${color}">
+                            ${initials}
+                        </div>
+                        <div class="vehicle-info">
+                            <div class="vehicle-name">${vehicle.name || vehicleId}</div>
+                            <div class="vehicle-detail">${vehicle.gps_points.length} points</div>
+                        </div>
+                    `;
+                    
+                    item.addEventListener('click', () => this.focusVehicle(vehicleId));
+                    listElement.appendChild(item);
+                });
+            }
+
+            selectVehicleInList(vehicleId) {
+                document.querySelectorAll('.vehicle-item').forEach(item => {
+                    if (item.dataset.vehicleId === vehicleId) {
+                        item.classList.add('active');
+                    } else {
+                        item.classList.remove('active');
+                    }
+                });
+            }
+
+            updateTimeDisplay() {
+                const element = document.getElementById('time-display');
+                if (!element || !this.state.currentTime) return;
+
+                const date = new Date(this.state.currentTime);
+                const timeStr = date.toLocaleTimeString('en-US', {
+                    hour12: false,
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit'
+                });
+                element.textContent = timeStr;
+            }
+
+            updateTimelineProgress() {
+                const progressElement = document.getElementById('timeline-progress');
+                if (!progressElement || !this.state.hasData) return;
+
+                const progress = ((this.state.currentTime - this.state.startTime) / 
+                                (this.state.endTime - this.state.startTime)) * 100;
+                progressElement.style.width = `${Math.max(0, Math.min(100, progress))}%`;
+            }
+
+            updateStats() {
+                // Active vehicles
+                const activeCount = document.getElementById('active-count');
+                if (activeCount) {
+                    activeCount.textContent = this.vehicles.size;
+                }
+
+                // Total points
+                const pointCount = document.getElementById('point-count');
+                if (pointCount) {
+                    let total = 0;
+                    this.vehicles.forEach(v => {
+                        total += v.gps_points?.length || 0;
+                    });
+                    pointCount.textContent = total.toLocaleString();
+                }
+
+                // Time range
+                const timeRange = document.getElementById('time-range');
+                if (timeRange) {
+                    if (this.state.startTime && this.state.endTime) {
+                        const start = new Date(this.state.startTime).toLocaleTimeString('en-US', {
+                            hour12: false,
+                            hour: '2-digit',
+                            minute: '2-digit'
+                        });
+                        const end = new Date(this.state.endTime).toLocaleTimeString('en-US', {
+                            hour12: false,
+                            hour: '2-digit',
+                            minute: '2-digit'
+                        });
+                        timeRange.textContent = `${start} - ${end}`;
+                    } else {
+                        timeRange.textContent = '--';
+                    }
+                }
+            }
+
+            updateSpeedDisplay(speed) {
+                const element = document.getElementById('current-speed');
+                if (element) {
+                    if (speed && !isNaN(speed)) {
+                        element.textContent = `${speed.toFixed(1)} km/h`;
+                    } else {
+                        element.textContent = '-- km/h';
+                    }
+                }
+            }
+
+            updateFPS(now) {
+                this.performanceMetrics.frameCount++;
+                
+                if (now - this.performanceMetrics.lastFPSUpdate > 1000) {
+                    this.performanceMetrics.fps = this.performanceMetrics.frameCount;
+                    this.performanceMetrics.frameCount = 0;
+                    this.performanceMetrics.lastFPSUpdate = now;
+                    
+                    // Could display FPS if needed
+                    // console.log(`FPS: ${this.performanceMetrics.fps}`);
+                }
+            }
+
+            // ============= MAP UTILITIES =============
+
+            fitMapToBounds() {
+                if (!this.map || this.vehicles.size === 0) return;
+
+                try {
+                    const bounds = new mapboxgl.LngLatBounds();
+                    let hasPoints = false;
+
+                    this.vehicles.forEach(vehicle => {
+                        if (vehicle.gps_points && vehicle.gps_points.length > 0) {
+                            vehicle.gps_points.forEach(point => {
+                                bounds.extend([point.longitude, point.latitude]);
+                                hasPoints = true;
+                            });
+                        }
+                    });
+
+                    if (hasPoints) {
+                        this.map.fitBounds(bounds, {
+                            padding: 50,
+                            duration: 1000,
+                            maxZoom: 16
+                        });
+                    }
+                } catch (error) {
+                    console.error('Error fitting bounds:', error);
+                }
+            }
+
+            showVehiclePopup(feature) {
+                try {
+                    // Close existing popups
+                    this.closeAllPopups();
+
+                    const props = feature.properties;
+                    const popup = new mapboxgl.Popup({
+                        offset: 25,
+                        closeButton: true,
+                        closeOnClick: true
+                    })
+                    .setLngLat(feature.geometry.coordinates)
+                    .setHTML(`
+                        <div class="popup-header">${props.name || props.vehicle_id}</div>
+                        <div class="popup-info">
+                            <strong>Speed:</strong> ${props.speed ? props.speed.toFixed(1) + ' km/h' : 'N/A'}<br>
+                            <strong>Time:</strong> ${new Date(props.timestamp).toLocaleTimeString()}
+                        </div>
+                    `)
+                    .addTo(this.map);
+
+                    this.activePopups.push(popup);
+                } catch (error) {
+                    console.error('Error showing popup:', error);
+                }
+            }
+
+            closeAllPopups() {
+                this.activePopups.forEach(popup => {
+                    try {
+                        popup.remove();
+                    } catch (e) {
+                        // Popup might already be removed
+                    }
+                });
+                this.activePopups = [];
+            }
+
+            // ============= HELPERS =============
+
+            generateColor(vehicleId) {
+                const colors = [
+                    '#3b82f6', '#ef4444', '#10b981', '#f59e0b',
+                    '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16',
+                    '#f43f5e', '#a855f7', '#0ea5e9', '#eab308'
+                ];
+                
+                let hash = 0;
+                for (let i = 0; i < vehicleId.length; i++) {
+                    hash = vehicleId.charCodeAt(i) + ((hash << 5) - hash);
+                }
+                
+                return colors[Math.abs(hash) % colors.length];
+            }
+
+            hideLoading() {
+                // Hide both possible loading elements
+                const loading = document.getElementById('loading');
+                const mapLoading = document.getElementById('map-loading');
+
+                if (loading) {
+                    loading.classList.add('hidden');
+                    setTimeout(() => {
+                        loading.style.display = 'none';
+                    }, 500);
+                }
+
+                if (mapLoading) {
+                    mapLoading.style.display = 'none';
+                }
+            }
+
+            // ============= EVENT HANDLERS =============
+
+            onVehicleClick(vehicleId) {
+                console.log('Vehicle clicked:', vehicleId);
+                this.selectVehicleInList(vehicleId);
+                
+                // Send to Tauri if available
+                if (window.__TAURI__) {
+                    window.__TAURI__.invoke('vehicle_clicked', { vehicleId }).catch(console.error);
+                }
+            }
+
+            onAnimationComplete() {
+                console.log('Animation complete');
+                
+                // Send to Tauri if available
+                if (window.__TAURI__) {
+                    window.__TAURI__.invoke('animation_complete').catch(console.error);
+                }
+            }
+
+            dispatchReadyEvent() {
+                window.dispatchEvent(new Event('mapReady'));
+                
+                // Notify Tauri if available
+                if (window.__TAURI__) {
+                    window.__TAURI__.invoke('map_ready').catch(console.error);
+                }
+            }
+
+            // ============= ERROR HANDLING =============
+
+            handleError(message, error, isCritical = false) {
+                console.error(`[VehicleMapTemplate] ${message}:`, error);
+                this.state.lastError = error;
+
+                // Show error notification
+                this.showErrorNotification(`${message}: ${error.message || error}`);
+
+                // Send to Tauri if available
+                if (window.__TAURI__) {
+                    window.__TAURI__.invoke('map_error', {
+                        message,
+                        error: error?.message || String(error),
+                        critical: isCritical
+                    }).catch(console.error);
+                }
+
+                // If critical, disable the map
+                if (isCritical) {
+                    this.disableMap();
+                }
+            }
+
+            showErrorNotification(message) {
+                const notification = document.getElementById('error-notification');
+                if (notification) {
+                    notification.textContent = message;
+                    notification.classList.add('show');
+                    
+                    // Auto-hide after delay
+                    setTimeout(() => {
+                        notification.classList.remove('show');
+                    }, CONFIG.errorDisplayDuration);
+                }
+            }
+
+            handleContextLost() {
+                console.warn('[VehicleMapTemplate] WebGL context lost');
+                this.state.contextLost = true;
+                this.pauseAnimation();
+                
+                // Show context lost overlay
+                const overlay = document.getElementById('context-lost');
+                if (overlay) {
+                    overlay.classList.add('show');
+                }
+            }
+
+            handleContextRestored() {
+                console.log('[VehicleMapTemplate] WebGL context restored');
+                this.state.contextLost = false;
+                
+                // Hide context lost overlay
+                const overlay = document.getElementById('context-lost');
+                if (overlay) {
+                    overlay.classList.remove('show');
+                }
+                
+                // Reinitialize map layers
+                if (this.map) {
+                    this.setupMapLayers();
+                    if (this.state.hasData) {
+                        this.renderFrame();
+                    }
+                }
+            }
+
+            disableMap() {
+                // Disable all controls
+                const vehiclePanel = document.getElementById('vehicle-panel');
+                const timelineControl = document.getElementById('timeline-control');
+                
+                if (vehiclePanel) vehiclePanel.classList.add('disabled');
+                if (timelineControl) timelineControl.classList.add('disabled');
+                
+                // Stop animation
+                this.stopAnimation();
+            }
+
+            // ============= CLEANUP =============
+
+            registerCleanup(task) {
+                if (typeof task === 'function') {
+                    this.cleanupTasks.push(task);
+                }
+            }
+
+            destroy() {
+                console.log('[VehicleMapTemplate] Destroying instance...');
+                
+                try {
+                    // Mark as destroyed
+                    this.state.isDestroyed = true;
+                    
+                    // Stop animation
+                    this.stopAnimation();
+                    
+                    // Close popups
+                    this.closeAllPopups();
+                    
+                    // Run all cleanup tasks
+                    this.cleanupTasks.forEach(task => {
+                        try {
+                            task();
+                        } catch (error) {
+                            console.warn('Cleanup task failed:', error);
+                        }
+                    });
+                    
+                    // Remove map
+                    if (this.map) {
+                        this.map.remove();
+                        this.map = null;
+                    }
+                    
+                    // Clear data
+                    this.vehicles.clear();
+                    this.vehicleColors.clear();
+                    
+                    // Clear references
+                    this.cleanupTasks = [];
+                    this.boundHandlers.clear();
+                    
+                    console.log('[VehicleMapTemplate] Instance destroyed');
+                    
+                } catch (error) {
+                    console.error('Error during destroy:', error);
+                }
+            }
+        }
+
+        // ============= INITIALIZATION =============
+
+        let vehicleMapInstance = null;
+
+        // Initialize when DOM is ready
+        function initializeMap() {
+            if (vehicleMapInstance) {
+                console.warn('Map already initialized');
+                return;
+            }
+            
+            vehicleMapInstance = new VehicleMapTemplate();
+            window.vehicleMap = vehicleMapInstance;
+        }
+
+        // DOM ready handler
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initializeMap);
+        } else {
+            initializeMap();
+        }
+
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => {
+            if (vehicleMapInstance) {
+                vehicleMapInstance.destroy();
+                vehicleMapInstance = null;
+            }
+        });
+
+        // ============= TAURI IPC BRIDGE =============
+
+        if (window.__TAURI__ && window.__TAURI__.event) {
+            const { listen } = window.__TAURI__.event;
+
+            // Set up event listeners
+            async function setupTauriListeners() {
+                try {
+                    // Load vehicles
+                    await listen('load-vehicles', (event) => {
+                        if (vehicleMapInstance) {
+                            vehicleMapInstance.loadVehicles(event.payload);
+                        }
+                    });
+
+                    // Control commands
+                    await listen('control-command', (event) => {
+                        if (!vehicleMapInstance) return;
+                        
+                        switch(event.payload) {
+                            case 'play':
+                                vehicleMapInstance.startAnimation();
+                                break;
+                            case 'pause':
+                                vehicleMapInstance.pauseAnimation();
+                                break;
+                            case 'stop':
+                                vehicleMapInstance.stopAnimation();
+                                break;
+                            case 'clear':
+                                vehicleMapInstance.clearVehicles();
+                                break;
+                        }
+                    });
+
+                    // Seek to time
+                    await listen('seek-to-time', (event) => {
+                        if (vehicleMapInstance) {
+                            vehicleMapInstance.seekToTime(event.payload);
+                        }
+                    });
+
+                    // Set speed
+                    await listen('set-speed', (event) => {
+                        if (vehicleMapInstance) {
+                            vehicleMapInstance.setPlaybackSpeed(event.payload);
+                        }
+                    });
+
+                    // Set style
+                    await listen('set-style', (event) => {
+                        if (vehicleMapInstance) {
+                            vehicleMapInstance.setMapStyle(event.payload);
+                        }
+                    });
+
+                    // Focus vehicle
+                    await listen('focus-vehicle', (event) => {
+                        if (vehicleMapInstance) {
+                            vehicleMapInstance.focusVehicle(event.payload);
+                        }
+                    });
+
+                    console.log('[Tauri] Event listeners registered');
+
+                } catch (error) {
+                    console.error('[Tauri] Failed to setup listeners:', error);
+                }
+            }
+
+            setupTauriListeners();
+        }
+
+        // ============= PYTHON WEBSOCKET BRIDGE =============
+
+        // WebSocket connection for Python bridge
+        class PythonBridge {
+            constructor() {
+                // Priority 1: Check for static config file (but validate it's recent)
+                if (window.WS_CONFIG && window.WS_CONFIG.port) {
+                    // Check if config is recent (within last 5 seconds)
+                    if (window.WS_CONFIG.timestamp) {
+                        const configTime = new Date(window.WS_CONFIG.timestamp);
+                        const now = new Date();
+                        const ageInSeconds = (now - configTime) / 1000;
+
+                        if (ageInSeconds > 5) {
+                            console.warn('[PythonBridge] Config file is stale (', ageInSeconds, 'seconds old), ignoring');
+                        } else {
+                            this.port = window.WS_CONFIG.port;
+                            console.log('[PythonBridge] Using port from ws-config.js:', this.port);
+                            this.connect();
+                            return;
+                        }
+                    } else {
+                        this.port = window.WS_CONFIG.port;
+                        console.log('[PythonBridge] Using port from ws-config.js (no timestamp check):', this.port);
+                        this.connect();
+                        return;
+                    }
+                }
+
+                // Priority 2: Get port from URL params
+                const urlParams = new URLSearchParams(window.location.search);
+                const urlPort = urlParams.get('port');
+
+                console.log('[PythonBridge] URL params:', window.location.search);
+                console.log('[PythonBridge] Extracted port from URL:', urlPort);
+
+                if (urlPort) {
+                    this.port = parseInt(urlPort, 10);
+                    console.log('[PythonBridge] Using port from URL:', this.port);
+                    this.connect();
+                    return;
+                }
+
+                // Priority 3: Check environment variable fallback
+                const envPort = window.TAURI_WS_PORT;
+                if (envPort) {
+                    this.port = parseInt(envPort, 10);
+                    console.log('[PythonBridge] Using port from env:', this.port);
+                } else {
+                    // Priority 4: Default port
+                    this.port = 8765;
+                    console.log('[PythonBridge] WARNING: Using default port (connection likely to fail):', this.port);
+                }
+                this.connect();
+            }
+
+            connect() {
+                console.log(`[PythonBridge] Connecting to ws://localhost:${this.port}/`);
+                this.ws = new WebSocket(`ws://localhost:${this.port}/`);
+
+                this.ws.onopen = () => {
+                    console.log('[PythonBridge] Connected');
+                    this.ws.send(JSON.stringify({ type: 'ready' }));
+                };
+
+                this.ws.onmessage = (event) => {
+                    try {
+                        const msg = JSON.parse(event.data);
+                        this.handleMessage(msg);
+                    } catch (e) {
+                        console.error('[PythonBridge] Parse error:', e);
+                    }
+                };
+
+                this.ws.onerror = (error) => {
+                    console.error('[PythonBridge] Error:', error);
+                };
+
+                this.ws.onclose = () => {
+                    console.log('[PythonBridge] Disconnected, retrying...');
+                    setTimeout(() => this.connect(), 2000);
+                };
+            }
+
+            handleMessage(msg) {
+                switch(msg.type) {
+                    case 'load_vehicles':
+                        if (window.vehicleMap) {
+                            window.vehicleMap.loadVehicles(msg.data);
+                        }
+                        break;
+
+                    case 'control':
+                        this.handleControl(msg.command);
+                        break;
+
+                    case 'switch_provider':
+                        window.location.href = `${msg.provider}.html?port=${this.port}`;
+                        break;
+                }
+            }
+
+            handleControl(command) {
+                if (!window.vehicleMap) return;
+
+                switch(command) {
+                    case 'play':
+                        window.vehicleMap.startAnimation();
+                        break;
+                    case 'pause':
+                        window.vehicleMap.pauseAnimation();
+                        break;
+                    case 'stop':
+                        window.vehicleMap.stopAnimation();
+                        break;
+                }
+            }
+
+            send(data) {
+                if (this.ws.readyState === WebSocket.OPEN) {
+                    this.ws.send(JSON.stringify(data));
+                }
+            }
+        }
+
+        // Initialize bridge - delay to ensure Tauri APIs are ready
+        setTimeout(() => {
+            window.pythonBridge = new PythonBridge();
+        }, 1000);
+
+        // Hook into existing vehicle click handler
+        if (window.vehicleMap) {
+            const originalOnVehicleClick = window.vehicleMap.onVehicleClick;
+            window.vehicleMap.onVehicleClick = function(vehicleId) {
+                originalOnVehicleClick.call(this, vehicleId);
+                window.pythonBridge.send({ type: 'vehicle_clicked', vehicle_id: vehicleId });
+            };
+        }
+    </script>
+</body>
+</html>

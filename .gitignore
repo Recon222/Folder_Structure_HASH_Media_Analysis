@@ -94,4 +94,16 @@ coverage.xml
 *.gif
 *.bmp
 *.ico
-*.svg 
+*.svg
+
+# Tauri build files
+vehicle_tracking/tauri-map/src-tauri/target/
+vehicle_tracking/tauri-map/dist/
+vehicle_tracking/tauri-map/node_modules/
+vehicle_tracking/tauri-map/src-tauri/Cargo.lock
+vehicle_tracking/tauri-map/src-tauri/WixTools/
+vehicle_tracking/tauri-map/src-tauri/icons/
+vehicle_tracking/tauri-map/.tauri/
+
+# Tauri auto-generated files
+vehicle_tracking/tauri-map/src/ws-config.js 

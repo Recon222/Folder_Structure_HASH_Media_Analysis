@@ -48,26 +48,6 @@ class VehicleTrackingError(FSAError):
     pass
 
 
-class IVehicleTrackingService(IService):
-    """Interface for vehicle tracking service"""
-    
-    def parse_csv_file(self, file_path: Path, settings: VehicleTrackingSettings) -> Result[VehicleData]:
-        """Parse CSV file and extract GPS data"""
-        pass
-    
-    def calculate_speeds(self, vehicle_data: VehicleData) -> Result[VehicleData]:
-        """Calculate speeds between GPS points"""
-        pass
-    
-    def interpolate_path(self, vehicle_data: VehicleData, settings: VehicleTrackingSettings) -> Result[VehicleData]:
-        """Interpolate GPS points for smooth animation"""
-        pass
-    
-    def prepare_animation_data(self, vehicles: List[VehicleData], settings: VehicleTrackingSettings) -> Result[AnimationData]:
-        """Prepare data for map animation"""
-        pass
-
-
 class VehicleTrackingService(BaseService, IVehicleTrackingService):
     """
     Service for vehicle tracking operations

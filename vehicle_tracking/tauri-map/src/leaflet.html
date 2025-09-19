@@ -1,0 +1,1085 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vehicle Tracking - TimestampedGeoJson</title>
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
+    <!-- Leaflet TimeDimension CSS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet-timedimension@1.1.1/dist/leaflet.timedimension.control.min.css" />
+    
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+        
+        #map {
+            height: 100%;
+            width: 100%;
+        }
+        
+        /* Vehicle info panel */
+        .vehicle-panel {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: white;
+            padding: 12px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            z-index: 1000;
+            min-width: 250px;
+        }
+        
+        .vehicle-panel h3 {
+            margin: 0 0 10px 0;
+            font-size: 16px;
+            color: #333;
+        }
+        
+        .vehicle-stats {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            font-size: 14px;
+        }
+        
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+        }
+        
+        .stat-label {
+            color: #666;
+        }
+        
+        .stat-value {
+            font-weight: 600;
+            color: #333;
+        }
+        
+        /* Vehicle list */
+        .vehicle-list {
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #e0e0e0;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        
+        .vehicle-item {
+            display: flex;
+            align-items: center;
+            padding: 5px;
+            cursor: pointer;
+            border-radius: 4px;
+            transition: background 0.2s;
+        }
+        
+        .vehicle-item:hover {
+            background: #f5f5f5;
+        }
+        
+        .vehicle-color {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+            border: 1px solid white;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+        }
+        
+        /* Custom marker styles */
+        .vehicle-marker-icon {
+            background: white;
+            border: 2px solid;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+            font-size: 14px;
+        }
+        
+        /* Override TimeDimension control styles for better appearance */
+        .leaflet-control-timecontrol {
+            background: white;
+            border-radius: 8px;
+            padding: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        }
+        
+        .leaflet-bar-timecontrol {
+            background: white;
+            border: none;
+        }
+        
+        /* Loading indicator */
+        .loading-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(255, 255, 255, 0.95);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 2000;
+            transition: opacity 0.3s;
+        }
+        
+        .loading-overlay.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+        
+        .loading-content {
+            text-align: center;
+        }
+        
+        .loading-spinner {
+            width: 50px;
+            height: 50px;
+            margin: 0 auto 20px;
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .loading-text {
+            color: #666;
+            font-size: 16px;
+        }
+
+        /* ==============================
+           TIMEDIMENSION CONTROL STYLING
+           ============================== */
+
+        /* Main control container - Modern glass morphism */
+        .leaflet-control-timecontrol {
+            background: linear-gradient(135deg, rgba(255,255,255,0.95) 0%, rgba(255,255,255,0.85) 100%);
+            backdrop-filter: blur(15px);
+            -webkit-backdrop-filter: blur(15px);
+            border: 1px solid rgba(255,255,255,0.5);
+            border-radius: 16px;
+            box-shadow:
+                0 8px 32px rgba(31, 38, 135, 0.15),
+                inset 0 1px 0 rgba(255,255,255,0.6);
+            padding: 12px 16px;
+            min-width: 400px;
+        }
+
+        /* Control buttons - Modern gradient with hover effects */
+        .leaflet-control-timecontrol button,
+        .leaflet-control-timecontrol .timecontrol-play,
+        .leaflet-control-timecontrol .timecontrol-pause,
+        .leaflet-control-timecontrol .timecontrol-backward,
+        .leaflet-control-timecontrol .timecontrol-forward,
+        .leaflet-control-timecontrol .timecontrol-stop,
+        a.timecontrol-date,
+        a.timecontrol-speed {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            border-radius: 10px;
+            color: white;
+            padding: 10px 14px;
+            margin: 0 3px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+            position: relative;
+            overflow: hidden;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .leaflet-control-timecontrol button:hover,
+        .leaflet-control-timecontrol .timecontrol-play:hover,
+        .leaflet-control-timecontrol .timecontrol-pause:hover,
+        .leaflet-control-timecontrol .timecontrol-backward:hover,
+        .leaflet-control-timecontrol .timecontrol-forward:hover,
+        .leaflet-control-timecontrol .timecontrol-stop:hover,
+        a.timecontrol-date:hover,
+        a.timecontrol-speed:hover {
+            transform: translateY(-2px);
+            box-shadow:
+                0 6px 20px rgba(102, 126, 234, 0.4),
+                0 2px 8px rgba(118, 75, 162, 0.2);
+            background: linear-gradient(135deg, #7c8ff9 0%, #8758b1 100%);
+        }
+
+        .leaflet-control-timecontrol button:active {
+            transform: translateY(0);
+            box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+        }
+
+        /* Replace button text with better Unicode symbols */
+        .timecontrol-backward {
+            font-size: 0 !important;
+        }
+        .timecontrol-backward::after {
+            content: '⏮';
+            font-size: 18px;
+            line-height: 1;
+        }
+
+        .timecontrol-play {
+            font-size: 0 !important;
+        }
+        .timecontrol-play::after {
+            content: '▶';
+            font-size: 18px;
+            line-height: 1;
+        }
+
+        .timecontrol-pause {
+            font-size: 0 !important;
+        }
+        .timecontrol-pause::after {
+            content: '⏸';
+            font-size: 18px;
+            line-height: 1;
+        }
+
+        .timecontrol-forward {
+            font-size: 0 !important;
+        }
+        .timecontrol-forward::after {
+            content: '⏭';
+            font-size: 18px;
+            line-height: 1;
+        }
+
+        .timecontrol-stop {
+            font-size: 0 !important;
+        }
+        .timecontrol-stop::after {
+            content: '⏹';
+            font-size: 18px;
+            line-height: 1;
+        }
+
+        .timecontrol-loop,
+        .timecontrol-loopButton {
+            font-size: 0 !important;
+        }
+        .timecontrol-loop::after,
+        .timecontrol-loopButton::after {
+            content: '🔁';
+            font-size: 18px;
+            line-height: 1;
+        }
+
+        .timecontrol-loop.looped::after,
+        .timecontrol-loopButton.looped::after {
+            content: '🔁';
+            font-size: 18px;
+            filter: sepia(100%) saturate(200%) hue-rotate(15deg) brightness(1.2);
+        }
+
+        /* Size buttons properly */
+        .leaflet-control-timecontrol button {
+            min-width: 42px;
+            height: 42px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* Date display styling */
+        .timecontrol-date,
+        a.timecontrol-date {
+            background: linear-gradient(135deg, #2d3748 0%, #1a202c 100%);
+            padding: 10px 16px;
+            min-width: 180px;
+            font-family: 'SF Mono', 'Monaco', 'Inconsolata', monospace;
+            font-size: 13px;
+            letter-spacing: 0.5px;
+            text-align: center;
+        }
+
+        /* Speed control styling */
+        .timecontrol-speed,
+        a.timecontrol-speed {
+            background: linear-gradient(135deg, #48bb78 0%, #38a169 100%);
+            min-width: 60px;
+            font-size: 13px;
+            font-weight: 700;
+        }
+
+        .timecontrol-speed:hover,
+        a.timecontrol-speed:hover {
+            background: linear-gradient(135deg, #68d391 0%, #48bb78 100%);
+        }
+
+        /* Timeline slider container */
+        .leaflet-control-timecontrol .timecontrol-slider {
+            margin: 12px 6px;
+            position: relative;
+        }
+
+        /* Timeline slider track */
+        .leaflet-control-timecontrol .ui-slider {
+            background: linear-gradient(90deg,
+                rgba(102, 126, 234, 0.2) 0%,
+                rgba(102, 126, 234, 0.4) 50%,
+                rgba(118, 75, 162, 0.2) 100%);
+            border: none;
+            height: 8px;
+            border-radius: 4px;
+            position: relative;
+            box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);
+        }
+
+        /* Timeline slider progress bar */
+        .leaflet-control-timecontrol .ui-slider-range {
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            border-radius: 4px;
+            box-shadow: 0 2px 4px rgba(102, 126, 234, 0.3);
+        }
+
+        /* Timeline slider handle */
+        .leaflet-control-timecontrol .ui-slider-handle {
+            width: 22px;
+            height: 22px;
+            background: radial-gradient(circle, #ffffff 0%, #f7fafc 100%);
+            border: 3px solid #667eea;
+            border-radius: 50%;
+            top: -7px;
+            margin-left: -11px;
+            cursor: grab;
+            box-shadow:
+                0 3px 8px rgba(102, 126, 234, 0.4),
+                inset 0 1px 0 rgba(255,255,255,0.9);
+            transition: all 0.2s ease;
+        }
+
+        .leaflet-control-timecontrol .ui-slider-handle:hover {
+            transform: scale(1.2);
+            box-shadow:
+                0 4px 12px rgba(102, 126, 234, 0.5),
+                inset 0 1px 0 rgba(255,255,255,0.9);
+            border-color: #764ba2;
+        }
+
+        .leaflet-control-timecontrol .ui-slider-handle:active {
+            cursor: grabbing;
+            transform: scale(1.1);
+        }
+
+        /* Speed slider styling */
+        .leaflet-control-timecontrol .speed-slider {
+            margin: 8px 6px;
+        }
+
+        .leaflet-control-timecontrol .speed-slider .ui-slider {
+            background: linear-gradient(90deg,
+                rgba(72, 187, 120, 0.2) 0%,
+                rgba(72, 187, 120, 0.4) 50%,
+                rgba(56, 161, 105, 0.2) 100%);
+        }
+
+        .leaflet-control-timecontrol .speed-slider .ui-slider-range {
+            background: linear-gradient(90deg, #48bb78 0%, #38a169 100%);
+        }
+
+        .leaflet-control-timecontrol .speed-slider .ui-slider-handle {
+            border-color: #48bb78;
+        }
+
+        .leaflet-control-timecontrol .speed-slider .ui-slider-handle:hover {
+            border-color: #38a169;
+        }
+
+        /* Display text styling */
+        .leaflet-control-timecontrol .timecontrol-dateslider .ui-slider-handle:after {
+            content: attr(title);
+            position: absolute;
+            bottom: 25px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.8);
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            white-space: nowrap;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.2s ease;
+        }
+
+        .leaflet-control-timecontrol .timecontrol-dateslider .ui-slider-handle:hover:after {
+            opacity: 1;
+        }
+
+        /* Disabled state */
+        .leaflet-control-timecontrol button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+
+        /* Active/playing animation */
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(102, 126, 234, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(102, 126, 234, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(102, 126, 234, 0); }
+        }
+
+        .leaflet-control-timecontrol .timecontrol-pause {
+            animation: pulse 2s infinite;
+        }
+
+        /* Mobile responsive adjustments */
+        @media (max-width: 768px) {
+            .leaflet-control-timecontrol {
+                min-width: 320px;
+                padding: 8px 12px;
+            }
+
+            .leaflet-control-timecontrol button {
+                min-width: 36px;
+                height: 36px;
+                padding: 8px 10px;
+            }
+
+            .leaflet-control-timecontrol .timecontrol-date {
+                min-width: 140px;
+                font-size: 12px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    
+    <!-- Vehicle Info Panel -->
+    <div class="vehicle-panel">
+        <h3>🚗 Vehicle Tracking</h3>
+        <div class="vehicle-stats">
+            <div class="stat-row">
+                <span class="stat-label">Active Vehicles:</span>
+                <span class="stat-value" id="vehicle-count">0</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">Total Points:</span>
+                <span class="stat-value" id="point-count">0</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">Time Range:</span>
+                <span class="stat-value" id="time-range">--</span>
+            </div>
+        </div>
+        <div class="vehicle-list" id="vehicle-list"></div>
+    </div>
+    
+    <!-- Loading Overlay -->
+    <div id="loading" class="loading-overlay">
+        <div class="loading-content">
+            <div class="loading-spinner"></div>
+            <div class="loading-text">Loading map...</div>
+        </div>
+    </div>
+
+    <!-- QWebChannel - Only loads in Qt context -->
+    <!-- Note: This will fail in regular browser but that's OK -->
+    <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <!-- Leaflet TimeDimension -->
+    <script src="https://cdn.jsdelivr.net/npm/iso8601-js-period@0.2.1/iso8601.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/leaflet-timedimension@1.1.1/dist/leaflet.timedimension.min.js"></script>
+    
+    <script>
+        console.log('[Script] Vehicle tracking map script starting...');
+        console.log('[Script] Current URL:', window.location.href);
+        console.log('[Script] Document readyState:', document.readyState);
+
+        // Wait for DOM to be ready
+        function initializeWhenReady() {
+            if (document.readyState === 'loading') {
+                console.log('[Script] DOM not ready, waiting...');
+                document.addEventListener('DOMContentLoaded', initializeEverything);
+            } else {
+                console.log('[Script] DOM ready, initializing now...');
+                initializeEverything();
+            }
+        }
+
+        // Vehicle Map Implementation using TimestampedGeoJson
+        class VehicleMapTemplate {
+            constructor() {
+                console.log('[VehicleMapTemplate] Constructor started');
+                this.map = null;
+                this.timeDimension = null;
+                this.timeDimensionControl = null;
+                this.vehicles = new Map();
+                this.vehicleGeoJsonLayers = new Map();
+                this.vehicleColors = new Map();
+                this.currentTimeLayer = null;
+
+                console.log('[VehicleMapTemplate] Calling initializeMap()...');
+                this.initializeMap();
+            }
+
+            initializeMap() {
+                try {
+                    console.log('[VehicleMapTemplate] initializeMap() started');
+                    console.log('[VehicleMapTemplate] Checking for Leaflet: ', typeof L !== 'undefined' ? 'Found' : 'NOT FOUND!');
+
+                    // Check if map container exists
+                    const mapElement = document.getElementById('map');
+                    console.log('[VehicleMapTemplate] Map container element:', mapElement ? 'Found' : 'NOT FOUND!');
+
+                    if (!mapElement) {
+                        console.error('[VehicleMapTemplate] ERROR: Map container element not found!');
+                        return;
+                    }
+
+                    // Create Leaflet map
+                    console.log('[VehicleMapTemplate] Creating Leaflet map...');
+
+                    // Start with basic map, add TimeDimension later when we have data
+                    this.map = L.map('map', {
+                        center: [45.4215, -75.6972],
+                        zoom: 13
+                    });
+
+                    console.log('[VehicleMapTemplate] Basic map created, will add TimeDimension when data loaded');
+                    console.log('[VehicleMapTemplate] Map created successfully:', this.map);
+
+                    // Add base tile layer
+                    console.log('[VehicleMapTemplate] Adding OpenStreetMap tile layer...');
+                    const tileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                        attribution: '© OpenStreetMap contributors',
+                        maxZoom: 19
+                    }).addTo(this.map);
+                    console.log('[VehicleMapTemplate] Tile layer added:', tileLayer);
+
+                    // TimeDimension will be created when data is loaded
+                    // this.timeDimension = this.map.timeDimension;
+                    console.log('[VehicleMapTemplate] TimeDimension will be initialized when vehicle data is loaded');
+
+                    // Hide loading overlay
+                    console.log('[VehicleMapTemplate] Hiding loading overlay...');
+                    const loadingElement = document.getElementById('loading');
+                    if (loadingElement) {
+                        loadingElement.classList.add('hidden');
+                        console.log('[VehicleMapTemplate] Loading overlay hidden');
+                    } else {
+                        console.warn('[VehicleMapTemplate] Loading overlay element not found');
+                    }
+
+                    // Dispatch ready event
+                    console.log('[VehicleMapTemplate] Dispatching ready event...');
+                    this.dispatchReadyEvent();
+                    console.log('[VehicleMapTemplate] Map initialization complete!');
+
+                } catch (error) {
+                    console.error('[VehicleMapTemplate] ERROR during initialization:', error);
+                    console.error('[VehicleMapTemplate] Stack trace:', error.stack);
+
+                    // Try to hide loading overlay even if error
+                    const loadingElement = document.getElementById('loading');
+                    if (loadingElement) {
+                        loadingElement.classList.add('hidden');
+                    }
+                }
+            }
+            
+            initializeTimeDimension(startTime, endTime) {
+                console.log('[VehicleMapTemplate] Initializing TimeDimension with range:', startTime, endTime);
+
+                if (!this.timeDimension && startTime && endTime) {
+                    // Create TimeDimension with actual data range
+                    const startDate = new Date(startTime);
+                    const endDate = new Date(endTime);
+
+                    // Format dates as ISO strings
+                    const timeInterval = `${startDate.toISOString()}/${endDate.toISOString()}`;
+                    console.log('[VehicleMapTemplate] Time interval:', timeInterval);
+
+                    // Add TimeDimension to existing map
+                    this.timeDimension = L.timeDimension({
+                        timeInterval: timeInterval,
+                        period: "PT1S",  // 1 second intervals
+                        currentTime: startTime
+                    });
+                    this.map.timeDimension = this.timeDimension;
+
+                    // Add time control
+                    this.timeDimensionControl = L.control.timeDimension({
+                        autoPlay: false,
+                        playerOptions: {
+                            buffer: 5,
+                            minBufferReady: 1,
+                            loop: true,
+                            transitionTime: 100
+                        },
+                        speedSlider: true,
+                        speedSliderOptions: {
+                            minValue: 0.1,
+                            maxValue: 10,
+                            stepValue: 0.1,
+                            startValue: 1
+                        }
+                    }).addTo(this.map);
+
+                    console.log('[VehicleMapTemplate] TimeDimension initialized successfully');
+                }
+            }
+
+            loadVehicles(vehicleData) {
+                console.log('Loading vehicles with TimestampedGeoJson:', vehicleData);
+
+                try {
+                    // Clear existing data
+                    this.clearVehicles();
+
+                    if (!vehicleData || !vehicleData.vehicles) {
+                        console.error('Invalid vehicle data');
+                        return;
+                    }
+
+                    // Process each vehicle
+                    let allFeatures = [];
+                    let minTime = null;
+                    let maxTime = null;
+                    let totalPoints = 0;
+                    
+                    vehicleData.vehicles.forEach(vehicle => {
+                        this.vehicles.set(vehicle.vehicle_id, vehicle);
+                        this.vehicleColors.set(vehicle.vehicle_id, vehicle.color || '#0066CC');
+                        
+                        // Convert vehicle GPS points to GeoJSON features with time
+                        const features = this.vehicleToGeoJsonFeatures(vehicle);
+                        allFeatures = allFeatures.concat(features);
+                        
+                        // Track time bounds
+                        if (vehicle.gps_points && vehicle.gps_points.length > 0) {
+                            totalPoints += vehicle.gps_points.length;
+                            
+                            const times = vehicle.gps_points.map(p => new Date(p.timestamp).getTime());
+                            const vMinTime = Math.min(...times);
+                            const vMaxTime = Math.max(...times);
+                            
+                            minTime = minTime ? Math.min(minTime, vMinTime) : vMinTime;
+                            maxTime = maxTime ? Math.max(maxTime, vMaxTime) : vMaxTime;
+                        }
+                        
+                        // Add to vehicle list UI
+                        this.addVehicleToList(vehicle);
+                    });
+                    
+                    // Create GeoJSON layer with all features
+                    if (allFeatures.length > 0) {
+                        const geoJsonData = {
+                            type: "FeatureCollection",
+                            features: allFeatures
+                        };
+                        
+                        // Create GeoJSON layer
+                        const geoJsonLayer = L.geoJSON(geoJsonData, {
+                            pointToLayer: (feature, latlng) => {
+                                return this.createVehicleMarker(feature, latlng);
+                            },
+                            onEachFeature: (feature, layer) => {
+                                this.bindVehiclePopup(feature, layer);
+                            }
+                        });
+
+                        // Initialize TimeDimension with actual data range FIRST
+                        if (minTime && maxTime) {
+                            // Initialize TimeDimension if not already done
+                            this.initializeTimeDimension(minTime, maxTime);
+                        }
+
+                        // NOW create TimeDimension layer (after TimeDimension is initialized)
+                        const timeDimensionLayer = L.timeDimension.layer.geoJson(geoJsonLayer, {
+                            updateTimeDimension: true,
+                            updateTimeDimensionMode: 'replace',
+                            addlastPoint: false,
+                            duration: 'PT2S'  // Show points for 2 seconds
+                        });
+
+                        timeDimensionLayer.addTo(this.map);
+                        this.currentTimeLayer = timeDimensionLayer;
+
+                        // Update time range UI
+                        if (minTime && maxTime) {
+
+                            // Update UI
+                            this.updateTimeRange(new Date(minTime), new Date(maxTime));
+                        }
+                        
+                        // Fit map bounds
+                        this.fitMapToData(allFeatures);
+                    }
+                    
+                    // Update statistics
+                    this.updateStats(vehicleData.vehicles.length, totalPoints);
+                    
+                } catch (error) {
+                    console.error('Error loading vehicles:', error);
+                    this.handleError(error.message);
+                }
+            }
+            
+            vehicleToGeoJsonFeatures(vehicle) {
+                const features = [];
+                const color = vehicle.color || '#0066CC';
+                
+                // Create a feature for each GPS point with its timestamp
+                vehicle.gps_points.forEach((point, index) => {
+                    const feature = {
+                        type: "Feature",
+                        properties: {
+                            vehicle_id: vehicle.vehicle_id,
+                            vehicle_label: vehicle.label || vehicle.vehicle_id,
+                            color: color,
+                            speed: point.speed || 0,
+                            time: point.timestamp,  // ISO string timestamp
+                            index: index,
+                            interpolated: point.interpolated || false
+                        },
+                        geometry: {
+                            type: "Point",
+                            coordinates: [point.longitude, point.latitude]
+                        }
+                    };
+                    features.push(feature);
+                });
+                
+                // Also create a LineString for the trail
+                if (vehicle.gps_points.length > 1) {
+                    const trailFeature = {
+                        type: "Feature",
+                        properties: {
+                            vehicle_id: vehicle.vehicle_id,
+                            vehicle_label: vehicle.label || vehicle.vehicle_id,
+                            color: color,
+                            type: 'trail',
+                            times: vehicle.gps_points.map(p => p.timestamp)  // Array of timestamps
+                        },
+                        geometry: {
+                            type: "LineString",
+                            coordinates: vehicle.gps_points.map(p => [p.longitude, p.latitude])
+                        }
+                    };
+                    features.push(trailFeature);
+                }
+                
+                return features;
+            }
+            
+            createVehicleMarker(feature, latlng) {
+                const color = feature.properties.color || '#0066CC';
+                const label = feature.properties.vehicle_label || '';
+                
+                // Create different markers for points vs trails
+                if (feature.geometry.type === 'LineString') {
+                    // This is a trail, will be handled by onEachFeature
+                    return null;
+                }
+                
+                // Create custom div icon for vehicle point
+                const icon = L.divIcon({
+                    className: 'vehicle-marker-icon',
+                    html: `<div style="border-color: ${color};">🚗</div>`,
+                    iconSize: [24, 24],
+                    iconAnchor: [12, 12],
+                    popupAnchor: [0, -12]
+                });
+                
+                return L.marker(latlng, { 
+                    icon: icon,
+                    title: label
+                });
+            }
+            
+            bindVehiclePopup(feature, layer) {
+                if (feature.geometry.type === 'Point') {
+                    const props = feature.properties;
+                    const time = new Date(props.time).toLocaleString();
+                    const popup = `
+                        <div style="min-width: 200px;">
+                            <b>${props.vehicle_label}</b><br>
+                            <small style="color: #666;">Vehicle ID: ${props.vehicle_id}</small><br>
+                            <hr style="margin: 5px 0;">
+                            <b>Time:</b> ${time}<br>
+                            <b>Speed:</b> ${props.speed ? props.speed.toFixed(1) + ' km/h' : 'N/A'}<br>
+                            ${props.interpolated ? '<small><i>Interpolated point</i></small>' : ''}
+                        </div>
+                    `;
+                    layer.bindPopup(popup);
+                    
+                    // Click handler
+                    layer.on('click', () => {
+                        this.onVehicleClick(props.vehicle_id);
+                    });
+                } else if (feature.geometry.type === 'LineString') {
+                    // Style the trail
+                    if (layer.setStyle) {
+                        layer.setStyle({
+                            color: feature.properties.color,
+                            weight: 3,
+                            opacity: 0.6,
+                            smoothFactor: 1
+                        });
+                    }
+                }
+            }
+            
+            // Required interface methods
+            
+            startAnimation() {
+                if (this.timeDimension) {
+                    this.timeDimension.start();
+                } else {
+                    console.warn('[VehicleMapTemplate] Cannot start animation - TimeDimension not initialized');
+                }
+            }
+
+            stopAnimation() {
+                if (this.timeDimension) {
+                    this.timeDimension.stop();
+                    this.timeDimension.setCurrentTime(this.timeDimension.getLowerLimit());
+                } else {
+                    console.warn('[VehicleMapTemplate] Cannot stop animation - TimeDimension not initialized');
+                }
+            }
+
+            pauseAnimation() {
+                if (this.timeDimension) {
+                    this.timeDimension.stop();
+                } else {
+                    console.warn('[VehicleMapTemplate] Cannot pause animation - TimeDimension not initialized');
+                }
+            }
+            
+            seekToTime(timestamp) {
+                if (this.timeDimension) {
+                    this.timeDimension.setCurrentTime(new Date(timestamp).getTime());
+                }
+            }
+            
+            setPlaybackSpeed(speed) {
+                if (this.map.timeDimensionControl) {
+                    // TimeDimension uses transition time, lower = faster
+                    const transitionTime = Math.max(50, 1000 / speed);
+                    this.map.timeDimensionControl.setTransitionTime(transitionTime);
+                }
+            }
+            
+            updateVehicles(vehicleData) {
+                this.loadVehicles(vehicleData);
+            }
+            
+            clearVehicles() {
+                // Remove TimeDimension layer
+                if (this.currentTimeLayer) {
+                    this.map.removeLayer(this.currentTimeLayer);
+                    this.currentTimeLayer = null;
+                }
+                
+                // Clear data
+                this.vehicles.clear();
+                this.vehicleColors.clear();
+                
+                // Clear UI
+                document.getElementById('vehicle-list').innerHTML = '';
+                this.updateStats(0, 0);
+            }
+            
+            focusVehicle(vehicleId) {
+                const vehicle = this.vehicles.get(vehicleId);
+                if (vehicle && vehicle.gps_points && vehicle.gps_points.length > 0) {
+                    const firstPoint = vehicle.gps_points[0];
+                    this.map.setView([firstPoint.latitude, firstPoint.longitude], 16);
+                }
+            }
+            
+            setMapStyle(style) {
+                console.log('Map style change requested:', style);
+                // Would need to change tile layer for different styles
+            }
+            
+            // Helper methods
+            
+            fitMapToData(features) {
+                const bounds = L.geoJSON({
+                    type: "FeatureCollection",
+                    features: features
+                }).getBounds();
+                
+                if (bounds.isValid()) {
+                    this.map.fitBounds(bounds, { padding: [50, 50] });
+                }
+            }
+            
+            addVehicleToList(vehicle) {
+                const listContainer = document.getElementById('vehicle-list');
+                const color = vehicle.color || '#0066CC';
+                
+                const item = document.createElement('div');
+                item.className = 'vehicle-item';
+                item.innerHTML = `
+                    <div class="vehicle-color" style="background-color: ${color};"></div>
+                    <div>${vehicle.label || vehicle.vehicle_id}</div>
+                `;
+                item.onclick = () => this.focusVehicle(vehicle.vehicle_id);
+                
+                listContainer.appendChild(item);
+            }
+            
+            updateStats(vehicleCount, pointCount) {
+                document.getElementById('vehicle-count').textContent = vehicleCount;
+                document.getElementById('point-count').textContent = pointCount.toLocaleString();
+            }
+            
+            updateTimeRange(startTime, endTime) {
+                const start = startTime.toLocaleTimeString();
+                const end = endTime.toLocaleTimeString();
+                document.getElementById('time-range').textContent = `${start} - ${end}`;
+            }
+            
+            onVehicleClick(vehicleId) {
+                console.log('Vehicle clicked:', vehicleId);
+                if (window.qtBridge) {
+                    window.qtBridge.onVehicleClick(vehicleId);
+                }
+            }
+            
+            handleError(message) {
+                console.error('Map error:', message);
+                if (window.qtBridge) {
+                    window.qtBridge.onError(message);
+                }
+            }
+            
+            dispatchReadyEvent() {
+                console.log('[VehicleMapTemplate] Dispatching ready event');
+                mapReadyState = true; // Set the flag
+                window.dispatchEvent(new Event('mapReady'));
+
+                // Notify Qt bridge if it's already connected
+                if (window.qtBridge) {
+                    console.log('[VehicleMapTemplate] Qt bridge found, calling onMapReady()');
+                    window.qtBridge.onMapReady();
+                } else {
+                    console.log('[VehicleMapTemplate] Qt bridge not yet connected, will notify when ready');
+                }
+            }
+        }
+        
+        // Main initialization function
+        function initializeEverything() {
+            console.log('[Main] Starting map initialization...');
+            console.log('[Main] Document ready state:', document.readyState);
+            console.log('[Main] Leaflet available?', typeof L !== 'undefined');
+
+            // Initialize map
+            console.log('[Main] Creating VehicleMapTemplate instance...');
+            try {
+                window.vehicleMap = new VehicleMapTemplate();
+                console.log('[Main] VehicleMapTemplate instance created:', window.vehicleMap);
+            } catch (error) {
+                console.error('[Main] Failed to create VehicleMapTemplate:', error);
+                console.error('[Main] Stack:', error.stack);
+            }
+
+            // Qt WebChannel integration
+            setupQtBridge();
+        }
+
+        // Qt WebChannel integration
+        let qtBridgeRetries = 0;
+        const MAX_QT_RETRIES = 10; // Try for 1 second then give up
+        let mapReadyState = false; // Track if map is ready
+
+        function setupQtBridge() {
+            qtBridgeRetries++;
+
+            if (qtBridgeRetries === 1) {
+                console.log('[QtBridge] Attempting to connect to Qt WebChannel...');
+            }
+
+            if (typeof QWebChannel !== 'undefined' && typeof qt !== 'undefined' && qt.webChannelTransport) {
+                console.log('[QtBridge] Qt WebChannel found, connecting...');
+                new QWebChannel(qt.webChannelTransport, function(channel) {
+                    window.qtBridge = channel.objects.bridge;
+
+                    if (window.qtBridge) {
+                        console.log('[QtBridge] ✓ Successfully connected to Qt bridge');
+
+                        // If map is already ready, notify Qt immediately
+                        if (mapReadyState && window.vehicleMap) {
+                            console.log('[QtBridge] Map was already ready, notifying Qt now');
+                            window.qtBridge.onMapReady();
+                        }
+
+                        // Connect signals from Qt
+                        window.qtBridge.loadVehiclesSignal.connect(function(data) {
+                            window.vehicleMap.loadVehicles(JSON.parse(data));
+                        });
+
+                        window.qtBridge.controlSignal.connect(function(command) {
+                            switch(command) {
+                                case 'play': window.vehicleMap.startAnimation(); break;
+                                case 'pause': window.vehicleMap.pauseAnimation(); break;
+                                case 'stop': window.vehicleMap.stopAnimation(); break;
+                                case 'clear': window.vehicleMap.clearVehicles(); break;
+                            }
+                        });
+
+                        window.qtBridge.seekSignal.connect(function(timestamp) {
+                            window.vehicleMap.seekToTime(timestamp * 1000);
+                        });
+
+                        window.qtBridge.speedSignal.connect(function(speed) {
+                            window.vehicleMap.setPlaybackSpeed(speed);
+                        });
+                    }
+                });
+            } else {
+                if (qtBridgeRetries < MAX_QT_RETRIES) {
+                    // Keep trying
+                    setTimeout(setupQtBridge, 100);
+                } else {
+                    // Give up after max retries
+                    console.log('[QtBridge] Qt WebChannel not available after ' + MAX_QT_RETRIES + ' attempts');
+                    console.log('[QtBridge] Running in standalone mode (no Qt communication)');
+                }
+            }
+        }
+
+        // Try to set up Qt bridge (called from initializeEverything)
+        // setupQtBridge(); // Removed - now called from initializeEverything
+
+        // Start initialization when DOM is ready
+        initializeWhenReady();
+    </script>
+</body>
+</html>

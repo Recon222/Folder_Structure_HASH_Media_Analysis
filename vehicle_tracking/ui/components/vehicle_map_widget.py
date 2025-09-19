@@ -376,8 +376,10 @@ class VehicleMapWidget(QWidget):
 
                 # Also try direct JavaScript injection as backup
                 import json
-                vehicle_json = json.dumps(vehicle_dict)
-                js_code = f"if (window.vehicleMap) {{ window.vehicleMap.loadVehicles({vehicle_json}); console.log('Data sent directly to map'); }}"
+                # Properly escape JSON for safe JavaScript execution
+                vehicle_json = json.dumps(vehicle_dict, ensure_ascii=True)
+                # Use JSON.parse to safely parse the JSON string in JavaScript
+                js_code = f"if (window.vehicleMap) {{ window.vehicleMap.loadVehicles(JSON.parse({json.dumps(vehicle_json)})); console.log('Data sent directly to map'); }}"
                 self.web_view.page().runJavaScript(js_code)
 
                 # Enable timeline if we have animation data

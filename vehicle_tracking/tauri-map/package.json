@@ -1,0 +1,17 @@
+{
+  "name": "tauri-map",
+  "version": "0.1.0",
+  "description": "Vehicle Tracking Map Viewer",
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "build:win": "npx @tauri-apps/cli build"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^1.5.6"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^1.5.14"
+  }
+}

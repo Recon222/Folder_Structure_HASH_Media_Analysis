@@ -124,7 +124,13 @@ class MainWindow(QMainWindow):
         self.media_analysis_tab.log_message.connect(self.log)
         # Note: status_message will be connected after status_bar is created
         self.tabs.addTab(self.media_analysis_tab, "Media Analysis")
-        
+
+        # Vehicle Tracking tab
+        from vehicle_tracking.ui.vehicle_tracking_tab import VehicleTrackingTab
+        self.vehicle_tracking_tab = VehicleTrackingTab()
+        self.vehicle_tracking_tab.log_message.connect(self.log)
+        self.tabs.addTab(self.vehicle_tracking_tab, "Vehicle Tracking")
+
         # Configure tab widget to prevent content-based expansion
         self.tabs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         

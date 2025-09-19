@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Vehicle Tracking Map</title>
+    <script>
+        // Get provider from URL params or default
+        const params = new URLSearchParams(window.location.search);
+        const provider = params.get('provider') || 'mapbox';
+
+        // Debug logging
+        console.log('[index.html] Current URL search:', window.location.search);
+        console.log('[index.html] Provider:', provider);
+        console.log('[index.html] Redirecting to:', `${provider}.html${window.location.search}`);
+
+        // Simply redirect to the appropriate template, preserving ALL parameters
+        window.location.href = `${provider}.html${window.location.search}`;
+    </script>
+</head>
+<body>Loading...</body>
+</html>
