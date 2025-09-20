@@ -40,6 +40,15 @@ try:
 except ImportError:
     HAS_NUMPY = False
 
+# Import pyproj for metric projections
+try:
+    import pyproj
+    from pyproj import Transformer
+    HAS_PYPROJ = True
+except ImportError:
+    HAS_PYPROJ = False
+    logger.warning("pyproj not available - GPS interpolation may have speed wobbles at different latitudes")
+
 logger = logging.getLogger(__name__)
 
 
@@ -603,6 +612,82 @@ class VehicleTrackingService(BaseService, IVehicleTrackingService):
                            f"Data already at {dt}s intervals, skipping interpolation")
         return True
 
+    def _get_metric_transformer(self, center_lat: float, center_lon: float) -> Tuple[Optional[Transformer], Optional[Transformer]]:
+        """
+        Create transformers for converting between WGS84 and local metric projection.
+        Uses Azimuthal Equidistant projection centered on the data.
+
+        Args:
+            center_lat: Center latitude for projection
+            center_lon: Center longitude for projection
+
+        Returns:
+            Tuple of (to_metric, to_wgs84) transformers, or (None, None) if pyproj unavailable
+        """
+        if not HAS_PYPROJ:
+            return None, None
+
+        try:
+            # Define custom Azimuthal Equidistant projection centered on data
+            proj_string = f"+proj=aeqd +lat_0={center_lat} +lon_0={center_lon} +datum=WGS84 +units=m"
+
+            # Create transformers
+            to_metric = Transformer.from_crs("EPSG:4326", proj_string, always_xy=True)
+            to_wgs84 = Transformer.from_crs(proj_string, "EPSG:4326", always_xy=True)
+
+            return to_metric, to_wgs84
+        except Exception as e:
+            self._log_operation("metric_projection", f"Failed to create projections: {e}")
+            return None, None
+
+    def _interpolate_in_metric(
+        self,
+        seg_start: GPSPoint,
+        seg_end: GPSPoint,
+        time_ratio: float,
+        to_metric: Optional[Transformer],
+        to_wgs84: Optional[Transformer]
+    ) -> Tuple[float, float]:
+        """
+        Interpolate position in metric space then convert back to WGS84.
+        This ensures uniform speed and eliminates latitude-based distortion.
+
+        Args:
+            seg_start: Starting GPS point
+            seg_end: Ending GPS point
+            time_ratio: Interpolation ratio (0.0 to 1.0)
+            to_metric: Transformer to metric coordinates (optional)
+            to_wgs84: Transformer back to WGS84 (optional)
+
+        Returns:
+            Tuple of (latitude, longitude) interpolated position
+        """
+        # Fall back to simple linear interpolation if projections unavailable
+        if to_metric is None or to_wgs84 is None:
+            lat = seg_start.latitude + (seg_end.latitude - seg_start.latitude) * time_ratio
+            lon = seg_start.longitude + (seg_end.longitude - seg_start.longitude) * time_ratio
+            return lat, lon
+
+        try:
+            # Convert to metric coordinates
+            start_x, start_y = to_metric.transform(seg_start.longitude, seg_start.latitude)
+            end_x, end_y = to_metric.transform(seg_end.longitude, seg_end.latitude)
+
+            # Interpolate in metric space (uniform distance)
+            interp_x = start_x + (end_x - start_x) * time_ratio
+            interp_y = start_y + (end_y - start_y) * time_ratio
+
+            # Convert back to WGS84
+            lon, lat = to_wgs84.transform(interp_x, interp_y)
+
+            return lat, lon
+        except Exception as e:
+            # Fall back to simple interpolation on error
+            self._log_operation("metric_interpolation", f"Projection failed, using linear: {e}")
+            lat = seg_start.latitude + (seg_end.latitude - seg_start.latitude) * time_ratio
+            lon = seg_start.longitude + (seg_end.longitude - seg_start.longitude) * time_ratio
+            return lat, lon
+
     def interpolate_path_global_resampling(
         self,
         vehicle_data: VehicleData,
@@ -646,6 +731,13 @@ class VehicleTrackingService(BaseService, IVehicleTrackingService):
             # Track progress
             total_duration = (points[-1].timestamp - points[0].timestamp).total_seconds()
 
+            # Create metric transformers for accurate interpolation
+            # Use the center of the dataset as the projection center
+            center_idx = len(points) // 2
+            center_lat = points[center_idx].latitude
+            center_lon = points[center_idx].longitude
+            to_metric, to_wgs84 = self._get_metric_transformer(center_lat, center_lon)
+
             # Walk through time at exact intervals
             while seg_idx < len(points) - 1 and t_emit <= points[-1].timestamp:
                 seg_start = points[seg_idx]
@@ -682,9 +774,10 @@ class VehicleTrackingService(BaseService, IVehicleTrackingService):
                             t_emit = points[0].timestamp + timedelta(seconds=k * dt)
                             continue
 
-                        # Linear interpolation of position
-                        lat = seg_start.latitude + (seg_end.latitude - seg_start.latitude) * time_ratio
-                        lon = seg_start.longitude + (seg_end.longitude - seg_start.longitude) * time_ratio
+                        # Interpolate position in metric space for accurate distances
+                        lat, lon = self._interpolate_in_metric(
+                            seg_start, seg_end, time_ratio, to_metric, to_wgs84
+                        )
 
                         # Interpolate speed
                         start_speed = seg_start.calculated_speed_kmh or seg_start.speed_kmh or 0
