@@ -770,7 +770,9 @@
             maxVehicles: 100,
             maxPointsPerVehicle: 10000,
             errorDisplayDuration: 5000,
-            debounceDelay: 100
+            debounceDelay: 100,
+            // NEW: Flag to disable JavaScript interpolation when Python already interpolated
+            disableJSInterpolation: true  // Set to true when using Python interpolation
         };
 
         // Token Modal Manager
@@ -882,6 +884,16 @@
         // Production-ready Vehicle Map Implementation
         class VehicleMapTemplate {
             constructor() {
+                // LOG INTERPOLATION CONFIGURATION ON STARTUP
+                console.log('='.repeat(60));
+                console.log('[Vehicle Map Initialization]');
+                console.log('JavaScript Interpolation:', CONFIG.disableJSInterpolation ? 'DISABLED' : 'ENABLED');
+                console.log('Mode:', CONFIG.disableJSInterpolation ?
+                    'Using Python-interpolated points directly (no JS interpolation)' :
+                    'JavaScript will interpolate between points');
+                console.log('Python Interpolation Expected:', CONFIG.disableJSInterpolation ? 'YES' : 'NO');
+                console.log('='.repeat(60));
+
                 // State management
                 this.state = {
                     isInitialized: false,
@@ -905,7 +917,8 @@
                 
                 // Animation
                 this.animationFrame = null;
-                
+                this.lastNearestIndex = null; // Track last nearest point for debugging
+
                 // Map reference
                 this.map = null;
                 
@@ -1787,6 +1800,17 @@
             findPointAtTime(points, timestamp) {
                 if (!points || points.length === 0) return null;
 
+                // Log interpolation status periodically (every 60 frames = ~1 second)
+                if (this.performanceMetrics.frameCount % 60 === 0) {
+                    console.log('[Interpolation Status]', {
+                        disableJSInterpolation: CONFIG.disableJSInterpolation,
+                        mode: CONFIG.disableJSInterpolation ? 'NEAREST POINT (No JS interpolation)' : 'LINEAR INTERPOLATION (JS enabled)',
+                        timestamp: new Date(timestamp).toISOString(),
+                        pointCount: points.length,
+                        frameCount: this.performanceMetrics.frameCount
+                    });
+                }
+
                 // Binary search for efficiency
                 let left = 0;
                 let right = points.length - 1;
@@ -1809,10 +1833,48 @@
                     return points[points.length - 1];
                 }
 
-                // Interpolate between points
+                // NEW: If JavaScript interpolation is disabled (because Python already interpolated)
+                // just find and return the nearest point without interpolation
+                if (CONFIG.disableJSInterpolation) {
+                    const p1 = points[left];
+                    const p2 = points[right];
+
+                    // Calculate which point is closer to the target timestamp
+                    const diff1 = Math.abs(timestamp - p1.timestamp);
+                    const diff2 = Math.abs(timestamp - p2.timestamp);
+
+                    const nearestPoint = diff1 <= diff2 ? p1 : p2;
+
+                    // Log when we switch between points (helps debug stuttering)
+                    if (this.lastNearestIndex !== left && this.lastNearestIndex !== right) {
+                        console.log('[Point Switch]', {
+                            from: this.lastNearestIndex,
+                            to: diff1 <= diff2 ? left : right,
+                            timestamp: new Date(timestamp).toISOString(),
+                            nearestTimestamp: new Date(nearestPoint.timestamp).toISOString(),
+                            timeDiff: diff1 <= diff2 ? diff1 : diff2
+                        });
+                        this.lastNearestIndex = diff1 <= diff2 ? left : right;
+                    }
+
+                    return nearestPoint;
+                }
+
+                // ORIGINAL: Interpolate between points (only when JS interpolation is enabled)
                 const p1 = points[left];
                 const p2 = points[right];
                 const ratio = (timestamp - p1.timestamp) / (p2.timestamp - p1.timestamp);
+
+                // Log interpolation details occasionally
+                if (this.performanceMetrics.frameCount % 120 === 0) {
+                    console.log('[JS Interpolation Active]', {
+                        between: [left, right],
+                        ratio: ratio.toFixed(3),
+                        p1Time: new Date(p1.timestamp).toISOString(),
+                        p2Time: new Date(p2.timestamp).toISOString(),
+                        targetTime: new Date(timestamp).toISOString()
+                    });
+                }
 
                 return {
                     latitude: p1.latitude + (p2.latitude - p1.latitude) * ratio,

@@ -539,110 +539,201 @@ class VehicleTrackingService(BaseService, IVehicleTrackingService):
             speed_kmh = 0
         
         return speed_kmh, distance_km
-    
-    def interpolate_path(
-        self, 
-        vehicle_data: VehicleData, 
+
+    def _interpolate_heading(self, heading1: float, heading2: float, ratio: float) -> float:
+        """
+        Circular interpolation for compass headings (0-360 degrees)
+        Handles wraparound at 0/360 boundary by taking shortest angular path
+
+        Args:
+            heading1: Starting heading in degrees
+            heading2: Ending heading in degrees
+            ratio: Interpolation ratio (0.0 to 1.0)
+
+        Returns:
+            Interpolated heading in degrees (0-360)
+        """
+        # Normalize to 0-360 range
+        h1 = heading1 % 360
+        h2 = heading2 % 360
+
+        # Find shortest angular distance
+        diff = h2 - h1
+        if diff > 180:
+            diff -= 360
+        elif diff < -180:
+            diff += 360
+
+        # Interpolate
+        result = h1 + diff * ratio
+
+        # Normalize result to 0-360
+        if result < 0:
+            result += 360
+        elif result >= 360:
+            result -= 360
+
+        return result
+
+    def interpolate_path_global_resampling(
+        self,
+        vehicle_data: VehicleData,
         settings: VehicleTrackingSettings,
         progress_callback: Optional[Callable[[float, str], None]] = None
     ) -> Result[VehicleData]:
         """
-        Interpolate GPS points for smooth animation
-        
+        Global resampling interpolation - samples path at uniform time intervals.
+        This eliminates variance and ensures perfectly even time spacing.
+
         Args:
             vehicle_data: Vehicle data to interpolate
             settings: Processing settings
             progress_callback: Optional progress callback
-            
+
         Returns:
-            Result containing interpolated VehicleData
+            Result containing interpolated VehicleData with uniform time spacing
+        """
+        try:
+            points = vehicle_data.gps_points
+            if len(points) < 2:
+                return Result.success(vehicle_data)
+
+            dt = settings.interpolation_interval_seconds
+            interpolated = []
+
+            # Always include first point
+            interpolated.append(points[0])
+
+            # Initialize emission time to first interval after start
+            t_emit = points[0].timestamp + timedelta(seconds=dt)
+            seg_idx = 0
+
+            # Track progress
+            total_duration = (points[-1].timestamp - points[0].timestamp).total_seconds()
+
+            # Walk through time at exact intervals
+            while seg_idx < len(points) - 1 and t_emit <= points[-1].timestamp:
+                seg_start = points[seg_idx]
+                seg_end = points[seg_idx + 1]
+
+                # Find the segment containing t_emit
+                while seg_idx < len(points) - 1 and t_emit > seg_end.timestamp:
+                    seg_idx += 1
+                    if seg_idx < len(points) - 1:
+                        seg_start = points[seg_idx]
+                        seg_end = points[seg_idx + 1]
+
+                # If t_emit falls within this segment, interpolate
+                if seg_idx < len(points) - 1 and t_emit <= seg_end.timestamp:
+                    # Calculate position ratio within segment
+                    seg_duration = (seg_end.timestamp - seg_start.timestamp).total_seconds()
+
+                    if seg_duration > 0:
+                        time_ratio = (t_emit - seg_start.timestamp).total_seconds() / seg_duration
+
+                        # Linear interpolation of position
+                        lat = seg_start.latitude + (seg_end.latitude - seg_start.latitude) * time_ratio
+                        lon = seg_start.longitude + (seg_end.longitude - seg_start.longitude) * time_ratio
+
+                        # Interpolate speed
+                        start_speed = seg_start.calculated_speed_kmh or seg_start.speed_kmh or 0
+                        end_speed = seg_end.calculated_speed_kmh or seg_end.speed_kmh or 0
+                        speed = start_speed + (end_speed - start_speed) * time_ratio
+
+                        # Create interpolated point
+                        interp_point = GPSPoint(
+                            latitude=lat,
+                            longitude=lon,
+                            timestamp=t_emit,
+                            calculated_speed_kmh=speed,
+                            is_interpolated=True
+                        )
+
+                        # Interpolate optional fields
+                        if seg_start.altitude is not None and seg_end.altitude is not None:
+                            interp_point.altitude = seg_start.altitude + \
+                                                   (seg_end.altitude - seg_start.altitude) * time_ratio
+
+                        if seg_start.heading is not None and seg_end.heading is not None:
+                            interp_point.heading = self._interpolate_heading(
+                                seg_start.heading, seg_end.heading, time_ratio
+                            )
+
+                        interpolated.append(interp_point)
+
+                    # Advance to next emission time
+                    t_emit += timedelta(seconds=dt)
+
+                    # Update progress
+                    if progress_callback:
+                        elapsed = (t_emit - points[0].timestamp).total_seconds()
+                        progress = min(100, (elapsed / total_duration) * 100)
+                        progress_callback(progress, f"Global resampling: {len(interpolated)} points")
+                else:
+                    # Move to next time if we've gone past the data
+                    t_emit += timedelta(seconds=dt)
+
+            # Always include last point
+            if interpolated[-1].timestamp != points[-1].timestamp:
+                interpolated.append(points[-1])
+
+            # Update vehicle data
+            vehicle_data.gps_points = interpolated
+            vehicle_data.has_interpolated_points = True
+
+            self._log_operation("interpolate_path_global_resampling",
+                              f"Resampled from {len(points)} to {len(interpolated)} points "
+                              f"with perfect {dt}s spacing")
+
+            return Result.success(vehicle_data)
+
+        except Exception as e:
+            error = VehicleTrackingError(
+                f"Global resampling failed: {e}",
+                user_message="Error resampling GPS path"
+            )
+            self._handle_error(error)
+            return Result.error(error)
+
+    def interpolate_path(
+        self,
+        vehicle_data: VehicleData,
+        settings: VehicleTrackingSettings,
+        progress_callback: Optional[Callable[[float, str], None]] = None
+    ) -> Result[VehicleData]:
+        """
+        Interpolate GPS points for smooth animation using global resampling.
+        This ensures perfectly even time spacing with zero variance.
+
+        Args:
+            vehicle_data: Vehicle data to interpolate
+            settings: Processing settings
+            progress_callback: Optional progress callback
+
+        Returns:
+            Result containing interpolated VehicleData with uniform time spacing
         """
         try:
             if not settings.interpolation_enabled:
                 return Result.success(vehicle_data)
-            
-            self._log_operation("interpolate_path", 
-                              f"Interpolating {vehicle_data.vehicle_id} "
+
+            self._log_operation("interpolate_path",
+                              f"Using global resampling for {vehicle_data.vehicle_id} "
                               f"with {settings.interpolation_interval_seconds}s interval")
-            
+
             # Check cache
             cache_key = f"{vehicle_data.vehicle_id}_{settings.interpolation_interval_seconds}"
             if cache_key in self._interpolation_cache:
                 return Result.success(self._interpolation_cache[cache_key])
-            
-            interpolated_points = []
-            original_count = len(vehicle_data.gps_points)
-            
-            for i in range(len(vehicle_data.gps_points) - 1):
-                current = vehicle_data.gps_points[i]
-                next_point = vehicle_data.gps_points[i + 1]
-                
-                # Add original point
-                interpolated_points.append(current)
-                
-                # Calculate time difference
-                time_diff = (next_point.timestamp - current.timestamp).total_seconds()
-                
-                # Create interpolated points
-                num_interpolated = max(1, int(time_diff / settings.interpolation_interval_seconds))
-                
-                if num_interpolated > 1 and settings.interpolation_method != InterpolationMethod.LINEAR:
-                    # For non-linear methods, limit interpolation
-                    num_interpolated = min(num_interpolated, 10)
-                
-                for j in range(1, num_interpolated):
-                    ratio = j / num_interpolated
-                    
-                    # Linear interpolation (can be enhanced with other methods)
-                    lat = current.latitude + (next_point.latitude - current.latitude) * ratio
-                    lon = current.longitude + (next_point.longitude - current.longitude) * ratio
-                    
-                    # Interpolate timestamp
-                    timestamp = current.timestamp + timedelta(seconds=j * settings.interpolation_interval_seconds)
-                    
-                    # Interpolate speed
-                    current_speed = current.calculated_speed_kmh or current.speed_kmh or 0
-                    next_speed = next_point.calculated_speed_kmh or next_point.speed_kmh or 0
-                    speed = current_speed + (next_speed - current_speed) * ratio
-                    
-                    # Create interpolated point
-                    interp_point = GPSPoint(
-                        latitude=lat,
-                        longitude=lon,
-                        timestamp=timestamp,
-                        calculated_speed_kmh=speed,
-                        is_interpolated=True
-                    )
-                    
-                    # Interpolate optional fields
-                    if current.altitude is not None and next_point.altitude is not None:
-                        interp_point.altitude = current.altitude + (next_point.altitude - current.altitude) * ratio
-                    
-                    if current.heading is not None and next_point.heading is not None:
-                        interp_point.heading = current.heading + (next_point.heading - current.heading) * ratio
-                    
-                    interpolated_points.append(interp_point)
-                
-                # Progress update
-                if progress_callback and i % 100 == 0:
-                    progress = (i / len(vehicle_data.gps_points)) * 100
-                    progress_callback(progress, f"Interpolating: {len(interpolated_points)} points")
-            
-            # Add last point
-            if vehicle_data.gps_points:
-                interpolated_points.append(vehicle_data.gps_points[-1])
-            
-            # Update vehicle data
-            vehicle_data.gps_points = interpolated_points
-            vehicle_data.has_interpolated_points = True
-            
-            # Cache the result
-            self._interpolation_cache[cache_key] = vehicle_data
-            
-            self._log_operation("interpolate_path", 
-                              f"Interpolated from {original_count} to {len(interpolated_points)} points")
-            
-            return Result.success(vehicle_data)
+
+            # Use the new global resampling method
+            result = self.interpolate_path_global_resampling(vehicle_data, settings, progress_callback)
+
+            # Cache the successful result
+            if result.success:
+                self._interpolation_cache[cache_key] = result.value
+
+            return result
             
         except Exception as e:
             error = VehicleTrackingError(
