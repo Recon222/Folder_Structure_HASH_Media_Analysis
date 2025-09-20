@@ -765,7 +765,8 @@
             defaultCenter: [-75.6972, 45.4215],
             defaultZoom: 11,
             animationFPS: 60,
-            trailLength: 100,
+            trailLength: 0,  // Default to no trails
+            showTrails: true,  // Can be toggled
             maxVehicles: 100,
             maxPointsPerVehicle: 10000,
             errorDisplayDuration: 5000,
@@ -956,8 +957,8 @@
                 }
 
                 // In Tauri context, check for token from config
-                if (window.__TAURI__ && window.__TAURI__.invoke) {
-                    console.log('[waitForConfig] Running in Tauri context');
+                if (window.__TAURI__ && typeof window.__TAURI__.invoke === 'function') {
+                    console.log('[waitForConfig] Running in Tauri context with invoke available');
                     try {
                         const config = await window.__TAURI__.invoke('get_map_config');
                         console.log('[waitForConfig] Tauri config:', config);
@@ -969,7 +970,8 @@
                         console.warn('[waitForConfig] Failed to get config from Tauri:', error);
                     }
                 } else if (window.__TAURI__) {
-                    console.log('[waitForConfig] Tauri object exists but invoke is not ready');
+                    console.log('[waitForConfig] Tauri object exists but invoke is not a function');
+                    // Skip Tauri config, will fall through to prompt
                 }
 
                 // Show modal to get token
@@ -1130,6 +1132,7 @@
                         source: 'vehicle-trails',
                         paint: {
                             'line-color': ['get', 'color'],
+                            'line-opacity': ['get', 'opacity'],
                             'line-width': [
                                 'interpolate',
                                 ['linear'],
@@ -1137,7 +1140,6 @@
                                 10, 2,
                                 15, 4
                             ],
-                            'line-opacity': 0.6,
                             'line-blur': 1
                         },
                         layout: {
@@ -1400,6 +1402,24 @@
                     // Validate input
                     if (!this.validateVehicleData(vehicleData)) {
                         throw new Error('Invalid vehicle data format');
+                    }
+
+                    // Apply settings if provided
+                    if (vehicleData.settings) {
+                        CONFIG.showTrails = vehicleData.settings.showTrails !== undefined ?
+                                          vehicleData.settings.showTrails : false;  // Default to no trails
+                        CONFIG.trailLength = vehicleData.settings.trailLength !== undefined ?
+                                           vehicleData.settings.trailLength : 0;  // Default to none
+                        CONFIG.playbackSpeed = vehicleData.settings.playbackSpeed || 1.0;
+                        CONFIG.autoCenter = vehicleData.settings.autoCenter !== undefined ?
+                                          vehicleData.settings.autoCenter : true;
+                        CONFIG.showTimestamps = vehicleData.settings.showTimestamps !== undefined ?
+                                              vehicleData.settings.showTimestamps : false;
+
+                        console.log('[Settings] Trail settings:', {
+                            showTrails: CONFIG.showTrails,
+                            trailLength: CONFIG.trailLength
+                        });
                     }
 
                     // Clear existing data
@@ -1689,25 +1709,48 @@
                                     this.updateSpeedDisplay(currentPoint.speed);
                                 }
 
-                                // Create trail
-                                const trailPoints = this.getTrailPoints(
-                                    vehicle.gps_points,
-                                    this.state.currentTime,
-                                    CONFIG.trailLength
-                                );
+                                // Create trail (performance optimization: skip if disabled)
+                                if (CONFIG.showTrails && CONFIG.trailLength !== 0) {
+                                    // Debug logging for trail settings
+                                    if (this.performanceMetrics.frameCount % 60 === 0) { // Log every second
+                                        console.log('[Trail Debug]', {
+                                            showTrails: CONFIG.showTrails,
+                                            trailLength: CONFIG.trailLength,
+                                            vehicleId: vehicleId
+                                        });
+                                    }
 
-                                if (trailPoints.length > 1) {
-                                    trails.push({
-                                        type: 'Feature',
-                                        properties: {
-                                            vehicle_id: vehicleId,
-                                            color: color
-                                        },
-                                        geometry: {
-                                            type: 'LineString',
-                                            coordinates: trailPoints.map(p => [p.longitude, p.latitude])
+                                    const trailPoints = this.getTrailPoints(
+                                        vehicle.gps_points,
+                                        this.state.currentTime,
+                                        CONFIG.trailLength
+                                    );
+
+                                    if (trailPoints.length > 1) {
+                                        // Calculate trail age for opacity fading
+                                        let trailAge = 1.0;  // Default full opacity for persistent trails
+
+                                        if (CONFIG.trailLength > 0) {
+                                            // For time-based trails, calculate age ratio
+                                            const oldestPoint = trailPoints[0];
+                                            const ageMs = this.state.currentTime - oldestPoint.timestamp;
+                                            const maxAgeMs = CONFIG.trailLength * 1000;
+                                            trailAge = Math.max(0.3, 1.0 - (ageMs / maxAgeMs) * 0.7);
                                         }
-                                    });
+
+                                        trails.push({
+                                            type: 'Feature',
+                                            properties: {
+                                                vehicle_id: vehicleId,
+                                                color: color,
+                                                opacity: trailAge
+                                            },
+                                            geometry: {
+                                                type: 'LineString',
+                                                coordinates: trailPoints.map(p => [p.longitude, p.latitude])
+                                            }
+                                        });
+                                    }
                                 }
                             }
                         } catch (error) {
@@ -1779,15 +1822,41 @@
                 };
             }
 
-            getTrailPoints(points, currentTime, maxLength) {
-                const trail = [];
-                
-                for (let i = points.length - 1; i >= 0 && trail.length < maxLength; i--) {
-                    if (points[i].timestamp <= currentTime) {
-                        trail.unshift(points[i]);
-                    }
+            getTrailPoints(points, currentTime, trailSetting) {
+                // No trail
+                if (trailSetting === 0 || !CONFIG.showTrails) {
+                    return [];
                 }
-                
+
+                const trail = [];
+                let cutoffTime;
+
+                // Persistent trail (-1) shows all points up to current time
+                // Time-based trail (5-60) shows points within the time window
+                if (trailSetting === -1) {
+                    cutoffTime = 0;  // Show everything from start
+                } else {
+                    // Convert seconds to milliseconds for cutoff
+                    cutoffTime = currentTime - (trailSetting * 1000);
+                }
+
+                // Collect trail points within the time window
+                for (let i = points.length - 1; i >= 0; i--) {
+                    const pointTime = points[i].timestamp;
+
+                    // Stop if we've gone past the current time
+                    if (pointTime > currentTime) {
+                        continue;
+                    }
+
+                    // Stop if we've gone before the cutoff time (unless persistent)
+                    if (trailSetting !== -1 && pointTime < cutoffTime) {
+                        break;
+                    }
+
+                    trail.unshift(points[i]);
+                }
+
                 return trail;
             }
 
@@ -2127,28 +2196,31 @@
             onVehicleClick(vehicleId) {
                 console.log('Vehicle clicked:', vehicleId);
                 this.selectVehicleInList(vehicleId);
-                
-                // Send to Tauri if available
-                if (window.__TAURI__) {
-                    window.__TAURI__.invoke('vehicle_clicked', { vehicleId }).catch(console.error);
+
+                // Send through WebSocket instead of Tauri API
+                if (window.pythonBridge && window.pythonBridge.ws) {
+                    window.pythonBridge.send({
+                        type: 'vehicle_clicked',
+                        vehicleId: vehicleId
+                    });
                 }
             }
 
             onAnimationComplete() {
                 console.log('Animation complete');
-                
-                // Send to Tauri if available
-                if (window.__TAURI__) {
-                    window.__TAURI__.invoke('animation_complete').catch(console.error);
+
+                // Send through WebSocket instead of Tauri API
+                if (window.pythonBridge && window.pythonBridge.ws) {
+                    window.pythonBridge.send({ type: 'animation_complete' });
                 }
             }
 
             dispatchReadyEvent() {
                 window.dispatchEvent(new Event('mapReady'));
-                
-                // Notify Tauri if available
-                if (window.__TAURI__) {
-                    window.__TAURI__.invoke('map_ready').catch(console.error);
+
+                // Send ready notification through WebSocket instead of Tauri API
+                if (window.pythonBridge && window.pythonBridge.ws) {
+                    window.pythonBridge.send({ type: 'map_ready' });
                 }
             }
 
@@ -2161,13 +2233,14 @@
                 // Show error notification
                 this.showErrorNotification(`${message}: ${error.message || error}`);
 
-                // Send to Tauri if available
-                if (window.__TAURI__) {
-                    window.__TAURI__.invoke('map_error', {
-                        message,
+                // Send through WebSocket instead of Tauri API
+                if (window.pythonBridge && window.pythonBridge.ws) {
+                    window.pythonBridge.send({
+                        type: 'map_error',
+                        message: message,
                         error: error?.message || String(error),
                         critical: isCritical
-                    }).catch(console.error);
+                    });
                 }
 
                 // If critical, disable the map
@@ -2474,6 +2547,8 @@
             handleMessage(msg) {
                 switch(msg.type) {
                     case 'load_vehicles':
+                        console.log('[PythonBridge] Received vehicle data:', msg.data);
+                        console.log('[PythonBridge] Settings in data:', msg.data.settings);
                         if (window.vehicleMap) {
                             window.vehicleMap.loadVehicles(msg.data);
                         }

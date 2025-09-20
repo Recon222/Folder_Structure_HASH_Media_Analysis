@@ -233,7 +233,7 @@ class VehicleTrackingTab(QWidget):
         display_layout = QVBoxLayout(display_group)
 
         self.show_trails_check = QCheckBox("Show vehicle trails")
-        self.show_trails_check.setChecked(True)
+        self.show_trails_check.setChecked(False)  # Default to no trails
         display_layout.addWidget(self.show_trails_check)
 
         self.animate_movement_check = QCheckBox("Animate movement")
@@ -268,8 +268,8 @@ class VehicleTrackingTab(QWidget):
         # Trail length
         controls_layout.addWidget(QLabel("Trail Length:"), 1, 0)
         self.trail_combo = QComboBox()
-        self.trail_combo.addItems(["5 seconds", "10 seconds", "30 seconds", "1 minute", "Full"])
-        self.trail_combo.setCurrentIndex(2)  # Default to 30 seconds
+        self.trail_combo.addItems(["None", "5 seconds", "10 seconds", "30 seconds", "1 minute", "Persistent"])
+        self.trail_combo.setCurrentIndex(0)  # Default to None
         controls_layout.addWidget(self.trail_combo, 1, 1)
 
         # Marker size
@@ -640,7 +640,8 @@ class VehicleTrackingTab(QWidget):
             # Connect worker signals
             self.current_worker.progress_update.connect(self._on_progress_update)
             self.current_worker.result_ready.connect(self._on_tracking_complete)
-            self.current_worker.error_occurred.connect(self._on_tracking_error)
+            # Note: BaseWorkerThread uses result_ready for both success and errors
+            # Errors are handled in _on_tracking_complete by checking result.success
 
             self.output_console.append_message(
                 f"Processing {len(self.selected_files)} vehicle files...",
@@ -686,10 +687,10 @@ class VehicleTrackingTab(QWidget):
 
         # Trail settings
         trail_map = {
-            "5 seconds": 5, "10 seconds": 10, "30 seconds": 30,
-            "1 minute": 60, "Full": -1
+            "None": 0, "5 seconds": 5, "10 seconds": 10, "30 seconds": 30,
+            "1 minute": 60, "Persistent": -1
         }
-        settings.trail_length = trail_map.get(self.trail_combo.currentText(), 30)
+        settings.trail_length = trail_map.get(self.trail_combo.currentText(), 0)
 
         # Interpolation settings
         interp_map = {
@@ -837,8 +838,18 @@ class VehicleTrackingTab(QWidget):
 
     def _convert_to_js_format(self, tracking_result: VehicleTrackingResult) -> Dict[str, Any]:
         """Convert tracking result to JavaScript-compatible format"""
+        # Gather current settings
+        settings = self._gather_current_settings()
+
         js_data = {
-            "vehicles": []
+            "vehicles": [],
+            "settings": {
+                "showTrails": settings.show_trails,
+                "trailLength": settings.trail_length,  # 0=none, 5-60=seconds, -1=persistent
+                "playbackSpeed": settings.playback_speed,
+                "autoCenter": settings.auto_center,
+                "showTimestamps": settings.show_timestamps
+            }
         }
 
         # Convert each vehicle
