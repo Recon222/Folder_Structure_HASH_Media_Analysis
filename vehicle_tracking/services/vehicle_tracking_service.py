@@ -9,7 +9,7 @@ Follows FSA service patterns with Result-based error handling.
 import csv
 import io
 from datetime import datetime, timedelta
-from math import radians, sin, cos, sqrt, atan2
+from math import radians, sin, cos, sqrt, atan2, floor
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple, Callable
 import logging
@@ -575,6 +575,34 @@ class VehicleTrackingService(BaseService, IVehicleTrackingService):
 
         return result
 
+    def _is_uniform_cadence(self, points: List[GPSPoint], dt: float = 1.0, tol: float = 1e-3) -> bool:
+        """
+        Check if GPS points are already at uniform intervals.
+        Also validates no missing segments.
+
+        Args:
+            points: GPS points to check
+            dt: Expected time interval in seconds
+            tol: Tolerance for floating-point comparison
+
+        Returns:
+            True if points are uniformly spaced at dt intervals
+        """
+        if len(points) < 2:
+            return True
+
+        # Check both time spacing AND continuous sequence
+        for i in range(1, len(points)):
+            expected = points[0].timestamp + timedelta(seconds=i * dt)
+            actual = points[i].timestamp
+            if abs((actual - expected).total_seconds()) > tol:
+                return False
+
+        # Log when we skip interpolation
+        self._log_operation("uniform_cadence_check",
+                           f"Data already at {dt}s intervals, skipping interpolation")
+        return True
+
     def interpolate_path_global_resampling(
         self,
         vehicle_data: VehicleData,
@@ -599,6 +627,13 @@ class VehicleTrackingService(BaseService, IVehicleTrackingService):
                 return Result.success(vehicle_data)
 
             dt = settings.interpolation_interval_seconds
+
+            # Check if data is already at target cadence
+            if self._is_uniform_cadence(points, dt):
+                self._log_operation("interpolate_path_global_resampling",
+                                  f"Input already at {dt}s cadence, passthrough")
+                return Result.success(vehicle_data)  # Return unchanged
+
             interpolated = []
 
             # Always include first point
@@ -631,6 +666,22 @@ class VehicleTrackingService(BaseService, IVehicleTrackingService):
                     if seg_duration > 0:
                         time_ratio = (t_emit - seg_start.timestamp).total_seconds() / seg_duration
 
+                        # Snap to exact point if very close (within 1ms)
+                        if abs((t_emit - seg_start.timestamp).total_seconds()) < 0.001:
+                            interpolated.append(seg_start)
+                            # Grid-quantized emission to prevent float drift
+                            elapsed = (t_emit - points[0].timestamp).total_seconds()
+                            k = floor(elapsed / dt + 1e-6) + 1
+                            t_emit = points[0].timestamp + timedelta(seconds=k * dt)
+                            continue
+                        if abs((t_emit - seg_end.timestamp).total_seconds()) < 0.001:
+                            interpolated.append(seg_end)
+                            # Grid-quantized emission to prevent float drift
+                            elapsed = (t_emit - points[0].timestamp).total_seconds()
+                            k = floor(elapsed / dt + 1e-6) + 1
+                            t_emit = points[0].timestamp + timedelta(seconds=k * dt)
+                            continue
+
                         # Linear interpolation of position
                         lat = seg_start.latitude + (seg_end.latitude - seg_start.latitude) * time_ratio
                         lon = seg_start.longitude + (seg_end.longitude - seg_start.longitude) * time_ratio
@@ -661,8 +712,10 @@ class VehicleTrackingService(BaseService, IVehicleTrackingService):
 
                         interpolated.append(interp_point)
 
-                    # Advance to next emission time
-                    t_emit += timedelta(seconds=dt)
+                    # Grid-quantized emission to prevent float drift
+                    elapsed = (t_emit - points[0].timestamp).total_seconds()
+                    k = floor(elapsed / dt + 1e-6) + 1
+                    t_emit = points[0].timestamp + timedelta(seconds=k * dt)
 
                     # Update progress
                     if progress_callback:
@@ -670,8 +723,10 @@ class VehicleTrackingService(BaseService, IVehicleTrackingService):
                         progress = min(100, (elapsed / total_duration) * 100)
                         progress_callback(progress, f"Global resampling: {len(interpolated)} points")
                 else:
-                    # Move to next time if we've gone past the data
-                    t_emit += timedelta(seconds=dt)
+                    # Move to next time if we've gone past the data (grid-quantized)
+                    elapsed = (t_emit - points[0].timestamp).total_seconds()
+                    k = floor(elapsed / dt + 1e-6) + 1
+                    t_emit = points[0].timestamp + timedelta(seconds=k * dt)
 
             # Always include last point
             if interpolated[-1].timestamp != points[-1].timestamp:

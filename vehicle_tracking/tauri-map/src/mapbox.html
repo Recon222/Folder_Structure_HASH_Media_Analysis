@@ -770,9 +770,7 @@
             maxVehicles: 100,
             maxPointsPerVehicle: 10000,
             errorDisplayDuration: 5000,
-            debounceDelay: 100,
-            // NEW: Flag to disable JavaScript interpolation when Python already interpolated
-            disableJSInterpolation: true  // Set to true when using Python interpolation
+            debounceDelay: 100
         };
 
         // Token Modal Manager
@@ -887,11 +885,9 @@
                 // LOG INTERPOLATION CONFIGURATION ON STARTUP
                 console.log('='.repeat(60));
                 console.log('[Vehicle Map Initialization]');
-                console.log('JavaScript Interpolation:', CONFIG.disableJSInterpolation ? 'DISABLED' : 'ENABLED');
-                console.log('Mode:', CONFIG.disableJSInterpolation ?
-                    'Using Python-interpolated points directly (no JS interpolation)' :
-                    'JavaScript will interpolate between points');
-                console.log('Python Interpolation Expected:', CONFIG.disableJSInterpolation ? 'YES' : 'NO');
+                console.log('Mode: Per-frame interpolation for smooth 60 FPS animation');
+                console.log('Python provides: 1-second interval ground truth points');
+                console.log('JavaScript handles: Visual smoothness between points');
                 console.log('='.repeat(60));
 
                 // State management
@@ -917,7 +913,7 @@
                 
                 // Animation
                 this.animationFrame = null;
-                this.lastNearestIndex = null; // Track last nearest point for debugging
+                this.rollingIndex = 0; // Efficient O(1) point tracking for interpolation
 
                 // Map reference
                 this.map = null;
@@ -1800,86 +1796,106 @@
             findPointAtTime(points, timestamp) {
                 if (!points || points.length === 0) return null;
 
-                // Log interpolation status periodically (every 60 frames = ~1 second)
-                if (this.performanceMetrics.frameCount % 60 === 0) {
-                    console.log('[Interpolation Status]', {
-                        disableJSInterpolation: CONFIG.disableJSInterpolation,
-                        mode: CONFIG.disableJSInterpolation ? 'NEAREST POINT (No JS interpolation)' : 'LINEAR INTERPOLATION (JS enabled)',
-                        timestamp: new Date(timestamp).toISOString(),
-                        pointCount: points.length,
-                        frameCount: this.performanceMetrics.frameCount
-                    });
+                // Use rolling index for efficiency (O(1) average case)
+                if (!this.rollingIndex) this.rollingIndex = 0;
+
+                // Advance rolling index to find bracketing points
+                while (this.rollingIndex < points.length - 2 && points[this.rollingIndex + 1].timestamp <= timestamp) {
+                    this.rollingIndex++;
                 }
-
-                // Binary search for efficiency
-                let left = 0;
-                let right = points.length - 1;
-
-                // Find the two points to interpolate between
-                while (left < right - 1) {
-                    const mid = Math.floor((left + right) / 2);
-                    if (points[mid].timestamp < timestamp) {
-                        left = mid;
-                    } else {
-                        right = mid;
-                    }
+                // Handle backwards seek (user scrubbed timeline)
+                while (this.rollingIndex > 0 && points[this.rollingIndex].timestamp > timestamp) {
+                    this.rollingIndex--;
                 }
 
                 // Check bounds
                 if (timestamp <= points[0].timestamp) {
+                    this.rollingIndex = 0;
                     return points[0];
                 }
                 if (timestamp >= points[points.length - 1].timestamp) {
+                    this.rollingIndex = points.length - 2;
                     return points[points.length - 1];
                 }
 
-                // NEW: If JavaScript interpolation is disabled (because Python already interpolated)
-                // just find and return the nearest point without interpolation
-                if (CONFIG.disableJSInterpolation) {
-                    const p1 = points[left];
-                    const p2 = points[right];
+                // Get bracketing points
+                const p1 = points[this.rollingIndex];
+                const p2 = points[this.rollingIndex + 1];
 
-                    // Calculate which point is closer to the target timestamp
-                    const diff1 = Math.abs(timestamp - p1.timestamp);
-                    const diff2 = Math.abs(timestamp - p2.timestamp);
+                // Calculate time-based interpolation fraction
+                const dt = p2.timestamp - p1.timestamp;
+                const alpha = dt > 0 ? Math.max(0, Math.min(1, (timestamp - p1.timestamp) / dt)) : 0;
 
-                    const nearestPoint = diff1 <= diff2 ? p1 : p2;
-
-                    // Log when we switch between points (helps debug stuttering)
-                    if (this.lastNearestIndex !== left && this.lastNearestIndex !== right) {
-                        console.log('[Point Switch]', {
-                            from: this.lastNearestIndex,
-                            to: diff1 <= diff2 ? left : right,
-                            timestamp: new Date(timestamp).toISOString(),
-                            nearestTimestamp: new Date(nearestPoint.timestamp).toISOString(),
-                            timeDiff: diff1 <= diff2 ? diff1 : diff2
-                        });
-                        this.lastNearestIndex = diff1 <= diff2 ? left : right;
+                // Snap to anchors - if very close to a sample point, use it exactly
+                const snapThreshold = 16; // milliseconds (about 1 frame at 60fps)
+                if (Math.abs(timestamp - p1.timestamp) < snapThreshold) {
+                    if (this.performanceMetrics.frameCount % 60 === 0) {
+                        console.log('[Snap to anchor]', { point: this.rollingIndex, time: new Date(p1.timestamp).toISOString() });
                     }
-
-                    return nearestPoint;
+                    return p1;
+                }
+                if (Math.abs(timestamp - p2.timestamp) < snapThreshold) {
+                    if (this.performanceMetrics.frameCount % 60 === 0) {
+                        console.log('[Snap to anchor]', { point: this.rollingIndex + 1, time: new Date(p2.timestamp).toISOString() });
+                    }
+                    return p2;
                 }
 
-                // ORIGINAL: Interpolate between points (only when JS interpolation is enabled)
-                const p1 = points[left];
-                const p2 = points[right];
-                const ratio = (timestamp - p1.timestamp) / (p2.timestamp - p1.timestamp);
+                // Check for gaps or anomalies - don't interpolate through them
+                if (p1.metadata?.gap || p1.metadata?.anomaly || p1.is_anomaly) {
+                    // Hold position at p1 during gaps/anomalies
+                    return {
+                        latitude: p1.latitude,
+                        longitude: p1.longitude,
+                        speed: 0, // Speed is 0 during gaps
+                        timestamp: timestamp,
+                        metadata: { ...p1.metadata, held_during_gap: true }
+                    };
+                }
 
-                // Log interpolation details occasionally
-                if (this.performanceMetrics.frameCount % 120 === 0) {
-                    console.log('[JS Interpolation Active]', {
-                        between: [left, right],
-                        ratio: ratio.toFixed(3),
+                // For stopped vehicles, hold position but update timestamp
+                if (p1.metadata?.stopped) {
+                    return {
+                        latitude: p1.latitude,
+                        longitude: p1.longitude,
+                        speed: 0,
+                        timestamp: timestamp,
+                        metadata: p1.metadata
+                    };
+                }
+
+                // Convert to Web Mercator for accurate interpolation
+                // Mapbox provides MercatorCoordinate for this
+                const mc1 = mapboxgl.MercatorCoordinate.fromLngLat([p1.longitude, p1.latitude]);
+                const mc2 = mapboxgl.MercatorCoordinate.fromLngLat([p2.longitude, p2.latitude]);
+
+                // Interpolate in Mercator space (meters, not degrees!)
+                const x = mc1.x + alpha * (mc2.x - mc1.x);
+                const y = mc1.y + alpha * (mc2.y - mc1.y);
+
+                // Convert back to lng/lat
+                const mc = new mapboxgl.MercatorCoordinate(x, y, 0);
+                const lngLat = mc.toLngLat();
+
+                // Interpolate speed linearly
+                const speed = (p1.speed || 0) + alpha * ((p2.speed || 0) - (p1.speed || 0));
+
+                // Log periodically for debugging
+                if (this.performanceMetrics.frameCount % 300 === 0) { // Every 5 seconds at 60fps
+                    console.log('[Per-frame interpolation]', {
+                        segment: [this.rollingIndex, this.rollingIndex + 1],
+                        alpha: alpha.toFixed(3),
+                        timestamp: new Date(timestamp).toISOString(),
                         p1Time: new Date(p1.timestamp).toISOString(),
                         p2Time: new Date(p2.timestamp).toISOString(),
-                        targetTime: new Date(timestamp).toISOString()
+                        speed: speed.toFixed(1) + ' km/h'
                     });
                 }
 
                 return {
-                    latitude: p1.latitude + (p2.latitude - p1.latitude) * ratio,
-                    longitude: p1.longitude + (p2.longitude - p1.longitude) * ratio,
-                    speed: p1.speed + (p2.speed - p1.speed) * ratio,
+                    latitude: lngLat.lat,
+                    longitude: lngLat.lng,
+                    speed: speed,
                     timestamp: timestamp
                 };
             }
