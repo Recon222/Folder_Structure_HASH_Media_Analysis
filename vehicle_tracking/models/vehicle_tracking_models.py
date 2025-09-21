@@ -77,7 +77,10 @@ class GPSPoint:
     # Flags
     is_interpolated: bool = False
     is_anomaly: bool = False
-    
+
+    # Metadata for gaps, stops, anomalies, etc.
+    metadata: Optional[Dict[str, Any]] = None
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization"""
         return {
