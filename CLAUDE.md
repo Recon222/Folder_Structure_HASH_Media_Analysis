@@ -423,6 +423,7 @@ def operation() -> Result[DataType]:
 - **Type safety must be enforced** - Result objects should prevent runtime errors
 - **User experience matters** - error messages must be actionable and clear
 - **Performance testing should use realistic data sizes** and scenarios
+- **No ASCII art or emojis in tests** - Avoid Unicode characters that cause encoding issues on Windows
 - As you create each feature or document use Memory MCP to:
   1. Add discovered components to the memory graph
   2. Track service interfaces and their implementations

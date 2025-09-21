@@ -816,11 +816,21 @@ pyproj>=3.6.0  # For metric projection
    - **Impact**: Test validation only, does not affect actual interpolation accuracy
    - **Workaround**: Visual inspection confirms smooth, consistent motion
 
-2. **Cache Invalidation**: Clear cache when settings change
+2. **Duplicate Timestamp Speed Handling**: When GPS data contains duplicate timestamps (same second, different coordinates), the system calculates 0 km/h speed since time elapsed = 0. This creates unrealistic speed drops, especially when surrounding speeds are 20-30+ km/h. These duplicates likely represent sub-second measurements rounded to the same second.
+   - **Impact**: Incorrect 0 km/h speeds at duplicate timestamps disrupting smooth motion
+   - **Example**: Vehicle going 30 km/h → 0 km/h → 20 km/h in consecutive points
+   - **Root Cause**: Using integer seconds loses sub-second precision
+   - **TODO**: Implement intelligent handling for duplicate timestamps:
+     - Option 1: Use millisecond precision if available in source data
+     - Option 2: Interpolate speed from surrounding points when time_diff = 0
+     - Option 3: Apply minimum time delta (e.g., 0.5s) for duplicate timestamps
+   - **Frequency**: ~3.6% of points in real-world data (7 out of 192 points)
+
+3. **Cache Invalidation**: Clear cache when settings change
    - **Impact**: May show outdated interpolation if settings change without cache clear
    - **Workaround**: Manually clear cache when changing settings
 
-3. **Memory Usage**: Large datasets with small intervals can create many points
+4. **Memory Usage**: Large datasets with small intervals can create many points
    - **Impact**: Potential memory issues with very large datasets
    - **Workaround**: Use larger interpolation intervals for long recordings
 

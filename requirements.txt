@@ -18,4 +18,7 @@ psutil>=5.9.0
 # Parallel hashing acceleration for improved performance
 hashwise>=0.1.0
 
+# Geospatial projections for accurate GPS interpolation
+pyproj>=3.6.0
+
 # Python version requirement: Python 3.7 or higher is recommended

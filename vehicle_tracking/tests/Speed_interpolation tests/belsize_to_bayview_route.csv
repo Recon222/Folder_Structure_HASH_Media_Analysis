@@ -1,0 +1,20 @@
+timestamp,latitude,longitude,speed_kmh,description
+2025-01-20 10:00:00,43.704725,-79.376835,20,Start at 405 Belsize Dr
+2025-01-20 10:00:10,43.704727,-79.376823,20,Belsize Dr eastbound
+2025-01-20 10:00:20,43.704882,-79.376058,25,Belsize Dr approaching curve
+2025-01-20 10:00:30,43.705003,-79.375461,30,Belsize Dr continuing east
+2025-01-20 10:00:40,43.705086,-79.375066,30,Belsize Dr near intersection
+2025-01-20 10:00:45,43.705091,-79.375038,15,Slowing for turn
+2025-01-20 10:00:50,43.705114,-79.374918,10,Turning onto Bayview
+2025-01-20 10:01:00,43.70571,-79.375149,20,Bayview Ave northbound
+2025-01-20 10:01:10,43.706875,-79.375589,30,Bayview Ave accelerating
+2025-01-20 10:01:15,43.706948,-79.375617,35,Bayview Ave steady
+2025-01-20 10:01:20,43.707031,-79.375649,35,Bayview Ave northbound
+2025-01-20 10:01:30,43.707825,-79.375962,40,Bayview Ave main flow
+2025-01-20 10:01:40,43.708725,-79.376304,40,Bayview Ave continuing
+2025-01-20 10:01:45,43.708794,-79.376325,35,Bayview Ave slight curve
+2025-01-20 10:01:55,43.710197,-79.37688,45,Bayview Ave approaching Eglinton
+2025-01-20 10:02:00,43.710401,-79.37696,40,Bayview Ave near Eglinton
+2025-01-20 10:02:05,43.710531,-79.376967,30,Bayview Ave slowing for intersection
+2025-01-20 10:02:10,43.710629,-79.376975,20,Bayview Ave approaching light
+2025-01-20 10:02:15,43.710931,-79.377024,0,Arrived at Bayview and Eglinton
