@@ -81,6 +81,13 @@ class GPSPoint:
     # Metadata for gaps, stops, anomalies, etc.
     metadata: Optional[Dict[str, Any]] = None
 
+    # Forensic tracking fields (Phase 2 additions)
+    segment_speed_kmh: Optional[float] = None
+    speed_certainty: Optional[str] = None  # 'high'|'medium'|'low'|'unknown'
+    segment_id: Optional[int] = None
+    is_observed: bool = True  # False for interpolated points
+    is_gap: bool = False  # True for gap markers
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization"""
         return {
@@ -135,6 +142,11 @@ class VehicleData:
     co_locations: List[Dict[str, Any]] = field(default_factory=list)
     timestamp_jumps: List[Dict[str, Any]] = field(default_factory=list)
     idling_periods: List[Dict[str, Any]] = field(default_factory=list)
+
+    # Forensic tracking fields (Phase 2 additions)
+    has_segment_speeds: bool = False
+    segments: Optional[List['GPSSegment']] = None
+    speed_anomalies: Optional[List[Dict[str, Any]]] = None
     
     def get_time_range(self) -> Tuple[datetime, datetime]:
         """Get the time range of this vehicle's data"""
@@ -206,6 +218,17 @@ class VehicleTrackingSettings:
     default_zoom_level: int = 13
     cluster_markers: bool = True
     auto_center: bool = True
+
+    # Forensic speed thresholds (Phase 2 additions - no feature flags!)
+    high_certainty_threshold_s: float = 5.0
+    medium_certainty_threshold_s: float = 10.0
+    max_gap_threshold_s: float = 30.0  # > this => UNKNOWN (no interpolation)
+    duplicate_timestamp_min_delta: float = 0.5  # fallback for duplicate timestamps
+
+    # Display options for forensic features
+    show_certainty_indicators: bool = True
+    highlight_low_certainty: bool = True
+    show_gap_markers: bool = True
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for serialization"""

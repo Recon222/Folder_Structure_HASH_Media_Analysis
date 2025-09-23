@@ -1696,14 +1696,39 @@
                             );
 
                             if (currentPoint) {
+                                // Check for gaps, conflicts, and anomalies
+                                let markerColor = color;
+                                let markerSize = 1.0;
+
+                                // Handle gaps
+                                if (currentPoint.is_gap || (currentPoint.metadata && currentPoint.metadata.gap)) {
+                                    markerColor = '#808080';  // Gray for gaps
+                                    markerSize = 0.5;  // Smaller for gaps
+                                }
+
+                                // Handle temporal conflicts
+                                if (currentPoint.metadata && currentPoint.metadata.conflict === 'temporal_conflict') {
+                                    markerColor = '#ff00ff';  // Magenta for conflicts
+                                }
+
+                                // Handle anomalies
+                                if (currentPoint.is_anomaly) {
+                                    markerColor = '#ff0000';  // Red for anomalies
+                                }
+
                                 // Add position marker
                                 positions.push({
                                     type: 'Feature',
                                     properties: {
                                         vehicle_id: vehicleId,
                                         name: vehicle.name,
-                                        color: color,
-                                        speed: currentPoint.speed,
+                                        color: markerColor,
+                                        marker_size: markerSize,
+                                        speed: currentPoint.segment_speed_kmh || currentPoint.speed || 0,
+                                        speed_certainty: currentPoint.speed_certainty || 'unknown',
+                                        is_gap: currentPoint.is_gap || false,
+                                        is_anomaly: currentPoint.is_anomaly || false,
+                                        metadata: currentPoint.metadata || {},
                                         timestamp: currentPoint.timestamp
                                     },
                                     geometry: {
@@ -1715,7 +1740,9 @@
                                 // Update current speed display if this is the selected vehicle
                                 const activeItem = document.querySelector('.vehicle-item.active');
                                 if (activeItem && activeItem.dataset.vehicleId === vehicleId) {
-                                    this.updateSpeedDisplay(currentPoint.speed);
+                                    const segmentSpeed = currentPoint.segment_speed_kmh || currentPoint.speed || 0;
+                                    const certainty = currentPoint.speed_certainty || 'unknown';
+                                    this.updateSpeedDisplay(segmentSpeed, certainty);
                                 }
 
                                 // Create trail (performance optimization: skip if disabled)
@@ -2143,13 +2170,47 @@
                 }
             }
 
-            updateSpeedDisplay(speed) {
+            updateSpeedDisplay(speed, certainty) {
                 const element = document.getElementById('current-speed');
                 if (element) {
-                    if (speed && !isNaN(speed)) {
+                    if (speed !== null && speed !== undefined && !isNaN(speed)) {
                         element.textContent = `${speed.toFixed(1)} km/h`;
                     } else {
                         element.textContent = '-- km/h';
+                    }
+
+                    // Color code by certainty
+                    let speedColor;
+                    switch(certainty) {
+                        case 'high':
+                            speedColor = '#00ff00';  // Green - reliable
+                            break;
+                        case 'medium':
+                            speedColor = '#ffaa00';  // Orange - acceptable
+                            break;
+                        case 'low':
+                            speedColor = '#ff0000';  // Red - questionable
+                            break;
+                        default:
+                            speedColor = '#666666';  // Gray - unknown
+                    }
+                    element.style.color = speedColor;
+
+                    // Add certainty indicator (optional)
+                    const certaintyBadge = element.dataset.certaintyBadge;
+                    if (!certaintyBadge) {
+                        const badge = document.createElement('span');
+                        badge.style.marginLeft = '8px';
+                        badge.style.fontSize = '0.8em';
+                        badge.style.textTransform = 'uppercase';
+                        element.appendChild(badge);
+                        element.dataset.certaintyBadge = 'true';
+                    }
+
+                    const badge = element.querySelector('span');
+                    if (badge) {
+                        badge.textContent = `[${certainty}]`;
+                        badge.style.color = speedColor;
                     }
                 }
             }

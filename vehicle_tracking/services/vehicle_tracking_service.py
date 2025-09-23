@@ -21,9 +21,8 @@ from core.exceptions import ValidationError, FileOperationError, FSAError
 
 # Import models from the vehicle_tracking package
 from vehicle_tracking.models.vehicle_tracking_models import (
-    GPSPoint, VehicleData, VehicleTrackingSettings, 
-    AnimationData, VehicleTrackingResult, VehicleColor,
-    InterpolationMethod
+    GPSPoint, VehicleData, VehicleTrackingSettings,
+    AnimationData, VehicleTrackingResult, VehicleColor
 )
 
 # Try to import pandas for better CSV handling (optional)
@@ -40,14 +39,9 @@ try:
 except ImportError:
     HAS_NUMPY = False
 
-# Import pyproj for metric projections
-try:
-    import pyproj
-    from pyproj import Transformer
-    HAS_PYPROJ = True
-except ImportError:
-    HAS_PYPROJ = False
-    logger.warning("pyproj not available - GPS interpolation may have speed wobbles at different latitudes")
+# Import pyproj for metric projections (MANDATORY - forensic accuracy requirement)
+import pyproj
+from pyproj import Transformer
 
 logger = logging.getLogger(__name__)
 
@@ -436,118 +430,101 @@ class VehicleTrackingService(BaseService, IVehicleTrackingService):
         return None
     
     def calculate_speeds(
-        self, 
+        self,
         vehicle_data: VehicleData,
         progress_callback: Optional[Callable[[float, str], None]] = None
     ) -> Result[VehicleData]:
         """
-        Calculate speeds between GPS points using Haversine formula
-        
+        Calculate forensic segment speeds for vehicle data.
+        Uses segment-based calculation, not point-to-point.
+
         Args:
             vehicle_data: Vehicle data with GPS points
             progress_callback: Optional progress callback
-            
+
         Returns:
-            Result containing updated VehicleData with calculated speeds
+            Result containing updated VehicleData with forensic segment speeds
         """
         try:
-            self._log_operation("calculate_speeds", f"Calculating speeds for {vehicle_data.vehicle_id}")
-            
-            if len(vehicle_data.gps_points) < 2:
+            self._log_operation("calculate_speeds", f"Calculating forensic speeds for {vehicle_data.vehicle_id}")
+
+            points = vehicle_data.gps_points
+            if len(points) < 2:
+                self._log_operation("calculate_speeds", "Not enough GPS points to calculate speeds")
                 return Result.success(vehicle_data)
-            
-            speeds = []
-            max_speed = 0
-            total_distance = 0
-            
-            for i in range(len(vehicle_data.gps_points)):
-                if i == 0:
-                    # First point - use next point for speed
-                    if len(vehicle_data.gps_points) > 1:
-                        speed, distance = self._calculate_speed_and_distance(
-                            vehicle_data.gps_points[0],
-                            vehicle_data.gps_points[1]
-                        )
-                        vehicle_data.gps_points[0].calculated_speed_kmh = speed
-                        vehicle_data.gps_points[0].distance_from_previous = 0
+
+            # PREPROCESSING: Coalesce same-location duplicates
+            from ..services.data_preprocessing import coalesce_same_location_duplicates
+            points = coalesce_same_location_duplicates(points)
+            vehicle_data.gps_points = points
+
+            # MANDATORY metric projection for accurate distance
+            from ..services.projection_service import make_local_metric_projection
+            center_idx = len(points) // 2
+            center_point = points[center_idx]
+            to_metric, to_wgs84 = make_local_metric_projection(center_point)
+
+            if not to_metric or not to_wgs84:
+                raise ValueError("Metric projection is mandatory for forensic speed calculation")
+
+            # Calculate segment speeds
+            from ..services.forensic_speed_calculator import ForensicSpeedCalculator
+
+            # Get settings from main settings if available
+            settings = {}
+            if hasattr(self, 'settings'):
+                settings = self.settings.__dict__ if hasattr(self.settings, '__dict__') else {}
+
+            calculator = ForensicSpeedCalculator(settings)
+            segments = calculator.calculate_segment_speeds(points, to_metric, to_wgs84)
+
+            # Apply speeds to points
+            for i, segment in enumerate(segments):
+                if segment.segment_speed.speed_kmh is not None:
+                    segment.start_point.segment_speed_kmh = segment.segment_speed.speed_kmh
+                    segment.start_point.speed_certainty = segment.segment_speed.certainty.value
+                    segment.end_point.segment_speed_kmh = segment.segment_speed.speed_kmh
+                    segment.end_point.speed_certainty = segment.segment_speed.certainty.value
+
+            # Calculate statistics
+            valid_speeds = [s.segment_speed.speed_kmh for s in segments
+                           if s.segment_speed.speed_kmh is not None]
+
+            if valid_speeds:
+                vehicle_data.average_speed_kmh = sum(valid_speeds) / len(valid_speeds)
+                vehicle_data.max_speed_kmh = max(valid_speeds)
+                # Min speed excluding zeros
+                non_zero_speeds = [s for s in valid_speeds if s > 0]
+                if non_zero_speeds:
+                    vehicle_data.min_speed_kmh = min(non_zero_speeds)
                 else:
-                    # Calculate from previous point
-                    speed, distance = self._calculate_speed_and_distance(
-                        vehicle_data.gps_points[i-1],
-                        vehicle_data.gps_points[i]
-                    )
-                    
-                    vehicle_data.gps_points[i].calculated_speed_kmh = speed
-                    vehicle_data.gps_points[i].distance_from_previous = distance
-                    
-                    speeds.append(speed)
-                    max_speed = max(max_speed, speed)
-                    total_distance += distance
-                
-                # Progress update
-                if progress_callback and i % 1000 == 0:
-                    progress = (i / len(vehicle_data.gps_points)) * 100
-                    progress_callback(progress, f"Calculating speeds: {i}/{len(vehicle_data.gps_points)}")
-            
-            # Update vehicle statistics
-            if speeds:
-                vehicle_data.average_speed_kmh = sum(speeds) / len(speeds)
-                vehicle_data.max_speed_kmh = max_speed
-                vehicle_data.total_distance_km = total_distance
-                
-                if vehicle_data.start_time and vehicle_data.end_time:
-                    vehicle_data.duration_seconds = (
-                        vehicle_data.end_time - vehicle_data.start_time
-                    ).total_seconds()
-            
-            self._log_operation("calculate_speeds", 
-                              f"Completed: avg={vehicle_data.average_speed_kmh:.1f} km/h, "
-                              f"max={vehicle_data.max_speed_kmh:.1f} km/h")
-            
+                    vehicle_data.min_speed_kmh = 0
+
+            # Calculate total distance from segments
+            vehicle_data.total_distance_km = sum(
+                s.segment_speed.distance_m / 1000 for s in segments
+            )
+
+            if vehicle_data.start_time and vehicle_data.end_time:
+                vehicle_data.duration_seconds = (
+                    vehicle_data.end_time - vehicle_data.start_time
+                ).total_seconds()
+
+            vehicle_data.segments = segments
+            vehicle_data.has_segment_speeds = True
+
+            self._log_operation("calculate_speeds",
+                              f"Calculated {len(segments)} forensic segment speeds")
+
             return Result.success(vehicle_data)
-            
+
         except Exception as e:
             error = VehicleTrackingError(
-                f"Speed calculation failed: {e}",
+                f"Forensic speed calculation failed: {e}",
                 user_message="Error calculating vehicle speeds"
             )
             self._handle_error(error)
             return Result.error(error)
-    
-    def _calculate_speed_and_distance(
-        self, 
-        point1: GPSPoint, 
-        point2: GPSPoint
-    ) -> Tuple[float, float]:
-        """
-        Calculate speed and distance between two GPS points using Haversine formula
-        
-        Returns:
-            Tuple of (speed_kmh, distance_km)
-        """
-        # Haversine formula
-        lat1_rad = radians(point1.latitude)
-        lon1_rad = radians(point1.longitude)
-        lat2_rad = radians(point2.latitude)
-        lon2_rad = radians(point2.longitude)
-        
-        dlat = lat2_rad - lat1_rad
-        dlon = lon2_rad - lon1_rad
-        
-        a = sin(dlat/2)**2 + cos(lat1_rad) * cos(lat2_rad) * sin(dlon/2)**2
-        c = 2 * atan2(sqrt(a), sqrt(1-a))
-        distance_km = self.EARTH_RADIUS_KM * c
-        
-        # Calculate time difference
-        time_diff = (point2.timestamp - point1.timestamp).total_seconds()
-        
-        # Calculate speed (avoid division by zero)
-        if time_diff > 0:
-            speed_kmh = (distance_km / time_diff) * 3600  # Convert to km/h
-        else:
-            speed_kmh = 0
-        
-        return speed_kmh, distance_km
 
     def _interpolate_heading(self, heading1: float, heading2: float, ratio: float) -> float:
         """
@@ -612,21 +589,22 @@ class VehicleTrackingService(BaseService, IVehicleTrackingService):
                            f"Data already at {dt}s intervals, skipping interpolation")
         return True
 
-    def _get_metric_transformer(self, center_lat: float, center_lon: float) -> Tuple[Optional[Transformer], Optional[Transformer]]:
+    def _get_metric_transformer(self, center_lat: float, center_lon: float) -> Tuple[Transformer, Transformer]:
         """
         Create transformers for converting between WGS84 and local metric projection.
         Uses Azimuthal Equidistant projection centered on the data.
+        MANDATORY for forensic accuracy - no fallbacks.
 
         Args:
             center_lat: Center latitude for projection
             center_lon: Center longitude for projection
 
         Returns:
-            Tuple of (to_metric, to_wgs84) transformers, or (None, None) if pyproj unavailable
-        """
-        if not HAS_PYPROJ:
-            return None, None
+            Tuple of (to_metric, to_wgs84) transformers
 
+        Raises:
+            ValueError: If projection creation fails (forensic requirement)
+        """
         try:
             # Define custom Azimuthal Equidistant projection centered on data
             proj_string = f"+proj=aeqd +lat_0={center_lat} +lon_0={center_lon} +datum=WGS84 +units=m"
@@ -637,211 +615,51 @@ class VehicleTrackingService(BaseService, IVehicleTrackingService):
 
             return to_metric, to_wgs84
         except Exception as e:
-            self._log_operation("metric_projection", f"Failed to create projections: {e}")
-            return None, None
+            # NO FALLBACK - Metric projection is MANDATORY for forensic accuracy
+            raise ValueError(f"Failed to create mandatory metric projection: {e}")
 
     def _interpolate_in_metric(
         self,
         seg_start: GPSPoint,
         seg_end: GPSPoint,
         time_ratio: float,
-        to_metric: Optional[Transformer],
-        to_wgs84: Optional[Transformer]
+        to_metric: Transformer,
+        to_wgs84: Transformer
     ) -> Tuple[float, float]:
         """
         Interpolate position in metric space then convert back to WGS84.
         This ensures uniform speed and eliminates latitude-based distortion.
+        MANDATORY for forensic accuracy - no fallbacks.
 
         Args:
             seg_start: Starting GPS point
             seg_end: Ending GPS point
             time_ratio: Interpolation ratio (0.0 to 1.0)
-            to_metric: Transformer to metric coordinates (optional)
-            to_wgs84: Transformer back to WGS84 (optional)
+            to_metric: Transformer to metric coordinates (REQUIRED)
+            to_wgs84: Transformer back to WGS84 (REQUIRED)
 
         Returns:
             Tuple of (latitude, longitude) interpolated position
-        """
-        # Fall back to simple linear interpolation if projections unavailable
-        if to_metric is None or to_wgs84 is None:
-            lat = seg_start.latitude + (seg_end.latitude - seg_start.latitude) * time_ratio
-            lon = seg_start.longitude + (seg_end.longitude - seg_start.longitude) * time_ratio
-            return lat, lon
 
+        Raises:
+            ValueError: If metric projection fails (forensic requirement)
+        """
         try:
             # Convert to metric coordinates
-            start_x, start_y = to_metric.transform(seg_start.longitude, seg_start.latitude)
-            end_x, end_y = to_metric.transform(seg_end.longitude, seg_end.latitude)
+            start_x, start_y = to_metric(seg_start.longitude, seg_start.latitude)
+            end_x, end_y = to_metric(seg_end.longitude, seg_end.latitude)
 
             # Interpolate in metric space (uniform distance)
             interp_x = start_x + (end_x - start_x) * time_ratio
             interp_y = start_y + (end_y - start_y) * time_ratio
 
             # Convert back to WGS84
-            lon, lat = to_wgs84.transform(interp_x, interp_y)
+            lon, lat = to_wgs84(interp_x, interp_y)
 
             return lat, lon
         except Exception as e:
-            # Fall back to simple interpolation on error
-            self._log_operation("metric_interpolation", f"Projection failed, using linear: {e}")
-            lat = seg_start.latitude + (seg_end.latitude - seg_start.latitude) * time_ratio
-            lon = seg_start.longitude + (seg_end.longitude - seg_start.longitude) * time_ratio
-            return lat, lon
-
-    def interpolate_path_global_resampling(
-        self,
-        vehicle_data: VehicleData,
-        settings: VehicleTrackingSettings,
-        progress_callback: Optional[Callable[[float, str], None]] = None
-    ) -> Result[VehicleData]:
-        """
-        Global resampling interpolation - samples path at uniform time intervals.
-        This eliminates variance and ensures perfectly even time spacing.
-
-        Args:
-            vehicle_data: Vehicle data to interpolate
-            settings: Processing settings
-            progress_callback: Optional progress callback
-
-        Returns:
-            Result containing interpolated VehicleData with uniform time spacing
-        """
-        try:
-            points = vehicle_data.gps_points
-            if len(points) < 2:
-                return Result.success(vehicle_data)
-
-            dt = settings.interpolation_interval_seconds
-
-            # Check if data is already at target cadence
-            if self._is_uniform_cadence(points, dt):
-                self._log_operation("interpolate_path_global_resampling",
-                                  f"Input already at {dt}s cadence, passthrough")
-                return Result.success(vehicle_data)  # Return unchanged
-
-            interpolated = []
-
-            # Always include first point
-            interpolated.append(points[0])
-
-            # Initialize emission time to first interval after start
-            t_emit = points[0].timestamp + timedelta(seconds=dt)
-            seg_idx = 0
-
-            # Track progress
-            total_duration = (points[-1].timestamp - points[0].timestamp).total_seconds()
-
-            # Create metric transformers for accurate interpolation
-            # Use the center of the dataset as the projection center
-            center_idx = len(points) // 2
-            center_lat = points[center_idx].latitude
-            center_lon = points[center_idx].longitude
-            to_metric, to_wgs84 = self._get_metric_transformer(center_lat, center_lon)
-
-            # Walk through time at exact intervals
-            while seg_idx < len(points) - 1 and t_emit <= points[-1].timestamp:
-                seg_start = points[seg_idx]
-                seg_end = points[seg_idx + 1]
-
-                # Find the segment containing t_emit
-                while seg_idx < len(points) - 1 and t_emit > seg_end.timestamp:
-                    seg_idx += 1
-                    if seg_idx < len(points) - 1:
-                        seg_start = points[seg_idx]
-                        seg_end = points[seg_idx + 1]
-
-                # If t_emit falls within this segment, interpolate
-                if seg_idx < len(points) - 1 and t_emit <= seg_end.timestamp:
-                    # Calculate position ratio within segment
-                    seg_duration = (seg_end.timestamp - seg_start.timestamp).total_seconds()
-
-                    if seg_duration > 0:
-                        time_ratio = (t_emit - seg_start.timestamp).total_seconds() / seg_duration
-
-                        # Snap to exact point if very close (within 1ms)
-                        if abs((t_emit - seg_start.timestamp).total_seconds()) < 0.001:
-                            interpolated.append(seg_start)
-                            # Grid-quantized emission to prevent float drift
-                            elapsed = (t_emit - points[0].timestamp).total_seconds()
-                            k = floor(elapsed / dt + 1e-6) + 1
-                            t_emit = points[0].timestamp + timedelta(seconds=k * dt)
-                            continue
-                        if abs((t_emit - seg_end.timestamp).total_seconds()) < 0.001:
-                            interpolated.append(seg_end)
-                            # Grid-quantized emission to prevent float drift
-                            elapsed = (t_emit - points[0].timestamp).total_seconds()
-                            k = floor(elapsed / dt + 1e-6) + 1
-                            t_emit = points[0].timestamp + timedelta(seconds=k * dt)
-                            continue
-
-                        # Interpolate position in metric space for accurate distances
-                        lat, lon = self._interpolate_in_metric(
-                            seg_start, seg_end, time_ratio, to_metric, to_wgs84
-                        )
-
-                        # Interpolate speed
-                        start_speed = seg_start.calculated_speed_kmh or seg_start.speed_kmh or 0
-                        end_speed = seg_end.calculated_speed_kmh or seg_end.speed_kmh or 0
-                        speed = start_speed + (end_speed - start_speed) * time_ratio
-
-                        # Create interpolated point
-                        interp_point = GPSPoint(
-                            latitude=lat,
-                            longitude=lon,
-                            timestamp=t_emit,
-                            calculated_speed_kmh=speed,
-                            is_interpolated=True
-                        )
-
-                        # Interpolate optional fields
-                        if seg_start.altitude is not None and seg_end.altitude is not None:
-                            interp_point.altitude = seg_start.altitude + \
-                                                   (seg_end.altitude - seg_start.altitude) * time_ratio
-
-                        if seg_start.heading is not None and seg_end.heading is not None:
-                            interp_point.heading = self._interpolate_heading(
-                                seg_start.heading, seg_end.heading, time_ratio
-                            )
-
-                        interpolated.append(interp_point)
-
-                    # Grid-quantized emission to prevent float drift
-                    elapsed = (t_emit - points[0].timestamp).total_seconds()
-                    k = floor(elapsed / dt + 1e-6) + 1
-                    t_emit = points[0].timestamp + timedelta(seconds=k * dt)
-
-                    # Update progress
-                    if progress_callback:
-                        elapsed = (t_emit - points[0].timestamp).total_seconds()
-                        progress = min(100, (elapsed / total_duration) * 100)
-                        progress_callback(progress, f"Global resampling: {len(interpolated)} points")
-                else:
-                    # Move to next time if we've gone past the data (grid-quantized)
-                    elapsed = (t_emit - points[0].timestamp).total_seconds()
-                    k = floor(elapsed / dt + 1e-6) + 1
-                    t_emit = points[0].timestamp + timedelta(seconds=k * dt)
-
-            # Always include last point
-            if interpolated[-1].timestamp != points[-1].timestamp:
-                interpolated.append(points[-1])
-
-            # Update vehicle data
-            vehicle_data.gps_points = interpolated
-            vehicle_data.has_interpolated_points = True
-
-            self._log_operation("interpolate_path_global_resampling",
-                              f"Resampled from {len(points)} to {len(interpolated)} points "
-                              f"with perfect {dt}s spacing")
-
-            return Result.success(vehicle_data)
-
-        except Exception as e:
-            error = VehicleTrackingError(
-                f"Global resampling failed: {e}",
-                user_message="Error resampling GPS path"
-            )
-            self._handle_error(error)
-            return Result.error(error)
+            # NO FALLBACK - Metric projection is MANDATORY for forensic accuracy
+            raise ValueError(f"Metric projection failed - forensic accuracy cannot be guaranteed: {e}")
 
     def interpolate_path(
         self,
@@ -850,8 +668,8 @@ class VehicleTrackingService(BaseService, IVehicleTrackingService):
         progress_callback: Optional[Callable[[float, str], None]] = None
     ) -> Result[VehicleData]:
         """
-        Interpolate GPS points for smooth animation using global resampling.
-        This ensures perfectly even time spacing with zero variance.
+        Forensic interpolation with segment-based constant speeds.
+        This is the ONLY interpolation method - no compatibility modes.
 
         Args:
             vehicle_data: Vehicle data to interpolate
@@ -859,33 +677,159 @@ class VehicleTrackingService(BaseService, IVehicleTrackingService):
             progress_callback: Optional progress callback
 
         Returns:
-            Result containing interpolated VehicleData with uniform time spacing
+            Result containing interpolated VehicleData with forensic segment speeds
         """
         try:
-            if not settings.interpolation_enabled:
+            points = vehicle_data.gps_points
+            if len(points) < 2:
                 return Result.success(vehicle_data)
 
-            self._log_operation("interpolate_path",
-                              f"Using global resampling for {vehicle_data.vehicle_id} "
-                              f"with {settings.interpolation_interval_seconds}s interval")
+            # PREPROCESSING: Coalesce same-location duplicates
+            from ..services.data_preprocessing import coalesce_same_location_duplicates
+            points = coalesce_same_location_duplicates(points)
+            vehicle_data.gps_points = points
 
-            # Check cache
-            cache_key = f"{vehicle_data.vehicle_id}_{settings.interpolation_interval_seconds}"
-            if cache_key in self._interpolation_cache:
-                return Result.success(self._interpolation_cache[cache_key])
+            # Check uniform cadence passthrough
+            dt = settings.interpolation_interval_seconds
+            if self._is_uniform_cadence(points, dt):
+                self._log_operation("passthrough", "Data already uniform, no interpolation needed")
+                return Result.success(vehicle_data)
 
-            # Use the new global resampling method
-            result = self.interpolate_path_global_resampling(vehicle_data, settings, progress_callback)
+            # MANDATORY metric projection setup
+            from ..services.projection_service import make_local_metric_projection
+            center_idx = len(points) // 2
+            center_point = points[center_idx]
+            to_metric, to_wgs84 = make_local_metric_projection(center_point)
 
-            # Cache the successful result
-            if result.success:
-                self._interpolation_cache[cache_key] = result.value
+            if not to_metric or not to_wgs84:
+                raise ValueError("Metric projection is mandatory for forensic processing")
 
-            return result
-            
+            # Calculate segment speeds with same projection
+            from ..services.forensic_speed_calculator import ForensicSpeedCalculator
+            from ..models.forensic_models import SpeedCertainty
+
+            calculator = ForensicSpeedCalculator(settings.__dict__)
+            segments = calculator.calculate_segment_speeds(points, to_metric, to_wgs84)
+
+            interpolated = []
+            interpolated.append(points[0])
+
+            # Mark first point as observed
+            points[0].is_observed = True
+            points[0].is_interpolated = False
+
+            # Process each segment
+            for seg_idx, segment in enumerate(segments):
+                seg_start = segment.start_point
+                seg_end = segment.end_point
+
+                # Skip UNKNOWN segments (gaps too large)
+                if segment.segment_speed.certainty == SpeedCertainty.UNKNOWN:
+                    # Add gap marker
+                    gap_marker = GPSPoint(
+                        latitude=seg_start.latitude,
+                        longitude=seg_start.longitude,
+                        timestamp=seg_start.timestamp,
+                        segment_speed_kmh=0,
+                        speed_certainty="unknown",
+                        segment_id=seg_idx,
+                        is_gap=True,
+                        is_observed=False,
+                        metadata={'gap_seconds': segment.segment_speed.time_seconds}
+                    )
+                    interpolated.append(gap_marker)
+
+                    # Log the gap
+                    self._log_operation("gap_detection",
+                        f"Gap of {segment.segment_speed.time_seconds:.1f}s detected, not interpolating")
+                    continue
+
+                # Handle temporal conflicts - NO interpolation
+                if segment.segment_speed.gap_type == "temporal_conflict":
+                    # DO NOT interpolate temporal conflicts
+                    # Just mark the segment endpoints, renderer will show dashed line
+                    seg_start.segment_speed_kmh = None  # No speed
+                    seg_start.speed_certainty = "low"
+                    seg_start.segment_id = seg_idx
+                    seg_start.metadata = seg_start.metadata or {}
+                    seg_start.metadata['conflict'] = 'temporal_conflict'
+
+                    self._log_operation("temporal_conflict",
+                        f"Temporal conflict: same timestamp, different locations. No speed calculated.")
+
+                    # Skip to next segment - no interpolation between conflicted points
+                    interpolated.append(seg_end)
+                    continue
+
+                # Grid-quantized interpolation
+                from math import floor
+                EPS = 1e-6
+                k = 1
+                t_emit = seg_start.timestamp + timedelta(seconds=dt)
+
+                while t_emit < seg_end.timestamp - timedelta(seconds=EPS):
+                    seg_duration = (seg_end.timestamp - seg_start.timestamp).total_seconds()
+                    time_ratio = (t_emit - seg_start.timestamp).total_seconds() / seg_duration
+
+                    # Interpolate position (keep metric projection)
+                    lat, lon = self._interpolate_in_metric(
+                        seg_start, seg_end, time_ratio, to_metric, to_wgs84
+                    )
+
+                    # Create interpolated point with CONSTANT segment speed
+                    interp_point = GPSPoint(
+                        latitude=lat,
+                        longitude=lon,
+                        timestamp=t_emit,
+                        segment_speed_kmh=segment.segment_speed.speed_kmh,  # CONSTANT!
+                        speed_certainty=segment.segment_speed.certainty.value,
+                        segment_id=seg_idx,
+                        is_interpolated=True,
+                        is_observed=False
+                    )
+
+                    # Copy other fields if available
+                    if seg_start.altitude is not None and seg_end.altitude is not None:
+                        interp_point.altitude = seg_start.altitude + \
+                                             (seg_end.altitude - seg_start.altitude) * time_ratio
+
+                    if seg_start.heading is not None and seg_end.heading is not None:
+                        interp_point.heading = self._interpolate_heading(
+                            seg_start.heading, seg_end.heading, time_ratio
+                        )
+
+                    interpolated.append(interp_point)
+
+                    # Grid-quantized advance
+                    k += 1
+                    t_emit = seg_start.timestamp + timedelta(seconds=k * dt)
+
+                # Add segment end point (observed)
+                seg_end.segment_speed_kmh = segment.segment_speed.speed_kmh
+                seg_end.speed_certainty = segment.segment_speed.certainty.value
+                seg_end.segment_id = seg_idx
+                seg_end.is_observed = True
+                seg_end.is_interpolated = False
+                interpolated.append(seg_end)
+
+            # Update vehicle data
+            vehicle_data.gps_points = interpolated
+            vehicle_data.has_segment_speeds = True
+            vehicle_data.segments = segments
+
+            # Log summary
+            self._log_operation("forensic_interpolation",
+                f"Created {len(interpolated)} points with {len(segments)} segments")
+
+            # Update progress if provided
+            if progress_callback:
+                progress_callback(100, "Forensic interpolation complete")
+
+            return Result.success(vehicle_data)
+
         except Exception as e:
             error = VehicleTrackingError(
-                f"Interpolation failed: {e}",
+                f"Forensic interpolation failed: {e}",
                 user_message="Error interpolating GPS path"
             )
             self._handle_error(error)
