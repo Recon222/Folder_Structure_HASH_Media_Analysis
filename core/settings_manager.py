@@ -299,7 +299,33 @@ class SettingsManager:
     def set_last_input_directory(self, path: Path):
         """Set last input directory"""
         self.set('LAST_INPUT_DIR', str(path))
-    
+
+    @property
+    def same_drive_behavior(self) -> str:
+        """
+        How to handle same-drive file operations.
+
+        Options:
+            'auto_move': Automatically use MOVE for same-drive (fastest)
+            'auto_copy': Always use COPY mode (safest)
+            'ask': Prompt user each time (not yet implemented)
+
+        Returns:
+            Setting value, defaults to 'auto_move'
+        """
+        return self.get('SAME_DRIVE_BEHAVIOR', 'auto_move')
+
+    @same_drive_behavior.setter
+    def same_drive_behavior(self, value: str):
+        """Set same-drive behavior preference"""
+        valid_values = ['auto_move', 'auto_copy', 'ask']
+        if value not in valid_values:
+            raise ValueError(
+                f"Invalid same_drive_behavior: {value}. "
+                f"Must be one of: {', '.join(valid_values)}"
+            )
+        self.set('SAME_DRIVE_BEHAVIOR', value)
+
     def get_archive_method_display_name(self, method: str = None) -> str:
         """Get user-friendly display name for archive method"""
         if method is None:

@@ -30,7 +30,14 @@ class PathService(BaseService, IPathService):
         self._load_templates()
     
     def build_forensic_path(self, form_data: FormData, base_path: Path) -> Result[Path]:
-        """Build forensic folder structure path with validation"""
+        """Build forensic folder structure path with validation
+
+        NOTE: This method creates only the PARENT directories, NOT the final destination folder.
+        This allows os.rename() to work for instant same-drive moves.
+
+        For a "Create Structure Only" feature, use:
+            full_path.mkdir(parents=True, exist_ok=True) instead of full_path.parent.mkdir()
+        """
         try:
             self._log_operation("build_forensic_path", f"base: {base_path}")
             
@@ -72,11 +79,14 @@ class PathService(BaseService, IPathService):
                     # Build path using template
                     builder = TemplatePathBuilder(template, self._path_sanitizer)
                     relative_path = builder.build_relative_path(form_data)
-                    
-                    # Create full path
+
+                    # Create full path (but don't create final folder yet for same-drive move optimization)
                     full_path = base_path / relative_path
-                    full_path.mkdir(parents=True, exist_ok=True)
-                    
+
+                    # Create only the parent directories, NOT the final destination folder
+                    # This allows os.rename() to work for instant same-drive moves
+                    full_path.parent.mkdir(parents=True, exist_ok=True)
+
                     self._log_operation("template_path_built", str(full_path))
                     return Result.success(full_path)
                 else:
@@ -87,7 +97,14 @@ class PathService(BaseService, IPathService):
             
             # Fallback to existing ForensicPathBuilder for backward compatibility
             try:
-                forensic_path = ForensicPathBuilder.create_forensic_structure(base_path, form_data)
+                # Build path but only create parent directories, not final folder
+                # This allows os.rename() to work for instant same-drive moves
+                relative_path = ForensicPathBuilder.build_relative_path(form_data)
+                forensic_path = base_path / relative_path
+
+                # Create only parent directories, NOT the final destination folder
+                forensic_path.parent.mkdir(parents=True, exist_ok=True)
+
                 self._log_operation("legacy_path_built", str(forensic_path))
                 return Result.success(forensic_path)
                 

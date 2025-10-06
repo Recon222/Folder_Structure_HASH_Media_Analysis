@@ -122,17 +122,23 @@ class ForensicController(BaseController):
         files: List[Path],
         folders: List[Path],
         calculate_hash: bool = None,
-        performance_monitor: Any = None
+        performance_monitor: Any = None,
+        destination: Path = None,
+        is_same_drive: Optional[bool] = None
     ) -> Result[Any]:
         """
         Process files using forensic folder structure
-        
+
         This is the main entry point for forensic processing, orchestrating:
         1. Validation
-        2. Output directory selection
+        2. Output directory selection (or use pre-set destination)
         3. ZIP prompt handling
         4. Workflow execution
-        
+
+        Args:
+            destination: Optional pre-set destination path (bypasses folder picker)
+            is_same_drive: Pre-calculated same-drive detection result
+
         Returns:
             Result containing the started thread or error
         """
@@ -175,21 +181,29 @@ class ForensicController(BaseController):
                     choice['remember_for_session']
                 )
             
-            # Ask user for output directory
-            output_dir = QFileDialog.getExistingDirectory(
-                self.parent_widget, 
-                "Select Output Location", 
-                str(self.last_output_directory) if self.last_output_directory else "",
-                QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
-            )
-            
-            if not output_dir:
-                return Result.error(UIError("Operation cancelled by user"))
-            
-            # Store output directory
-            self.output_directory = Path(output_dir)
-            self.last_output_directory = self.output_directory
-            self.operation_state.output_directory = self.output_directory
+            # Use pre-set destination or ask user for output directory
+            if destination:
+                # Use pre-set destination from ForensicTab
+                self.output_directory = destination
+                self.last_output_directory = destination
+                self.operation_state.output_directory = destination
+                self._log_operation("destination_preset", f"Using pre-set destination: {destination}")
+            else:
+                # Ask user for output directory (legacy flow)
+                output_dir = QFileDialog.getExistingDirectory(
+                    self.parent_widget,
+                    "Select Output Location",
+                    str(self.last_output_directory) if self.last_output_directory else "",
+                    QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
+                )
+
+                if not output_dir:
+                    return Result.error(UIError("Operation cancelled by user"))
+
+                # Store output directory
+                self.output_directory = Path(output_dir)
+                self.last_output_directory = self.output_directory
+                self.operation_state.output_directory = self.output_directory
             
             # Get hash preference
             if calculate_hash is None:
@@ -205,7 +219,8 @@ class ForensicController(BaseController):
                 folders=folders,
                 output_directory=self.output_directory,
                 calculate_hash=calculate_hash,
-                performance_monitor=performance_monitor
+                performance_monitor=performance_monitor,
+                is_same_drive=is_same_drive
             )
             
             if not workflow_result.success:

@@ -50,14 +50,26 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName("Folder Structure Utility")
     app.setOrganizationName("Simple Software")
-    
+
     # Initialize template system before creating main window
     initialize_template_system()
-    
+
     # Create and show main window
     window = MainWindow()
     window.show()
-    
+
+    # Check Windows long path support (after window is shown)
+    # This runs asynchronously to not block startup
+    try:
+        from ui.dialogs.long_path_setup_dialog import LongPathSetupDialog
+        from PySide6.QtCore import QTimer
+
+        # Delay check by 1 second to let UI fully load
+        QTimer.singleShot(1000, lambda: LongPathSetupDialog.show_if_needed(window))
+    except Exception as e:
+        from core.logger import logger
+        logger.warning(f"Could not check long path support: {e}")
+
     sys.exit(app.exec())
 
 

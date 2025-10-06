@@ -104,7 +104,7 @@ class BufferedFileOperations:
                  pause_check: Optional[Callable[[], None]] = None):
         """
         Initialize with optional callbacks
-        
+
         Args:
             progress_callback: Function that receives (progress_pct, status_message)
             metrics_callback: Function that receives PerformanceMetrics updates
@@ -119,7 +119,73 @@ class BufferedFileOperations:
         self.cancel_event = Event()
         self.settings = SettingsManager()
         self.metrics = PerformanceMetrics()
-        
+
+    def _is_same_filesystem(self, source: Path, dest: Path) -> bool:
+        """
+        Check if source and destination are on the same filesystem.
+
+        Uses st_dev (device ID) which works across platforms and correctly
+        identifies network drives, RAID arrays, virtual drives, etc.
+
+        Args:
+            source: Source file or folder path
+            dest: Destination directory path
+
+        Returns:
+            True if same filesystem, False otherwise or on any error
+        """
+        try:
+            # Resolve any symlinks to get actual paths
+            source_resolved = source.resolve()
+            dest_resolved = dest.resolve() if dest.exists() else dest.parent.resolve()
+
+            # Get device IDs
+            source_stat = source_resolved.stat()
+            dest_stat = dest_resolved.stat()
+
+            # Compare device IDs
+            same_device = source_stat.st_dev == dest_stat.st_dev
+
+            if same_device:
+                logger.debug(f"Same filesystem detected: {source} and {dest} (device: {source_stat.st_dev})")
+            else:
+                logger.debug(f"Different filesystems: {source} (device: {source_stat.st_dev}) vs {dest} (device: {dest_stat.st_dev})")
+
+            return same_device
+
+        except Exception as e:
+            # On any error, return False to safely fall back to COPY mode
+            logger.warning(f"Filesystem detection failed, defaulting to COPY mode: {e}")
+            return False
+
+    def _check_needs_long_path(self, path: Path, threshold: int = 248) -> bool:
+        """
+        Check if a path exceeds Windows MAX_PATH and needs the \\?\ prefix.
+
+        Windows has a 260-character MAX_PATH limit. We use 248 as a conservative
+        threshold to account for directory operations.
+
+        Args:
+            path: Path to check
+            threshold: Character limit (default: 248 for safety margin)
+
+        Returns:
+            True if path needs \\?\ prefix, False otherwise
+        """
+        try:
+            # Always check actual path length, not a pre-calculated flag
+            path_str = str(path.resolve())
+            needs_prefix = len(path_str) > threshold
+
+            if needs_prefix:
+                logger.debug(f"Path exceeds {threshold} chars ({len(path_str)}): {path_str[:100]}...")
+
+            return needs_prefix
+
+        except Exception as e:
+            logger.debug(f"Could not check path length for {path}: {e}")
+            return False
+
     def copy_file_buffered(self, source: Path, dest: Path, 
                           buffer_size: Optional[int] = None,
                           calculate_hash: bool = True) -> Result[Dict]:
@@ -672,7 +738,476 @@ class BufferedFileOperations:
             files_processed=self.metrics.files_processed,
             bytes_processed=self.metrics.bytes_copied
         )
-    
+
+    def move_files_preserving_structure(
+        self,
+        items: List[tuple],  # (type, path, relative_path)
+        destination: Path,
+        calculate_hash: bool = True
+    ) -> FileOperationResult:
+        """
+        Move files/folders while preserving directory structure.
+
+        Automatically detects if source and destination are on the same filesystem.
+        If yes, uses fast MOVE operations. If no, falls back to COPY.
+
+        This is the main entry point for intelligent file operations.
+
+        Args:
+            items: List of (type, path, relative_path) tuples
+            destination: Destination directory
+            calculate_hash: Whether to calculate post-operation hashes
+
+        Returns:
+            FileOperationResult with operation details
+        """
+        try:
+            # Check settings preference
+            behavior = self.settings.same_drive_behavior
+
+            # Determine if same filesystem (check first item as representative)
+            if not items:
+                error = FileOperationError(
+                    "No items provided for move operation",
+                    user_message="No files selected to process."
+                )
+                return FileOperationResult.error(error)
+
+            first_item = items[0]
+            same_filesystem = self._is_same_filesystem(first_item[1], destination)
+
+            # Determine operation mode based on settings and detection
+            if behavior == 'auto_copy':
+                # User wants COPY only
+                operation_mode = 'copy'
+                self._report_progress(0, "Standard mode: Copying files (user preference)")
+                logger.info(
+                    f"COPY MODE SELECTED:\n"
+                    f"  Reason: User preference (always copy)\n"
+                    f"  Files: {len(items)}\n"
+                    f"  User setting: {behavior}"
+                )
+            elif behavior == 'auto_move' and same_filesystem:
+                # Auto-move enabled and same filesystem
+                operation_mode = 'move'
+                self._report_progress(0, "Fast mode: Moving files (same drive detected)")
+                source_dev = first_item[1].stat().st_dev
+                dest_dev = destination.stat().st_dev if destination.exists() else destination.parent.stat().st_dev
+                logger.info(
+                    f"MOVE MODE SELECTED:\n"
+                    f"  Reason: Same filesystem detected\n"
+                    f"  Source device: {source_dev}\n"
+                    f"  Dest device: {dest_dev}\n"
+                    f"  Files: {len(items)}\n"
+                    f"  User setting: {behavior}"
+                )
+            elif behavior == 'ask':
+                # Not implemented yet - default to copy for now
+                # TODO: Phase 2 - implement confirmation dialog
+                operation_mode = 'copy'
+                self._report_progress(0, "Standard mode: Copying files")
+                logger.info(
+                    f"COPY MODE SELECTED:\n"
+                    f"  Reason: Ask mode not implemented yet\n"
+                    f"  Files: {len(items)}\n"
+                    f"  User setting: {behavior}"
+                )
+            else:
+                # Different filesystem or other cases
+                operation_mode = 'copy'
+                reason = "different filesystems" if not same_filesystem else "default"
+                if not same_filesystem:
+                    self._report_progress(0, "Standard mode: Copying files (different drives)")
+                else:
+                    self._report_progress(0, "Standard mode: Copying files")
+                logger.info(
+                    f"COPY MODE SELECTED:\n"
+                    f"  Reason: {reason}\n"
+                    f"  Files: {len(items)}\n"
+                    f"  User setting: {behavior}"
+                )
+
+            # Execute appropriate operation
+            if operation_mode == 'move':
+                return self._move_files_internal(items, destination, calculate_hash)
+            else:
+                return self._copy_files_internal(items, destination, calculate_hash)
+
+        except Exception as e:
+            error = FileOperationError(
+                f"File operation failed: {e}",
+                user_message="File processing failed. Please check permissions and disk space."
+            )
+            logger.error(f"move_files_preserving_structure failed: {e}", exc_info=True)
+            return FileOperationResult.error(error)
+
+    def _move_files_internal(
+        self,
+        items: List[tuple],
+        destination: Path,
+        calculate_hash: bool
+    ) -> FileOperationResult:
+        """
+        Internal method to move files with progress tracking and hash verification.
+
+        This uses file-count based progress (not byte-based) since moves are instant.
+        """
+        try:
+            self.metrics.start_time = time.time()
+            total_items = len(items)
+            results = {}
+
+            logger.info(f"Starting MOVE operation: {total_items} items to {destination}")
+
+            # Ensure destination exists
+            destination.mkdir(parents=True, exist_ok=True)
+
+            # Track moved items for potential rollback
+            moved_items = []  # [(source, dest), ...]
+
+            for idx, (item_type, source_path, relative_path) in enumerate(items):
+                # Check cancellation
+                if self.cancelled or (self.cancelled_check and self.cancelled_check()):
+                    logger.warning("MOVE operation cancelled by user")
+                    # Rollback moved items
+                    self._rollback_moves(moved_items)
+                    error = FileOperationError(
+                        "Operation cancelled by user",
+                        user_message="File move operation was cancelled."
+                    )
+                    return FileOperationResult.error(error)
+
+                # Check pause
+                if self.pause_check:
+                    self.pause_check()
+
+                # Calculate progress based on file count
+                progress_pct = int((idx / total_items * 100)) if total_items > 0 else 0
+
+                # Status message (moves are instant, so no ETA calculation needed)
+                status_message = f"Moving: {source_path.name} ({idx+1}/{total_items})"
+
+                # Determine destination path
+                if relative_path:
+                    dest_path = destination / relative_path
+                else:
+                    dest_path = destination / source_path.name
+
+                # CRITICAL: For shutil.move() to work, BOTH source and dest must use
+                # the same path format (both with \\?\ or both without).
+                # Check if EITHER path needs long path support.
+                source_needs_long = self._check_needs_long_path(source_path)
+                dest_needs_long = self._check_needs_long_path(dest_path)
+                needs_long_path = source_needs_long or dest_needs_long
+
+                # Apply \\?\ prefix to BOTH or NEITHER (never mix formats!)
+                if needs_long_path:
+                    # Both paths get the prefix to avoid namespace mismatch
+                    source_str = f"\\\\?\\{source_path.resolve()}"
+                    dest_str = f"\\\\?\\{dest_path.resolve()}"
+                    logger.debug(f"Using long path support for move: {source_path.name}")
+                else:
+                    # Neither gets the prefix
+                    source_str = str(source_path)
+                    dest_str = str(dest_path)
+
+                # Ensure parent directory exists
+                dest_path.parent.mkdir(parents=True, exist_ok=True)
+
+                # Report progress
+                self._report_progress(progress_pct, status_message)
+
+                try:
+                    # Get file size before move (for metrics)
+                    if item_type == 'file' and source_path.exists():
+                        file_size = source_path.stat().st_size
+                    else:
+                        file_size = 0
+
+                    # Perform the move with matched path formats
+                    shutil.move(source_str, dest_str)
+
+                    # Track for potential rollback
+                    moved_items.append((source_path, dest_path))
+
+                    # Calculate hash after move (verifies file is readable at destination)
+                    dest_hash = None
+                    if calculate_hash and item_type == 'file':
+                        dest_hash = self._calculate_hash_streaming(dest_path, 65536)
+
+                    # Store result
+                    result_data = {
+                        'source_path': str(source_path),
+                        'dest_path': str(dest_path),
+                        'size': file_size,
+                        'operation': 'move',
+                        'dest_hash': dest_hash,
+                        'verified': True
+                    }
+
+                    results[str(relative_path if relative_path else source_path.name)] = result_data
+
+                    # Update metrics
+                    self.metrics.files_processed += 1
+                    self.metrics.bytes_copied += file_size
+
+                except PermissionError as e:
+                    logger.error(f"Permission denied moving {source_path}: {e}")
+                    self._rollback_moves(moved_items)
+                    error = FileOperationError(
+                        f"Permission denied: {source_path.name}",
+                        user_message=(
+                            f"Cannot move '{source_path.name}': Permission denied.\n\n"
+                            "Possible causes:\n"
+                            "• File is locked by another program\n"
+                            "• You don't have write access to destination\n"
+                            "• File or folder is read-only\n\n"
+                            "Try closing any programs using these files and try again."
+                        )
+                    )
+                    return FileOperationResult.error(error)
+
+                except OSError as e:
+                    logger.error(f"OS error moving {source_path}: {e}")
+                    self._rollback_moves(moved_items)
+
+                    # Check for disk full
+                    if "No space left on device" in str(e) or (hasattr(e, 'errno') and e.errno == 28):
+                        error_msg = (
+                            f"Cannot move files: Destination drive is full.\n\n"
+                            f"Please free up space and try again."
+                        )
+                    # Check for path too long (Windows)
+                    elif "path too long" in str(e).lower() or (hasattr(e, 'errno') and e.errno == 36):
+                        error_msg = (
+                            f"Cannot move '{source_path.name}': Path too long.\n\n"
+                            "Windows has a 260-character path limit.\n"
+                            "Try using a shorter destination path."
+                        )
+                    else:
+                        error_msg = f"Cannot move '{source_path.name}': {e}"
+
+                    error = FileOperationError(
+                        f"OS error: {e}",
+                        user_message=error_msg
+                    )
+                    return FileOperationResult.error(error)
+
+                except Exception as e:
+                    # Move failed for this item - rollback all previous moves
+                    logger.error(f"Unexpected error moving {source_path}: {e}", exc_info=True)
+                    self._rollback_moves(moved_items)
+                    error = FileOperationError(
+                        f"Unexpected error: {e}",
+                        user_message=(
+                            f"An unexpected error occurred moving '{source_path.name}'.\n"
+                            f"Error: {str(e)}\n\n"
+                            "Previous moves have been rolled back."
+                        )
+                    )
+                    return FileOperationResult.error(error)
+
+            # All moves succeeded
+            self.metrics.end_time = time.time()
+            self.metrics.calculate_summary()
+
+            # Final progress
+            self._report_progress(100, f"Move complete: {self.metrics.files_processed} items")
+
+            # Add performance stats
+            duration = self.metrics.end_time - self.metrics.start_time
+            results['_performance_stats'] = {
+                'files_processed': self.metrics.files_processed,
+                'total_bytes': self.metrics.bytes_copied,
+                'total_time_seconds': duration,
+                'operation_mode': 'move',
+                'average_speed_mbps': self.metrics.average_speed_mbps,
+                'mode': 'move'
+            }
+
+            logger.info(
+                f"MOVE operation completed: {self.metrics.files_processed} items, "
+                f"{duration:.2f}s"
+            )
+
+            return FileOperationResult.create(
+                results,
+                files_processed=self.metrics.files_processed,
+                bytes_processed=self.metrics.bytes_copied
+            )
+
+        except Exception as e:
+            logger.error(f"MOVE operation failed: {e}", exc_info=True)
+            error = FileOperationError(
+                f"Move operation failed: {e}",
+                user_message="File move operation failed. Changes may have been partially applied."
+            )
+            return FileOperationResult.error(error)
+
+    def _rollback_moves(self, moved_items: List[tuple]):
+        """
+        Rollback moved files back to their original locations.
+
+        Args:
+            moved_items: List of (original_source, current_dest) tuples
+        """
+        if not moved_items:
+            return
+
+        logger.warning(f"Rolling back {len(moved_items)} moved items")
+
+        failed_rollbacks = []
+
+        # Rollback in reverse order
+        for source_path, dest_path in reversed(moved_items):
+            try:
+                if dest_path.exists():
+                    shutil.move(str(dest_path), str(source_path))
+                    logger.debug(f"Rolled back: {dest_path} -> {source_path}")
+            except Exception as e:
+                logger.error(f"Rollback failed for {dest_path} -> {source_path}: {e}")
+                failed_rollbacks.append((source_path, dest_path, str(e)))
+
+        if failed_rollbacks:
+            logger.error(f"Rollback incomplete: {len(failed_rollbacks)} items could not be restored")
+            for source, dest, error in failed_rollbacks:
+                logger.error(f"  Failed: {dest} -> {source}: {error}")
+        else:
+            logger.info("Rollback completed successfully")
+
+    def _copy_files_internal(
+        self,
+        items: List[tuple],
+        destination: Path,
+        calculate_hash: bool
+    ) -> FileOperationResult:
+        """
+        Internal method to copy files with progress tracking and hash verification.
+
+        Uses traditional COPY operations (does not modify source location).
+        """
+        try:
+            self.metrics.start_time = time.time()
+            total_items = len(items)
+            results = {}
+
+            logger.info(f"Starting COPY operation: {total_items} items to {destination}")
+
+            # Ensure destination exists
+            destination.mkdir(parents=True, exist_ok=True)
+
+            for idx, (item_type, source_path, relative_path) in enumerate(items):
+                # Check cancellation
+                if self.cancelled or (self.cancelled_check and self.cancelled_check()):
+                    logger.warning("COPY operation cancelled by user")
+                    error = FileOperationError(
+                        "Operation cancelled by user",
+                        user_message="File copy operation was cancelled."
+                    )
+                    return FileOperationResult.error(error)
+
+                # Check pause
+                if self.pause_check:
+                    self.pause_check()
+
+                # Calculate progress based on file count
+                progress_pct = int((idx / total_items * 100)) if total_items > 0 else 0
+
+                # Status message
+                status_message = f"Copying: {source_path.name} ({idx+1}/{total_items})"
+
+                # Determine destination path
+                if relative_path:
+                    dest_path = destination / relative_path
+                else:
+                    dest_path = destination / source_path.name
+
+                # Note: For copy_file_buffered(), we don't need the \\?\ prefix
+                # because it opens files directly with Python's open(), which handles
+                # long paths automatically on Windows 10+ with LongPathsEnabled registry.
+                # Only shutil.move() with os.rename() has the namespace mismatch issue.
+
+                # Ensure parent directory exists
+                dest_path.parent.mkdir(parents=True, exist_ok=True)
+
+                # Report progress
+                self._report_progress(progress_pct, status_message)
+
+                try:
+                    # Perform the copy using existing buffered method
+                    copy_result = self.copy_file_buffered(
+                        source_path,
+                        dest_path,
+                        calculate_hash=calculate_hash
+                    )
+
+                    if copy_result.success:
+                        copy_data = copy_result.value
+                        result_data = {
+                            'source_path': str(source_path),
+                            'dest_path': str(dest_path),
+                            'size': copy_data.get('size', 0),
+                            'operation': 'copy',
+                            'source_hash': copy_data.get('source_hash'),
+                            'dest_hash': copy_data.get('dest_hash'),
+                            'verified': copy_data.get('verified', True)
+                        }
+                        results[str(relative_path if relative_path else source_path.name)] = result_data
+
+                        # Update metrics
+                        self.metrics.files_processed += 1
+                        self.metrics.bytes_copied += copy_data.get('size', 0)
+                    else:
+                        # Copy failed
+                        error = copy_result.error
+                        logger.error(f"Copy failed for {source_path}: {error}")
+                        return FileOperationResult.error(error)
+
+                except Exception as e:
+                    logger.error(f"Unexpected error copying {source_path}: {e}", exc_info=True)
+                    error = FileOperationError(
+                        f"Unexpected error: {e}",
+                        user_message=f"An unexpected error occurred copying '{source_path.name}'."
+                    )
+                    return FileOperationResult.error(error)
+
+            # All copies succeeded
+            self.metrics.end_time = time.time()
+            self.metrics.calculate_summary()
+
+            # Final progress
+            self._report_progress(100, f"Copy complete: {self.metrics.files_processed} items")
+
+            # Add performance stats
+            duration = self.metrics.end_time - self.metrics.start_time
+            results['_performance_stats'] = {
+                'files_processed': self.metrics.files_processed,
+                'total_bytes': self.metrics.bytes_copied,
+                'total_time_seconds': duration,
+                'operation_mode': 'copy',
+                'average_speed_mbps': self.metrics.average_speed_mbps,
+                'mode': 'copy'
+            }
+
+            logger.info(
+                f"COPY operation completed: {self.metrics.files_processed} items, "
+                f"{duration:.2f}s"
+            )
+
+            return FileOperationResult.create(
+                results,
+                files_processed=self.metrics.files_processed,
+                bytes_processed=self.metrics.bytes_copied
+            )
+
+        except Exception as e:
+            logger.error(f"COPY operation failed: {e}", exc_info=True)
+            error = FileOperationError(
+                f"Copy operation failed: {e}",
+                user_message="File copy operation failed."
+            )
+            return FileOperationResult.error(error)
+
     def _report_progress(self, percentage: int, message: str):
         """Report progress if callback is available"""
         if self.progress_callback:

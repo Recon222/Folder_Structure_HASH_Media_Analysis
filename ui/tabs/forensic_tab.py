@@ -12,11 +12,12 @@ import logging
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-    QSplitter, QProgressBar, QLabel
+    QSplitter, QProgressBar, QLabel, QFileDialog, QSizePolicy
 )
 
 from core.models import FormData
 from ui.components import FormPanel, FilesPanel, LogConsole, TemplateSelector
+from ui.components.elided_label import PathLabel
 from controllers.forensic_controller import ForensicController
 from core.exceptions import UIError
 from core.error_handler import handle_error
@@ -61,7 +62,17 @@ class ForensicTab(QWidget):
         self.current_thread = None
         self.is_paused = False
         self.logger = logging.getLogger(__name__)
-        
+
+        # Destination path (set before processing)
+        self.destination_path = None
+
+        # Long path support flag (calculated once when destination is set)
+        self.needs_long_paths = False
+
+        # Same-drive detection flag (independent of form data)
+        # None = not checked yet, True = same drive, False = different drives
+        self.is_same_drive = None
+
         # Create UI
         self._create_ui()
         self._connect_signals()
@@ -73,7 +84,34 @@ class ForensicTab(QWidget):
         # Template selector at top
         self.template_selector = TemplateSelector()
         layout.addWidget(self.template_selector)
-        
+
+        # Destination selector section
+        dest_layout = QHBoxLayout()
+        self.set_destination_btn = QPushButton("Set Destination")
+        self.set_destination_btn.setStyleSheet("""
+            QPushButton {
+                padding: 8px 16px;
+                font-weight: bold;
+            }
+        """)
+        dest_layout.addWidget(self.set_destination_btn)
+
+        self.destination_status_label = PathLabel("Destination: Not set", max_width=600)
+        self.destination_status_label.setStyleSheet("""
+            QLabel {
+                color: #666666;
+                font-style: italic;
+                padding: 6px;
+                border: 1px solid #CCCCCC;
+                border-radius: 4px;
+                background-color: #F5F5F5;
+            }
+        """)
+        self.destination_status_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        dest_layout.addWidget(self.destination_status_label, 1)
+
+        layout.addLayout(dest_layout)
+
         # Main splitter
         splitter = QSplitter(Qt.Vertical)
         
@@ -128,43 +166,225 @@ class ForensicTab(QWidget):
         
     def _connect_signals(self):
         """Connect internal signals"""
+        # Destination button
+        self.set_destination_btn.clicked.connect(self._set_destination)
+
         # Process button triggers controller
         self.process_btn.clicked.connect(self._process_requested)
-        
+
         # Control buttons
         self.pause_btn.clicked.connect(self._pause_processing)
         self.cancel_btn.clicked.connect(self._cancel_processing)
-        
+
         # Template selector
         self.template_selector.template_changed.connect(self.template_changed)
         self.template_selector.template_changed.connect(self._on_template_changed)
-        
+
         # Form panel signals
         self.form_panel.calculate_offset_requested.connect(
             lambda: self.log(f"Calculated offset: {self.form_data.time_offset}")
         )
-        
+
         # Files panel signals
         self.files_panel.log_message.connect(self.log)
-        
+        self.files_panel.files_changed.connect(self._on_files_changed)
+
+    def _on_files_changed(self):
+        """Re-run same-drive detection when source files/folders change"""
+        self._detect_same_drive()
+
+    def _set_destination(self):
+        """Set the destination base directory for forensic processing"""
+        directory = QFileDialog.getExistingDirectory(
+            self,
+            "Select Base Destination Directory",
+            str(self.destination_path) if self.destination_path else "",
+            QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
+        )
+
+        if directory:
+            self.destination_path = Path(directory)
+            self.set_destination_btn.setText("Change Destination")
+            self.set_destination_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #4CAF50;
+                    color: white;
+                    font-weight: bold;
+                    padding: 8px 16px;
+                    border: none;
+                    border-radius: 4px;
+                }
+                QPushButton:hover {
+                    background-color: #45a049;
+                }
+            """)
+
+            # Update status label
+            self.destination_status_label.setText(f"Destination: {directory}")
+            self.destination_status_label.setStyleSheet("""
+                QLabel {
+                    color: #2e7d32;
+                    font-weight: bold;
+                    padding: 6px;
+                    border: 1px solid #4CAF50;
+                    border-radius: 4px;
+                    background-color: #e8f5e9;
+                }
+            """)
+
+            self.log(f"Destination set: {directory}")
+
+            # Detect if same drive (independent of form data)
+            self._detect_same_drive()
+
+            # Calculate if long paths will be needed (requires form data)
+            self._validate_path_lengths()
+
+    def _detect_same_drive(self):
+        """
+        Detect if source and destination are on the same drive.
+        This is completely independent of form data and forensic folder structure.
+        Only checks: source drive vs destination base drive.
+        """
+        # Must have destination set
+        if not self.destination_path:
+            self.is_same_drive = None
+            return
+
+        # Must have source files or folders
+        files = self.files_panel.get_files()
+        folders = self.files_panel.get_folders()
+
+        if not files and not folders:
+            self.is_same_drive = None
+            self.logger.debug("No source files/folders yet - skipping same-drive detection")
+            return
+
+        try:
+            # Get sample source path (first folder or first file's parent)
+            sample_source = folders[0] if folders else files[0].parent
+
+            # Get device IDs
+            source_stat = sample_source.stat()
+            dest_stat = self.destination_path.stat()
+
+            # Compare device IDs
+            self.is_same_drive = source_stat.st_dev == dest_stat.st_dev
+
+            # Log both drives with clear messaging
+            self.log(f"Source drive: {source_stat.st_dev} ({sample_source.drive if sample_source.drive else sample_source})")
+            self.log(f"Destination drive: {dest_stat.st_dev} ({self.destination_path.drive if self.destination_path.drive else self.destination_path})")
+
+            if self.is_same_drive:
+                self.log("✓ Same drive detected - files will be MOVED instantly (no copying required)")
+            else:
+                self.log("Different drives detected - files will be COPIED with verification")
+
+        except Exception as e:
+            self.logger.warning(f"Same-drive detection failed: {e}")
+            self.is_same_drive = False  # Default to safe copy mode
+            self.log("⚠️ Could not detect drive - defaulting to COPY mode for safety")
+
+    def _validate_path_lengths(self):
+        """
+        Pre-validate path lengths to determine if long path support is needed.
+        Called when destination is set or when files/form data changes.
+        """
+        if not self.destination_path or not self.form_data:
+            return
+
+        try:
+            # Import here to avoid circular dependency
+            from core.services import get_service
+            from core.services.interfaces import IPathService
+
+            # Get path service to build forensic path
+            path_service = get_service(IPathService)
+
+            # Build the forensic path structure that will be created
+            forensic_path = path_service.build_forensic_path(
+                self.form_data,
+                self.destination_path
+            )
+
+            forensic_prefix_length = len(str(forensic_path))
+
+            # Get source files and calculate longest relative path
+            files = self.files_panel.get_files()
+            folders = self.files_panel.get_folders()
+
+            max_source_depth = 0
+
+            # Check individual files
+            for file in files:
+                relative_length = len(file.name)
+                if relative_length > max_source_depth:
+                    max_source_depth = relative_length
+
+            # Check folders - need to scan recursively
+            for folder in folders:
+                try:
+                    for item_path in folder.rglob('*'):
+                        if item_path.is_file():
+                            relative = item_path.relative_to(folder.parent)
+                            relative_length = len(str(relative))
+                            if relative_length > max_source_depth:
+                                max_source_depth = relative_length
+                except Exception:
+                    pass  # Skip on errors
+
+            # Calculate worst case path length
+            max_final_path_length = forensic_prefix_length + max_source_depth
+
+            # Store result for later use
+            self.needs_long_paths = max_final_path_length > 230
+
+            # Update UI with result
+            if self.needs_long_paths:
+                self.destination_status_label.setText(
+                    f"Destination: {self.destination_path} ⚠️ Long paths detected"
+                )
+                self.log(f"Long paths detected - max path: {max_final_path_length} chars (will enable extended support)")
+            else:
+                self.destination_status_label.setText(
+                    f"Destination: {self.destination_path} ✓"
+                )
+
+        except Exception as e:
+            self.logger.warning(f"Path validation failed: {e}")
+            # Default to safe mode
+            self.needs_long_paths = False
+
     def _process_requested(self):
         """Handle process button click - delegate to controller"""
         try:
+            # Check if destination is set
+            if not self.destination_path:
+                error = UIError(
+                    "No destination set",
+                    user_message="Please set a destination folder before processing.",
+                    severity=ErrorSeverity.WARNING
+                )
+                handle_error(error, {'operation': 'forensic_processing'})
+                return
+
             # Get files and folders
             files = self.files_panel.get_files()
             folders = self.files_panel.get_folders()
-            
+
             # Get performance monitor from MainWindow if available
             perf_monitor = None
             if self.main_window and hasattr(self.main_window, 'performance_monitor'):
                 perf_monitor = self.main_window.performance_monitor
-            
+
             # Start processing via controller
             result = self.controller.process_forensic_files(
                 form_data=self.form_data,
                 files=files,
                 folders=folders,
-                performance_monitor=perf_monitor
+                performance_monitor=perf_monitor,
+                destination=self.destination_path,  # Pass pre-set destination
+                is_same_drive=self.is_same_drive  # Pass same-drive detection result
             )
             
             if result.success:

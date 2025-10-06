@@ -288,29 +288,33 @@ class PDFGenerator:
         """
         try:
             with open(output_path, 'w', newline='') as csvfile:
-                fieldnames = ['Filename', 'Source Path', 'Destination Path', 
-                            'Source Hash (SHA-256)', 'Destination Hash (SHA-256)', 
-                            'Verification Status']
-                            
+                fieldnames = ['Filename', 'Source Path', 'Destination Path',
+                            'Source Hash (SHA-256)', 'Destination Hash (SHA-256)',
+                            'Verification Status', 'Operation']
+
                 writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
                 writer.writeheader()
-                
+
                 for filename, data in file_results.items():
                     # Skip non-dict entries (like _performance_stats or other metadata)
                     if not isinstance(data, dict):
                         continue
-                        
+
                     # Skip entries that don't have file data
                     if 'source_path' not in data and 'dest_path' not in data:
                         continue
-                        
+
+                    # Get operation type (default to 'copy' for backwards compatibility)
+                    operation_type = data.get('operation', 'copy')
+
                     writer.writerow({
                         'Filename': filename,
                         'Source Path': data.get('source_path', ''),
                         'Destination Path': data.get('dest_path', ''),
                         'Source Hash (SHA-256)': data.get('source_hash', ''),
                         'Destination Hash (SHA-256)': data.get('dest_hash', ''),
-                        'Verification Status': 'PASSED' if data.get('verified', False) else 'FAILED'
+                        'Verification Status': 'PASSED' if data.get('verified', False) else 'FAILED',
+                        'Operation': operation_type
                     })
                     
             return ReportGenerationResult.create_successful(

@@ -8,7 +8,7 @@ from core.settings_manager import SettingsManager
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QGroupBox, QCheckBox,
     QDialogButtonBox, QLabel, QSpinBox, QHBoxLayout,
-    QTabWidget, QWidget, QLineEdit, QFormLayout
+    QTabWidget, QWidget, QLineEdit, QFormLayout, QComboBox
 )
 
 
@@ -284,7 +284,55 @@ class UserSettingsDialog(QDialog):
         
         monitor_group.setLayout(monitor_layout)
         layout.addWidget(monitor_group)
-        
+
+        # Same-Drive Behavior Section
+        same_drive_group = QGroupBox("Same-Drive File Operations")
+        same_drive_layout = QVBoxLayout()
+
+        # Explanation label
+        same_drive_info = QLabel(
+            "When source files and destination are on the same drive, "
+            "the app can move files instantly instead of copying them."
+        )
+        same_drive_info.setWordWrap(True)
+        same_drive_info.setStyleSheet("color: #666; font-size: 11px;")
+        same_drive_layout.addWidget(same_drive_info)
+
+        # Combo box
+        behavior_layout = QHBoxLayout()
+        behavior_layout.addWidget(QLabel("Behavior:"))
+
+        self.same_drive_combo = QComboBox()
+        self.same_drive_combo.addItems([
+            "Always move (fastest)",
+            "Always copy (safest)",
+            "Ask each time (not yet implemented)"
+        ])
+        self.same_drive_combo.setToolTip(
+            "How to handle files on the same drive:\n\n"
+            "• Always move (fastest):\n"
+            "  Files are moved instantly (10-100x faster).\n"
+            "  Use when: Organizing recovered data on USB drives.\n"
+            "  Result: Files no longer at original location.\n\n"
+            "• Always copy (safest):\n"
+            "  Files are copied (slower).\n"
+            "  Use when: You need to keep original files.\n"
+            "  Result: Slower, but original preserved.\n\n"
+            "• Ask each time:\n"
+            "  Prompt before each operation.\n"
+            "  Use when: You want control per operation.\n"
+            "  Result: More clicks, more control.\n\n"
+            "Note: Cross-drive operations always use copy mode."
+        )
+        behavior_layout.addWidget(self.same_drive_combo)
+        behavior_layout.addStretch()
+
+        same_drive_layout.addLayout(behavior_layout)
+        same_drive_group.setLayout(same_drive_layout)
+
+        # Add to performance tab layout
+        layout.addWidget(same_drive_group)
+
         layout.addStretch()
         tab.setLayout(layout)
         self.tabs.addTab(tab, "Performance")
@@ -298,6 +346,15 @@ class UserSettingsDialog(QDialog):
         buffer_size_kb = self.settings.copy_buffer_size // 1024
         self.perf_buffer_spin.setValue(buffer_size_kb)
         
+        # Same-drive behavior
+        behavior = self.settings.same_drive_behavior
+        if behavior == 'auto_move':
+            self.same_drive_combo.setCurrentIndex(0)
+        elif behavior == 'auto_copy':
+            self.same_drive_combo.setCurrentIndex(1)
+        elif behavior == 'ask':
+            self.same_drive_combo.setCurrentIndex(2)
+
         # UI behavior
         self.auto_scroll_check.setChecked(
             bool(self.settings.get('auto_scroll_log', True))
@@ -343,6 +400,15 @@ class UserSettingsDialog(QDialog):
         self.settings.set('technician_name', self.tech_name_edit.text())
         self.settings.set('badge_number', self.badge_edit.text())
         
+        # Same-drive behavior
+        combo_index = self.same_drive_combo.currentIndex()
+        if combo_index == 0:
+            self.settings.same_drive_behavior = 'auto_move'
+        elif combo_index == 1:
+            self.settings.same_drive_behavior = 'auto_copy'
+        elif combo_index == 2:
+            self.settings.same_drive_behavior = 'ask'
+
         # Documentation settings - Use canonical keys since properties don't have setters
         self.settings.set('TIME_OFFSET_PDF', self.generate_time_offset_check.isChecked())
         self.settings.set('UPLOAD_LOG_PDF', self.generate_upload_log_check.isChecked())

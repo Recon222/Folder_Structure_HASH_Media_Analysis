@@ -60,16 +60,20 @@ class WorkflowController(BaseController):
         folders: List[Path],
         output_directory: Path,
         calculate_hash: bool = True,
-        performance_monitor = None
+        performance_monitor = None,
+        is_same_drive: Optional[bool] = None
     ) -> Result[FolderStructureThread]:
         """
         Process complete forensic workflow
-        
+
         This method orchestrates the entire forensic processing workflow:
         1. Validates form data and file paths
         2. Builds forensic folder structure
         3. Creates worker thread for file processing
-        
+
+        Args:
+            is_same_drive: Pre-calculated same-drive detection result
+
         Returns:
             Result containing FolderStructureThread or error
         """
@@ -108,10 +112,11 @@ class WorkflowController(BaseController):
             
             # Step 5: Create worker thread
             thread = FolderStructureThread(
-                all_items, 
-                forensic_path, 
-                calculate_hash, 
-                performance_monitor
+                all_items,
+                forensic_path,
+                calculate_hash,
+                performance_monitor,
+                is_same_drive=is_same_drive
             )
             
             self.current_operation = thread

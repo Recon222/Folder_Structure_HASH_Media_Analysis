@@ -8,6 +8,10 @@ modern Result-based error handling and comprehensive folder structure processing
 """
 
 import time
+import shutil
+import logging
+import os
+import ctypes
 from pathlib import Path
 from typing import List, Tuple, Optional, Dict, Any
 
@@ -31,15 +35,17 @@ class FolderStructureThread(FileWorkerThread):
     """
     
     def __init__(self, items: List[Tuple], destination: Path, calculate_hash: bool = True,
-                 performance_monitor: Optional['PerformanceMonitorDialog'] = None):
+                 performance_monitor: Optional['PerformanceMonitorDialog'] = None,
+                 is_same_drive: Optional[bool] = None):
         """
         Initialize folder structure thread
-        
+
         Args:
             items: List of (type, path, relative_path) tuples to copy
             destination: Destination directory
             calculate_hash: Whether to calculate and verify file hashes
             performance_monitor: Optional performance monitoring dialog
+            is_same_drive: Pre-calculated same-drive detection result (None=not checked, True=same, False=different)
         """
         # Extract file paths for parent class initialization
         file_paths = []
@@ -52,14 +58,18 @@ class FolderStructureThread(FileWorkerThread):
                     file_paths.extend([p for p in path.rglob('*') if p.is_file()])
                 except Exception:
                     pass  # Handle access errors gracefully
-        
+
         super().__init__(files=file_paths, destination=destination)
-        
+
         self.items = items
         self.calculate_hash = calculate_hash
         self.performance_monitor = performance_monitor
         self.buffered_ops = None
-        
+        self.is_same_drive = is_same_drive  # Store same-drive detection result
+
+        # Initialize logger
+        self.logger = logging.getLogger(__name__)
+
         # Set descriptive operation name
         file_count = len(file_paths)
         folder_count = sum(1 for item_type, _, _ in items if item_type == 'folder')
@@ -85,8 +95,10 @@ class FolderStructureThread(FileWorkerThread):
             # Analyze folder structure and collect files
             self.emit_progress(5, "Analyzing folder structure...")
             structure_analysis = self._analyze_folder_structure()
-            
-            if not structure_analysis['total_files'] and not structure_analysis['empty_dirs']:
+
+            # Check if there's anything to process (files, empty dirs, OR folder items for same-drive move)
+            if not structure_analysis['total_files'] and not structure_analysis['empty_dirs'] and not structure_analysis['folder_items']:
+                self.logger.info("Nothing to process - no files, directories, or folders found")
                 return FileOperationResult.create(
                     {},
                     files_processed=0,
@@ -193,18 +205,27 @@ class FolderStructureThread(FileWorkerThread):
     def _analyze_folder_structure(self) -> Dict[str, Any]:
         """
         Analyze folder structure and collect files to copy
-        
+
         Returns:
             Dictionary containing analysis results
         """
         total_files = []
+        folder_items = []  # Keep folders intact for same-drive moves
         empty_dirs = set()
         analysis_errors = []
         total_size = 0
-        
+
         self.emit_progress(10, "Scanning folder structure...")
-        
+
+        # DEBUG: Log analysis start state
+        self.logger.info(f"=== ANALYSIS START ===")
+        self.logger.info(f"Total items to process: {len(self.items)}")
+        self.logger.info(f"is_same_drive flag: {self.is_same_drive}")
+        self.logger.info(f"Destination: {self.destination}")
+
         for item_type, path, relative in self.items:
+            # DEBUG: Log each item being processed
+            self.logger.info(f"Processing item: type={item_type}, path={path}, relative={relative}")
             try:
                 if item_type == 'file':
                     if path.exists() and path.is_file():
@@ -215,56 +236,118 @@ class FolderStructureThread(FileWorkerThread):
                             pass  # Size is optional
                     else:
                         analysis_errors.append(f"File not found: {path}")
-                        
+
                 elif item_type == 'folder':
+                    # DEBUG: Log folder processing
+                    self.logger.info(f">>> FOLDER ITEM DETECTED <<<")
+                    self.logger.info(f"  Path exists: {path.exists()}")
+                    self.logger.info(f"  Path value: {path}")
+
                     if not path.exists():
+                        self.logger.error(f"  FOLDER NOT FOUND: {path}")
                         analysis_errors.append(f"Folder not found: {path}")
                         continue
-                        
-                    # Collect all items in folder recursively
-                    try:
-                        for item_path in path.rglob('*'):
-                            relative_path = item_path.relative_to(path.parent)
-                            
-                            if item_path.is_file():
-                                total_files.append((item_path, relative_path))
-                                try:
-                                    total_size += item_path.stat().st_size
-                                except:
-                                    pass
-                            elif item_path.is_dir():
-                                empty_dirs.add(relative_path)
-                    except PermissionError as e:
-                        analysis_errors.append(f"Permission denied scanning {path}: {e}")
-                    except Exception as e:
-                        analysis_errors.append(f"Error scanning {path}: {e}")
-                        
+
+                    # Use pre-calculated same-drive flag from ForensicTab
+                    # This was determined when destination was set using the base destination path
+                    # No runtime detection needed - just use the flag!
+                    self.logger.info(f"  Checking is_same_drive: {self.is_same_drive}")
+
+                    if self.is_same_drive:
+                        # Keep as folder item for instant move
+                        self.logger.info(f"  ✓ SAME DRIVE - Adding to folder_items for instant move")
+                        self.logger.info(f"  folder_items before append: {len(folder_items)}")
+
+                        folder_items.append(('folder', path, relative))
+
+                        self.logger.info(f"  folder_items after append: {len(folder_items)}")
+                        self.logger.info(f"  Added: ('folder', {path}, {relative})")
+
+                        # Still calculate size for progress
+                        try:
+                            file_count = 0
+                            for item_path in path.rglob('*'):
+                                if item_path.is_file():
+                                    file_count += 1
+                                    try:
+                                        total_size += item_path.stat().st_size
+                                    except:
+                                        pass
+                            self.logger.info(f"  Scanned {file_count} files in folder for size calculation")
+                        except Exception as e:
+                            self.logger.error(f"  Error calculating folder size: {e}")
+                    else:
+                        # Different drives - explode into files for copy
+                        self.logger.info(f"  ✗ DIFFERENT DRIVES - Exploding folder into files")
+                        try:
+                            file_count = 0
+                            for item_path in path.rglob('*'):
+                                relative_path = item_path.relative_to(path.parent)
+
+                                if item_path.is_file():
+                                    total_files.append((item_path, relative_path))
+                                    file_count += 1
+                                    try:
+                                        total_size += item_path.stat().st_size
+                                    except:
+                                        pass
+                                elif item_path.is_dir():
+                                    empty_dirs.add(relative_path)
+                            self.logger.info(f"  Exploded into {file_count} individual files")
+                        except PermissionError as e:
+                            self.logger.error(f"  Permission denied scanning {path}: {e}")
+                            analysis_errors.append(f"Permission denied scanning {path}: {e}")
+                        except Exception as e:
+                            self.logger.error(f"  Error scanning {path}: {e}")
+                            analysis_errors.append(f"Error scanning {path}: {e}")
+
             except Exception as e:
+                self.logger.error(f"Exception processing item: {e}")
                 analysis_errors.append(f"Error processing {item_type} {path}: {e}")
-        
+
+        # DEBUG: Log analysis results
+        self.logger.info(f"=== ANALYSIS COMPLETE ===")
+        self.logger.info(f"Total files: {len(total_files)}")
+        self.logger.info(f"Folder items (for instant move): {len(folder_items)}")
+        self.logger.info(f"Empty dirs: {len(empty_dirs)}")
+        self.logger.info(f"Analysis errors: {len(analysis_errors)}")
+        if analysis_errors:
+            for error in analysis_errors:
+                self.logger.error(f"  - {error}")
+
         return {
             'total_files': total_files,
+            'folder_items': folder_items,  # New: intact folders for same-drive moves
             'empty_dirs': list(empty_dirs),
             'total_size': total_size,
             'analysis_errors': analysis_errors,
             'file_count': len(total_files),
-            'dir_count': len(empty_dirs)
+            'dir_count': len(empty_dirs),
+            'folder_count': len(folder_items)
         }
     
     def _execute_structure_copy(self, analysis: Dict[str, Any]) -> FileOperationResult:
         """
         Execute the actual folder structure copying
-        
+
         Args:
             analysis: Folder structure analysis results
-            
+
         Returns:
             FileOperationResult with operation results
         """
         results = {}
         total_files = analysis['total_files']
+        folder_items = analysis['folder_items']  # Get intact folders for same-drive moves
         empty_dirs = analysis['empty_dirs']
-        
+
+        # DEBUG: Log execution phase start
+        self.logger.info(f"=== EXECUTION PHASE START ===")
+        self.logger.info(f"Received from analysis:")
+        self.logger.info(f"  total_files: {len(total_files)}")
+        self.logger.info(f"  folder_items: {len(folder_items)}")
+        self.logger.info(f"  empty_dirs: {len(empty_dirs)}")
+
         try:
             # Initialize buffered file operations
             self.buffered_ops = BufferedFileOperations(
@@ -304,6 +387,7 @@ class FolderStructureThread(FileWorkerThread):
                     continue
                 
                 try:
+                    # Create directory (Python's mkdir handles long paths automatically on Windows 10+)
                     dest_dir.mkdir(parents=True, exist_ok=True)
                     directories_created += 1
                     
@@ -320,88 +404,188 @@ class FolderStructureThread(FileWorkerThread):
                     # Continue with other directories
             
             self.check_cancellation()
-            
-            # Copy files with structure preservation
-            if total_files:
-                self.emit_progress(25, f"Copying {len(total_files)} files...")
-                files_processed = 0
-                
-                for source_file, relative_path in total_files:
-                    if self.is_cancelled():
-                        break
-                    self.check_pause()
-                    
+
+            # Process whole folders first (instant same-drive moves!)
+            if folder_items:
+                self.logger.info(f"Same-drive optimization active: Moving {len(folder_items)} folders instantly")
+                self.emit_progress(20, f"Moving {len(folder_items)} folders (instant)...")
+
+                for folder_type, source_folder, relative in folder_items:
                     try:
-                        # Create destination path preserving structure
-                        dest_file = self.destination / relative_path
-                        
-                        # Security validation
-                        try:
-                            dest_resolved = dest_file.resolve()
-                            base_resolved = self.destination.resolve()
-                            if not str(dest_resolved).startswith(str(base_resolved)):
-                                raise FileOperationError(
-                                    f"Security: Path traversal detected for {relative_path}"
-                                )
-                        except FileOperationError:
-                            raise
-                        except Exception:
-                            continue  # Skip files with path issues
-                        
+                        # Calculate destination folder path
+                        if relative:
+                            # Use full relative path to preserve structure
+                            dest_folder = self.destination / relative
+                        else:
+                            # For same-drive instant move: rename source TO destination
+                            # The destination IS the final folder, don't append source name
+                            dest_folder = self.destination
+
+                        # With LongPathsEnabled=1, no \\?\ prefix needed - Windows handles it automatically
+                        # shutil.move() uses os.rename() internally for same-drive, handles folders correctly
+
+                        # DEBUG: Detailed path logging
+                        self.logger.info(f"=== FOLDER MOVE DEBUG ===")
+                        self.logger.info(f"  Source folder: {source_folder}")
+                        self.logger.info(f"  Source exists: {source_folder.exists()}")
+                        self.logger.info(f"  Dest folder: {dest_folder}")
+                        self.logger.info(f"  Dest exists: {dest_folder.exists()}")
+                        self.logger.info(f"  Dest parent: {dest_folder.parent}")
+                        self.logger.info(f"  Dest parent exists: {dest_folder.parent.exists()}")
+
+                        # Check if destination already exists
+                        if dest_folder.exists():
+                            self.logger.error(f"  DESTINATION ALREADY EXISTS: {dest_folder}")
+                            self.logger.error(f"  This will cause os.rename() to fail!")
+
+                        # Perform instant folder move using Win32 MoveFileEx API
+                        # This bypasses Python's shutil.move() quirks and uses Windows directly
+                        # MoveFileEx performs instant metadata-only moves on same filesystem
+                        # With LongPathsEnabled=1, it handles long paths perfectly
+
+                        # CRITICAL: Use Win32 MoveFileW API directly
+                        # os.rename() fails moving to different parent dirs on Windows
+                        # shutil.move() silently falls back to copying when os.rename() fails
+                        # Solution: Call MoveFileW directly via ctypes for instant same-drive moves
+
                         # Ensure parent directory exists
-                        dest_file.parent.mkdir(parents=True, exist_ok=True)
-                        
-                        # Copy file with buffering
-                        copy_result = self.buffered_ops.copy_file_buffered(
-                            source_file,
-                            dest_file,
-                            calculate_hash=self.calculate_hash
+                        if not dest_folder.parent.exists():
+                            dest_folder.parent.mkdir(parents=True, exist_ok=True)
+                            self.logger.info(f"  Created parent directory: {dest_folder.parent}")
+
+                        # Use Win32 MoveFileExW with MOVEFILE_COPY_ALLOWED flag
+                        # This allows the move to succeed even if it requires copying
+                        self.logger.info(f"  Calling Win32 MoveFileExW API...")
+
+                        # Windows API call
+                        if os.name == 'nt':
+                            # MoveFileExW flags
+                            MOVEFILE_REPLACE_EXISTING = 0x1
+                            MOVEFILE_COPY_ALLOWED = 0x2
+                            MOVEFILE_WRITE_THROUGH = 0x8
+
+                            kernel32 = ctypes.windll.kernel32
+
+                            # Try 1: Standard move (instant if possible)
+                            self.logger.info(f"    Attempt 1: Standard move (should be instant on same drive)...")
+                            result = kernel32.MoveFileExW(
+                                str(source_folder),
+                                str(dest_folder),
+                                MOVEFILE_WRITE_THROUGH
+                            )
+
+                            if result:
+                                self.logger.info(f"✓ Instant move succeeded!")
+                            else:
+                                error_code = kernel32.GetLastError()
+                                self.logger.error(f"    Move failed with error: {error_code}")
+
+                                if error_code == 5:  # ERROR_ACCESS_DENIED
+                                    self.logger.info(f"    Error 5 = ACCESS_DENIED")
+                                    self.logger.info(f"    Possible causes:")
+                                    self.logger.info(f"      - Open file handles in source directory")
+                                    self.logger.info(f"      - NTFS permission conflicts")
+                                    self.logger.info(f"      - Windows Search/antivirus locking files")
+                                    self.logger.info(f"    Attempt 2: Try with MOVEFILE_COPY_ALLOWED flag...")
+
+                                    # Try 2: Allow copy as fallback
+                                    result = kernel32.MoveFileExW(
+                                        str(source_folder),
+                                        str(dest_folder),
+                                        MOVEFILE_COPY_ALLOWED | MOVEFILE_WRITE_THROUGH
+                                    )
+
+                                    if result:
+                                        self.logger.info(f"✓ Move succeeded with COPY_ALLOWED (may have copied)")
+                                    else:
+                                        error_code2 = kernel32.GetLastError()
+                                        self.logger.error(f"    Still failed with error: {error_code2}")
+                                        self.logger.info(f"  Final fallback to shutil.move()...")
+                                        shutil.move(str(source_folder), str(dest_folder))
+                                        self.logger.info(f"✓ Move completed via shutil (copied)")
+                                else:
+                                    self.logger.info(f"  Falling back to shutil.move()...")
+                                    shutil.move(str(source_folder), str(dest_folder))
+                                    self.logger.info(f"✓ Move completed (copied)")
+                        else:
+                            # Non-Windows: use shutil.move()
+                            shutil.move(str(source_folder), str(dest_folder))
+                            self.logger.info(f"✓ Move completed")
+
+                    except Exception as e:
+                        self.logger.error(f"Folder move failed for {source_folder}: {e}")
+                        self.handle_error(
+                            FileOperationError(f"Folder move failed: {e}"),
+                            {'stage': 'folder_move', 'folder': str(source_folder)}
                         )
-                        
-                        # Handle Result object from copy_file_buffered
-                        if copy_result.success:
-                            # Store successful results
-                            copy_data = copy_result.value
-                            results[str(relative_path)] = {
-                                'source_path': str(source_file),
-                                'dest_path': str(dest_file),
-                                'source_hash': copy_data.get('source_hash', ''),
-                                'dest_hash': copy_data.get('dest_hash', ''),
-                                'verified': copy_data.get('verified', True),
-                                'size': copy_data.get('size', 0),  # ✅ ADD: Preserve file size for batch aggregation
-                                'success': True
+            else:
+                # No folders for instant move - either different drives or no folders selected
+                if self.is_same_drive is False:
+                    self.logger.info("Different drives detected - files will be copied individually")
+                else:
+                    self.logger.info("No folders for same-drive move optimization")
+
+            # Process individual files with structure preservation using intelligent move/copy
+            if total_files:
+                self.emit_progress(25, f"Processing {len(total_files)} files...")
+
+                # Build items list for move_files_preserving_structure
+                # Format: List[(type, path, relative_path)]
+                items_for_processing = []
+                for source_file, relative_path in total_files:
+                    # Security validation before adding to items
+                    try:
+                        dest_file = self.destination / relative_path
+                        dest_resolved = dest_file.resolve()
+                        base_resolved = self.destination.resolve()
+                        if not str(dest_resolved).startswith(str(base_resolved)):
+                            self.handle_error(
+                                FileOperationError(f"Security: Path traversal detected for {relative_path}"),
+                                {'stage': 'security_validation', 'path': str(relative_path)}
+                            )
+                            continue  # Skip this file
+                    except Exception as e:
+                        self.handle_error(
+                            FileOperationError(f"Path validation error: {e}"),
+                            {'stage': 'security_validation', 'path': str(relative_path)}
+                        )
+                        continue  # Skip this file
+
+                    items_for_processing.append(('file', source_file, relative_path))
+
+                # Use intelligent move/copy operation (respects user settings)
+                operation_result = self.buffered_ops.move_files_preserving_structure(
+                    items_for_processing,
+                    self.destination,
+                    calculate_hash=self.calculate_hash
+                )
+
+                # Handle Result object from move_files_preserving_structure
+                if operation_result.success:
+                    # Merge results from the operation
+                    operation_data = operation_result.value
+                    files_processed = 0
+
+                    for key, value in operation_data.items():
+                        if key != '_performance_stats':  # Skip metadata
+                            results[key] = {
+                                'source_path': value.get('source_path', ''),
+                                'dest_path': value.get('dest_path', ''),
+                                'source_hash': value.get('source_hash', ''),
+                                'dest_hash': value.get('dest_hash', ''),
+                                'verified': value.get('verified', True),
+                                'size': value.get('size', 0),
+                                'success': True,
+                                'operation': value.get('operation', 'copy')  # Track move vs copy
                             }
                             files_processed += 1
-                        else:
-                            # Store error results
-                            results[str(relative_path)] = {
-                                'source_path': str(source_file),
-                                'dest_path': str(dest_file),
-                                'source_hash': '',
-                                'dest_hash': '',
-                                'verified': False,
-                                'success': False,
-                                'error': str(copy_result.error)
-                            }
-                            # Log error but continue processing other files
-                            error_details.append(f"{relative_path}: {copy_result.error}")
-                            logger.warning(f"File copy failed for {relative_path}: {copy_result.error}")
-                        
-                        # Update progress
-                        file_progress = int((files_processed / len(total_files)) * 60)  # 60% for files
-                        total_progress = 25 + file_progress
-                        self.emit_progress(total_progress, 
-                                         f"Copied {files_processed}/{len(total_files)} files")
-                        
-                        # Update file progress tracking
-                        self.update_file_progress(files_processed, source_file.name)
-                        
-                    except Exception as e:
-                        self.handle_file_error(e, str(source_file), {
-                            'relative_path': str(relative_path),
-                            'stage': 'file_copy'
-                        })
-                        # Continue with other files
+
+                    # Update final progress
+                    self.emit_progress(85, f"Processed {files_processed}/{len(total_files)} files")
+                else:
+                    # Operation failed - log error and return
+                    self.handle_error(operation_result.error, {'stage': 'file_processing'})
+                    return operation_result
             else:
                 files_processed = 0
             
