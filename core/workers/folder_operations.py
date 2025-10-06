@@ -417,9 +417,9 @@ class FolderStructureThread(FileWorkerThread):
                             # Use full relative path to preserve structure
                             dest_folder = self.destination / relative
                         else:
-                            # For same-drive instant move: rename source TO destination
-                            # The destination IS the final folder, don't append source name
-                            dest_folder = self.destination
+                            # Preserve source folder name within destination
+                            # User expects: destination/source_folder_name/
+                            dest_folder = self.destination / source_folder.name
 
                         # With LongPathsEnabled=1, no \\?\ prefix needed - Windows handles it automatically
                         # shutil.move() uses os.rename() internally for same-drive, handles folders correctly

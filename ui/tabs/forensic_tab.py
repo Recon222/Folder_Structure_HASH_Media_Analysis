@@ -237,9 +237,6 @@ class ForensicTab(QWidget):
             # Detect if same drive (independent of form data)
             self._detect_same_drive()
 
-            # Calculate if long paths will be needed (requires form data)
-            self._validate_path_lengths()
-
     def _detect_same_drive(self):
         """
         Detect if source and destination are on the same drive.
@@ -284,76 +281,6 @@ class ForensicTab(QWidget):
             self.logger.warning(f"Same-drive detection failed: {e}")
             self.is_same_drive = False  # Default to safe copy mode
             self.log("⚠️ Could not detect drive - defaulting to COPY mode for safety")
-
-    def _validate_path_lengths(self):
-        """
-        Pre-validate path lengths to determine if long path support is needed.
-        Called when destination is set or when files/form data changes.
-        """
-        if not self.destination_path or not self.form_data:
-            return
-
-        try:
-            # Import here to avoid circular dependency
-            from core.services import get_service
-            from core.services.interfaces import IPathService
-
-            # Get path service to build forensic path
-            path_service = get_service(IPathService)
-
-            # Build the forensic path structure that will be created
-            forensic_path = path_service.build_forensic_path(
-                self.form_data,
-                self.destination_path
-            )
-
-            forensic_prefix_length = len(str(forensic_path))
-
-            # Get source files and calculate longest relative path
-            files = self.files_panel.get_files()
-            folders = self.files_panel.get_folders()
-
-            max_source_depth = 0
-
-            # Check individual files
-            for file in files:
-                relative_length = len(file.name)
-                if relative_length > max_source_depth:
-                    max_source_depth = relative_length
-
-            # Check folders - need to scan recursively
-            for folder in folders:
-                try:
-                    for item_path in folder.rglob('*'):
-                        if item_path.is_file():
-                            relative = item_path.relative_to(folder.parent)
-                            relative_length = len(str(relative))
-                            if relative_length > max_source_depth:
-                                max_source_depth = relative_length
-                except Exception:
-                    pass  # Skip on errors
-
-            # Calculate worst case path length
-            max_final_path_length = forensic_prefix_length + max_source_depth
-
-            # Store result for later use
-            self.needs_long_paths = max_final_path_length > 230
-
-            # Update UI with result
-            if self.needs_long_paths:
-                self.destination_status_label.setText(
-                    f"Destination: {self.destination_path} ⚠️ Long paths detected"
-                )
-                self.log(f"Long paths detected - max path: {max_final_path_length} chars (will enable extended support)")
-            else:
-                self.destination_status_label.setText(
-                    f"Destination: {self.destination_path} ✓"
-                )
-
-        except Exception as e:
-            self.logger.warning(f"Path validation failed: {e}")
-            # Default to safe mode
-            self.needs_long_paths = False
 
     def _process_requested(self):
         """Handle process button click - delegate to controller"""
