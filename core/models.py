@@ -89,7 +89,8 @@ class BatchJob:
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
     template_type: str = "forensic"  # Always forensic mode
-    
+    is_same_drive: Optional[bool] = None  # Same-drive detection result for move optimization
+
     def validate(self) -> List[str]:
         """Validate job configuration"""
         errors = []

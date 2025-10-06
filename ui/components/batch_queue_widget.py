@@ -262,18 +262,58 @@ class BatchQueueWidget(QWidget):
         
         return " - ".join(parts)
 
-    def add_job_from_current(self, form_data, files: List[Path], folders: List[Path], 
+    def _detect_same_drive_for_job(self, files: List[Path], folders: List[Path],
+                                   output_directory: Path) -> Optional[bool]:
+        """
+        Detect if source and destination are on same drive for batch job.
+        Returns None if detection fails or no sources provided.
+        """
+        try:
+            # Must have output directory
+            if not output_directory or not output_directory.exists():
+                return None
+
+            # Must have files or folders
+            if not files and not folders:
+                return None
+
+            # Get first source (file or folder)
+            sample_source = folders[0] if folders else files[0]
+
+            # Compare device IDs
+            source_stat = sample_source.stat()
+            dest_stat = output_directory.stat()
+
+            is_same = source_stat.st_dev == dest_stat.st_dev
+
+            # Log detection result
+            self.log_message.emit(
+                f"Drive detection: {'SAME drive' if is_same else 'DIFFERENT drives'} "
+                f"(source: {source_stat.st_dev}, dest: {dest_stat.st_dev})"
+            )
+
+            return is_same
+
+        except Exception as e:
+            self.log_message.emit(f"⚠️ Same-drive detection failed: {e} - defaulting to COPY mode")
+            return False  # Default to safe copy mode
+
+    def add_job_from_current(self, form_data, files: List[Path], folders: List[Path],
                            output_directory: Path, template_type: str = "forensic"):
         """Add a job from current form configuration"""
         import copy
-        
+
+        # Detect same-drive before creating job for move optimization
+        is_same_drive = self._detect_same_drive_for_job(files, folders, output_directory)
+
         job = BatchJob(
             job_name=self._build_job_name(form_data),
             form_data=copy.deepcopy(form_data),
             files=files.copy(),
             folders=folders.copy(),
             output_directory=output_directory,
-            template_type=template_type
+            template_type=template_type,
+            is_same_drive=is_same_drive
         )
         
         try:

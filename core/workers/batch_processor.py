@@ -471,10 +471,11 @@ class BatchProcessorThread(BaseWorkerThread):
             workflow_result = workflow_controller.process_forensic_workflow(
                 form_data=job.form_data,
                 files=job.files,
-                folders=job.folders, 
+                folders=job.folders,
                 output_directory=Path(job.output_directory),
                 calculate_hash=settings.calculate_hashes,
-                performance_monitor=None  # Simplified for batch mode
+                performance_monitor=None,  # Simplified for batch mode
+                is_same_drive=job.is_same_drive  # Pass same-drive detection for move optimization
             )
             
             # Check workflow setup result
