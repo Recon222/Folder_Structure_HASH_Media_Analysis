@@ -23,7 +23,17 @@
       "Read(//mnt/c/Users/kriss/Desktop/Working_Apps_for_CFSA/**)",
       "Bash(.venvScriptspython.exe main.py)",
       "mcp__context7__resolve-library-id",
-      "WebSearch"
+      "WebSearch",
+      "Bash(git rm:*)",
+      "Bash(git commit:*)",
+      "Bash(git add:*)",
+      "Bash(C:Userskrissanaconda3envssmpte-timecode-extractorpython.exe -m py_compile \"filename_parser/workers/filename_parser_worker.py\")",
+      "Bash(\"C:/Users/kriss/anaconda3/envs/smpte-timecode-extractor/python.exe\" -m py_compile \"filename_parser/workers/filename_parser_worker.py\")",
+      "Bash(\"C:/Users/kriss/anaconda3/envs/smpte-timecode-extractor/python.exe\" -c \"from filename_parser.workers.filename_parser_worker import FilenameParserWorker; print(''Import successful'')\")",
+      "Bash(\"C:/Users/kriss/anaconda3/envs/smpte-timecode-extractor/python.exe\" -m py_compile \"filename_parser/controllers/filename_parser_controller.py\")",
+      "Bash(\"C:/Users/kriss/anaconda3/envs/smpte-timecode-extractor/python.exe\" -c \"from filename_parser.controllers.filename_parser_controller import FilenameParserController; print(''Import successful''); print(f''Controller methods: {[m for m in dir(FilenameParserController) if not m.startswith(\"\"_\"\")]}'')\")",
+      "Bash(.venv/Scripts/python.exe:*)",
+      "Bash(\"C:\\Users\\kriss\\anaconda3\\envs\\smpte-timecode-extractor\\python.exe\" -m py_compile \"filename_parser/ui/filename_parser_tab.py\")"
     ],
     "deny": []
   }
