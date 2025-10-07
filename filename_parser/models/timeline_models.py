@@ -1,0 +1,213 @@
+"""
+Timeline data models for multicam video generation.
+
+This module defines type-safe data structures for representing video timelines,
+including metadata, positions, gaps, overlaps, and rendering settings.
+"""
+
+from dataclasses import dataclass, field
+from typing import List, Optional, Literal
+from pathlib import Path
+from enum import Enum
+
+
+class LayoutType(str, Enum):
+    """Multicam layout strategies for different camera counts."""
+
+    SINGLE = "single"              # 1 camera (Phase 1)
+    SIDE_BY_SIDE = "side_by_side"  # 2 cameras horizontal (Phase 2)
+    TRIPLE_SPLIT = "triple_split"  # 3 cameras: 2 top, 1 bottom (Phase 3)
+    GRID_2X2 = "grid_2x2"          # 4 cameras in 2x2 grid (Phase 3)
+    GRID_3X2 = "grid_3x2"          # 6 cameras in 3x2 grid (Phase 3)
+
+
+@dataclass
+class VideoMetadata:
+    """
+    Comprehensive video metadata for timeline processing.
+
+    Contains all information needed for video normalization,
+    timeline positioning, and multicam layout generation.
+    """
+
+    # File information
+    file_path: Path
+    filename: str
+
+    # Timing information
+    smpte_timecode: str      # From filename parser (HH:MM:SS:FF)
+    frame_rate: float        # Native FPS (e.g., 29.97, 30.0)
+    duration_seconds: float  # Real-world duration
+    duration_frames: int     # Duration in native frames
+
+    # Video specifications
+    width: int               # Resolution width
+    height: int              # Resolution height
+    codec: str               # Video codec (e.g., "h264")
+    pixel_format: str        # Pixel format (e.g., "yuv420p")
+    video_bitrate: int       # Video bitrate in bits/sec
+    video_profile: Optional[str] = None  # Codec profile (e.g., "high")
+
+    # Audio specifications
+    audio_codec: Optional[str] = None     # Audio codec (e.g., "aac")
+    audio_bitrate: Optional[int] = None   # Audio bitrate in bits/sec
+    sample_rate: Optional[int] = None     # Audio sample rate (e.g., 48000)
+
+    # Camera organization
+    camera_path: str = ""    # e.g., "Location1/Camera2" (from parent directories)
+
+    # Timeline position (populated by TimelineCalculatorService)
+    start_frame: int = 0     # Start position on timeline (sequence frames)
+    end_frame: int = 0       # End position on timeline (sequence frames)
+    duration_seq: int = 0    # Duration in sequence frames
+
+
+@dataclass
+class TimelinePosition:
+    """
+    Position of a video segment on the timeline.
+
+    Represents where a video appears in the final chronological timeline,
+    including both frame-based and timecode-based representations.
+    """
+
+    start_frame: int         # Relative to earliest video (sequence frames)
+    end_frame: int           # Relative to earliest video (sequence frames)
+    duration_frames: int     # Duration in sequence frames
+    start_timecode: str      # SMPTE format (HH:MM:SS:FF)
+    end_timecode: str        # SMPTE format (HH:MM:SS:FF)
+
+
+@dataclass
+class Gap:
+    """
+    Represents a gap in coverage where no camera has footage.
+
+    Gaps are detected by the TimelineCalculatorService and filled
+    with slate videos showing the missing time range.
+    """
+
+    # Timeline position
+    start_frame: int         # Gap start (sequence frames)
+    end_frame: int           # Gap end (sequence frames)
+    duration_frames: int     # Gap duration (sequence frames)
+    duration_seconds: float  # Gap duration (real-world time)
+
+    # Timecode information
+    start_timecode: str      # SMPTE format (HH:MM:SS:FF)
+    end_timecode: str        # SMPTE format (HH:MM:SS:FF)
+
+    # Generated slate
+    slate_video_path: Optional[Path] = None  # Path to generated slate video
+
+
+@dataclass
+class OverlapGroup:
+    """
+    Represents overlapping cameras with simultaneous footage.
+
+    When multiple cameras have footage during the same time period,
+    they are grouped together and a multicam layout is generated.
+
+    Phase 1: Not used (single camera only)
+    Phase 2+: Used for side-by-side and grid layouts
+    """
+
+    # Timeline position
+    start_frame: int         # Overlap start (sequence frames)
+    end_frame: int           # Overlap end (sequence frames)
+    duration_frames: int     # Overlap duration (sequence frames)
+
+    # Cameras in this overlap
+    videos: List[VideoMetadata] = field(default_factory=list)
+
+    # Layout configuration
+    layout_type: LayoutType = LayoutType.SINGLE
+
+    # Generated output
+    output_video_path: Optional[Path] = None  # Path to generated multicam video
+
+
+@dataclass
+class TimelineSegment:
+    """
+    A segment of the timeline (single video, gap, or overlap).
+
+    The timeline is divided into ordered segments, each representing
+    a distinct period with specific content (footage or gap).
+    """
+
+    # Segment classification
+    segment_type: Literal["video", "gap", "overlap"]
+
+    # Timeline position
+    start_frame: int
+    end_frame: int
+    duration_frames: int
+
+    # Content (one of these will be populated based on segment_type)
+    video: Optional[VideoMetadata] = None
+    gap: Optional[Gap] = None
+    overlap: Optional[OverlapGroup] = None
+
+    # Final output path (points to original video, slate, or generated layout)
+    output_video_path: Optional[Path] = None
+
+
+@dataclass
+class Timeline:
+    """
+    Complete timeline representation with all segments.
+
+    This is the main data structure produced by TimelineCalculatorService
+    and consumed by MulticamRendererService for video generation.
+    """
+
+    # Source data
+    videos: List[VideoMetadata] = field(default_factory=list)
+
+    # Timeline structure
+    segments: List[TimelineSegment] = field(default_factory=list)
+    gaps: List[Gap] = field(default_factory=list)
+    overlaps: List[OverlapGroup] = field(default_factory=list)
+
+    # Timeline metadata
+    earliest_timecode: str = "00:00:00:00"  # SMPTE format
+    latest_timecode: str = "00:00:00:00"    # SMPTE format
+    total_duration_frames: int = 0          # Total timeline duration (sequence frames)
+    total_duration_seconds: float = 0.0     # Total timeline duration (real-world time)
+    sequence_fps: float = 30.0              # Normalized timeline FPS
+
+
+@dataclass
+class RenderSettings:
+    """
+    Settings for multicam video rendering.
+
+    Configures output video specifications, slate appearance,
+    and performance optimizations.
+    """
+
+    # Output video settings
+    output_resolution: tuple[int, int] = (1920, 1080)
+    output_fps: float = 30.0
+    output_codec: str = "libx264"
+    output_pixel_format: str = "yuv420p"
+    video_bitrate: str = "5M"
+    audio_codec: str = "aac"
+    audio_bitrate: str = "128k"
+
+    # Slate settings
+    slate_duration_seconds: int = 5
+    slate_background_color: str = "#1a1a1a"  # Dark gray
+    slate_text_color: str = "white"
+    slate_font_size: int = 48
+
+    # Performance settings
+    use_hardware_accel: bool = False
+    hardware_accel_type: Optional[str] = None  # "nvenc", "qsv", "vaapi"
+    threads: int = 0  # 0 = auto-detect
+
+    # Output paths
+    output_directory: Path = Path(".")
+    output_filename: str = "multicam_timeline.mp4"

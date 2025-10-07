@@ -19,6 +19,7 @@ from core.exceptions import FileOperationError
 
 from filename_parser.filename_parser_interfaces import IFrameRateService
 from filename_parser.core.binary_manager import binary_manager
+from filename_parser.models.timeline_models import VideoMetadata
 
 
 @dataclass
@@ -377,3 +378,131 @@ class FrameRateService(BaseService, IFrameRateService):
                     continue
 
         return None
+
+    def extract_video_metadata(
+        self,
+        file_path: Path,
+        smpte_timecode: str,
+        camera_path: str
+    ) -> Result[VideoMetadata]:
+        """
+        Extract comprehensive video metadata using FFprobe.
+
+        This method extends the basic frame rate detection to extract all
+        metadata needed for video normalization and timeline processing.
+
+        Args:
+            file_path: Path to video file
+            smpte_timecode: SMPTE timecode from filename parser
+            camera_path: Camera organization path (e.g., "Location1/Camera2")
+
+        Returns:
+            Result containing VideoMetadata or error
+        """
+        if not binary_manager.is_ffprobe_available():
+            return Result.error(
+                FileOperationError(
+                    "FFprobe not available",
+                    user_message="FFprobe is required. Please install FFmpeg.",
+                    context={"file_path": str(file_path)}
+                )
+            )
+
+        try:
+            # Single FFprobe call for all metadata (efficient)
+            cmd = [
+                binary_manager.get_ffprobe_path(),
+                "-v", "error",
+                "-show_entries",
+                "stream=codec_name,codec_type,width,height,r_frame_rate,pix_fmt,profile,bit_rate,sample_rate,channels",
+                "-show_entries", "format=duration",
+                "-of", "json",
+                str(file_path)
+            ]
+
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=10  # 10 second timeout
+            )
+
+            data = json.loads(result.stdout)
+
+            # Parse video stream
+            video_stream = next(
+                (s for s in data.get("streams", []) if s.get("codec_type") == "video"),
+                None
+            )
+            if not video_stream:
+                return Result.error(
+                    FileOperationError(
+                        f"No video stream found in {file_path.name}",
+                        user_message=f"Could not find video stream in {file_path.name}",
+                        context={"file_path": str(file_path)}
+                    )
+                )
+
+            # Parse audio stream (optional)
+            audio_stream = next(
+                (s for s in data.get("streams", []) if s.get("codec_type") == "audio"),
+                None
+            )
+
+            # Calculate frame rate
+            r_frame_rate = video_stream.get("r_frame_rate", "30/1")
+            fps = self._parse_frame_rate_fraction(r_frame_rate)
+            if fps is None:
+                fps = self.DEFAULT_FRAME_RATE
+
+            # Calculate duration
+            duration_seconds = float(data.get("format", {}).get("duration", 0))
+            duration_frames = int(duration_seconds * fps)
+
+            # Build VideoMetadata
+            metadata = VideoMetadata(
+                file_path=file_path,
+                filename=file_path.name,
+                smpte_timecode=smpte_timecode,
+                frame_rate=fps,
+                duration_seconds=duration_seconds,
+                duration_frames=duration_frames,
+                width=int(video_stream.get("width", 1920)),
+                height=int(video_stream.get("height", 1080)),
+                codec=video_stream.get("codec_name", "h264"),
+                pixel_format=video_stream.get("pix_fmt", "yuv420p"),
+                video_bitrate=int(video_stream.get("bit_rate", 5000000)),
+                video_profile=video_stream.get("profile"),
+                audio_codec=audio_stream.get("codec_name") if audio_stream else None,
+                audio_bitrate=int(audio_stream.get("bit_rate", 128000)) if audio_stream else None,
+                sample_rate=int(audio_stream.get("sample_rate", 48000)) if audio_stream else None,
+                camera_path=camera_path
+            )
+
+            return Result.success(metadata)
+
+        except subprocess.CalledProcessError as e:
+            return Result.error(
+                FileOperationError(
+                    f"FFprobe failed: {e.stderr}",
+                    user_message=f"Could not extract metadata from {file_path.name}",
+                    context={"file_path": str(file_path), "error": e.stderr}
+                )
+            )
+        except subprocess.TimeoutExpired:
+            return Result.error(
+                FileOperationError(
+                    f"FFprobe timeout for {file_path.name}",
+                    user_message=f"Metadata extraction timed out for {file_path.name}",
+                    context={"file_path": str(file_path)}
+                )
+            )
+        except Exception as e:
+            return Result.error(
+                FileOperationError(
+                    f"Unexpected error extracting metadata: {e}",
+                    user_message=f"Failed to analyze {file_path.name}",
+                    context={"file_path": str(file_path), "error": str(e)}
+                )
+            )
