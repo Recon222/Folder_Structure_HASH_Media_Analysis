@@ -7,7 +7,23 @@ time component extraction, and pattern matching results.
 
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Any, Literal, Pattern
+from enum import Enum
 import re
+
+
+class PatternCategory(str, Enum):
+    """Categories for organizing filename patterns"""
+    DVR_DAHUA = "dvr_dahua"
+    DVR_HIKVISION = "dvr_hikvision"
+    DVR_GENERIC = "dvr_generic"
+    COMPACT_TIMESTAMP = "compact_timestamp"
+    DELIMITED_TIMESTAMP = "delimited_timestamp"
+    EMBEDDED_TIMESTAMP = "embedded_timestamp"
+    EMBEDDED_DATETIME = "embedded_datetime"
+    ISO_DATETIME = "iso_datetime"
+    ISO8601 = "iso8601"
+    ALTERNATIVE = "alternative"
+    CUSTOM = "custom"
 
 
 @dataclass

@@ -134,7 +134,7 @@ class FFmpegMetadataWriterService(BaseService, IFFmpegMetadataWriterService):
 
             self.logger.info(f"Writing timecode to: {output_path}")
 
-            # Build FFmpeg command
+            # Build FFmpeg command - try copy mode first (fast)
             ffmpeg_path = binary_manager.get_ffmpeg_path()
             cmd = [
                 ffmpeg_path,
@@ -147,7 +147,7 @@ class FFmpegMetadataWriterService(BaseService, IFFmpegMetadataWriterService):
                 str(output_path),
             ]
 
-            self.logger.debug(f"FFmpeg command: {' '.join(cmd)}")
+            self.logger.debug(f"FFmpeg command (copy mode): {' '.join(cmd)}")
 
             # Execute FFmpeg
             result = subprocess.run(
@@ -158,21 +158,77 @@ class FFmpegMetadataWriterService(BaseService, IFFmpegMetadataWriterService):
                 timeout=120,  # 2 minute timeout
             )
 
-            # Check for errors
+            # Check for errors and detect audio codec incompatibility
             if result.returncode != 0:
-                error_msg = result.stderr[:500]  # Limit error length
-                self.logger.error(f"FFmpeg failed: {error_msg}")
-                return Result.error(
-                    FileOperationError(
-                        f"FFmpeg error: {error_msg}",
-                        user_message="Failed to write timecode metadata. FFmpeg reported an error.",
-                        context={
-                            "video_path": str(video_path),
-                            "output_path": str(output_path),
-                            "returncode": result.returncode
-                        }
-                    )
+                stderr_lower = result.stderr.lower()
+
+                # Check if error is due to incompatible audio codec
+                is_audio_codec_error = (
+                    "codec not currently supported in container" in stderr_lower or
+                    "could not find tag for codec" in stderr_lower or
+                    "pcm_mulaw" in stderr_lower
                 )
+
+                if is_audio_codec_error:
+                    self.logger.warning("Copy mode failed due to incompatible audio codec - retrying with audio re-encoding")
+
+                    # Retry with audio re-encoding to AAC
+                    cmd_reencode = [
+                        ffmpeg_path,
+                        "-i", str(video_path),
+                        "-c:v", "copy",  # Copy video stream (no re-encoding)
+                        "-c:a", "aac",   # Re-encode audio to AAC (MP4-compatible)
+                        "-b:a", "64k",   # 64 kbps audio bitrate (matches typical CCTV)
+                        "-timecode", smpte_timecode,
+                        "-metadata:s:v:0", f"xmp:Timecode={smpte_timecode}",
+                        "-movflags", "use_metadata_tags",
+                        "-y",
+                        str(output_path),
+                    ]
+
+                    self.logger.debug(f"FFmpeg command (re-encode audio): {' '.join(cmd_reencode)}")
+
+                    result = subprocess.run(
+                        cmd_reencode,
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                        timeout=120,
+                    )
+
+                    if result.returncode != 0:
+                        error_msg = result.stderr[-2000:] if len(result.stderr) > 2000 else result.stderr
+                        self.logger.error(f"FFmpeg failed even with audio re-encoding (returncode {result.returncode}): {error_msg}")
+                        return Result.error(
+                            FileOperationError(
+                                f"FFmpeg error (returncode {result.returncode}): {error_msg}",
+                                user_message="Failed to write timecode metadata even after re-encoding audio.",
+                                context={
+                                    "video_path": str(video_path),
+                                    "output_path": str(output_path),
+                                    "returncode": result.returncode,
+                                    "full_stderr": result.stderr
+                                }
+                            )
+                        )
+                    else:
+                        self.logger.info("Successfully wrote timecode with audio re-encoding")
+                else:
+                    # Not an audio codec error - return original error
+                    error_msg = result.stderr[-2000:] if len(result.stderr) > 2000 else result.stderr
+                    self.logger.error(f"FFmpeg failed (returncode {result.returncode}): {error_msg}")
+                    return Result.error(
+                        FileOperationError(
+                            f"FFmpeg error (returncode {result.returncode}): {error_msg}",
+                            user_message="Failed to write timecode metadata. FFmpeg reported an error.",
+                            context={
+                                "video_path": str(video_path),
+                                "output_path": str(output_path),
+                                "returncode": result.returncode,
+                                "full_stderr": result.stderr
+                            }
+                        )
+                    )
 
             # Verify output file exists and has content
             if not output_path.exists() or output_path.stat().st_size == 0:

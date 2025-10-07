@@ -7,7 +7,7 @@ component definitions.
 """
 
 from typing import List, Optional, Dict
-from filename_parser.models.pattern_models import PatternDefinition, TimeComponentDefinition
+from filename_parser.models.pattern_models import PatternDefinition, TimeComponentDefinition, PatternCategory
 
 # Constants moved here to avoid external dependency
 MAX_HOURS = 23

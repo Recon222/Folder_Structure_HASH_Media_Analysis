@@ -9,6 +9,7 @@ extract time information, and write SMPTE timecode metadata with parallel proces
 
 from typing import List
 from pathlib import Path
+import logging
 
 from PySide6.QtCore import Signal
 
@@ -19,6 +20,9 @@ from core.exceptions import FileOperationError
 from filename_parser.models.filename_parser_models import FilenameParserSettings
 from filename_parser.models.processing_result import ProcessingStatistics
 from filename_parser.services.batch_processor_service import BatchProcessorService
+
+# Module logger
+logger = logging.getLogger(__name__)
 
 
 class FilenameParserWorker(BaseWorkerThread):
@@ -73,8 +77,8 @@ class FilenameParserWorker(BaseWorkerThread):
             and individual file results, or error if operation failed
         """
         try:
-            self.logger.info(f"Starting filename parsing for {len(self.files)} files")
-            self.logger.debug(f"Settings: pattern_id={self.settings.pattern_id}, "
+            logger.info(f"Starting filename parsing for {len(self.files)} files")
+            logger.debug(f"Settings: pattern_id={self.settings.pattern_id}, "
                             f"detect_fps={self.settings.detect_fps}, "
                             f"export_csv={self.settings.export_csv}")
 
@@ -98,24 +102,24 @@ class FilenameParserWorker(BaseWorkerThread):
             )
 
             # Log results
-            if result.is_success:
+            if result.success:
                 stats = result.value
-                self.logger.info(
+                logger.info(
                     f"Parsing complete: {stats.successful} successful, "
                     f"{stats.failed} failed, {stats.skipped} skipped"
                 )
-                self.logger.debug(
+                logger.debug(
                     f"Performance: {stats.total_processing_time:.2f}s total, "
                     f"{stats.average_processing_time:.3f}s avg, "
                     f"{stats.files_per_second:.2f} files/s"
                 )
             else:
-                self.logger.error(f"Parsing failed: {result.error}")
+                logger.error(f"Parsing failed: {result.error}")
 
             return result
 
         except Exception as e:
-            self.logger.error(f"Unexpected error in filename parser worker: {e}", exc_info=True)
+            logger.error(f"Unexpected error in filename parser worker: {e}", exc_info=True)
             return Result.error(
                 FileOperationError(
                     f"Unexpected error during filename parsing: {e}",
@@ -153,7 +157,7 @@ class FilenameParserWorker(BaseWorkerThread):
         Notifies both the worker thread and the BatchProcessorService
         about cancellation to ensure graceful shutdown.
         """
-        self.logger.info("Filename parsing cancellation requested")
+        logger.info("Filename parsing cancellation requested")
 
         # Tell the service to cancel processing
         # The service will stop its internal loops and cleanup

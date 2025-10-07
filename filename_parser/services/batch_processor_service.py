@@ -244,7 +244,7 @@ class BatchProcessorService(BaseService, IBatchProcessorService):
                 time_offset=settings.get_time_offset_dict(),
             )
 
-            if not parse_result.is_success:
+            if not parse_result.success:
                 return ProcessingResult(
                     source_file=str(file_path),
                     filename=file_path.name,
@@ -258,35 +258,37 @@ class BatchProcessorService(BaseService, IBatchProcessorService):
 
             parsed = parse_result.value
 
-            # Step 2: Write metadata
-            project_root = None
-            if settings.use_mirrored_structure and settings.base_output_directory:
-                # Use parent of file as project root (simplified)
-                project_root = str(file_path.parent)
+            # Step 2: Write metadata (ONLY if write_metadata is True)
+            output_path = None
+            if settings.write_metadata:
+                project_root = None
+                if settings.use_mirrored_structure and settings.base_output_directory:
+                    # Use parent of file as project root (simplified)
+                    project_root = str(file_path.parent)
 
-            write_result = self._metadata_writer_service.write_smpte_metadata(
-                file_path,
-                parsed.smpte_timecode,
-                fps,
-                project_root,
-            )
-
-            if not write_result.is_success:
-                return ProcessingResult(
-                    source_file=str(file_path),
-                    filename=file_path.name,
-                    status=ProcessingStatus.FAILED,
-                    success=False,
-                    frame_rate=fps,
-                    parsed_time=parsed.time_data.time_string,
-                    smpte_timecode=parsed.smpte_timecode,
-                    pattern_used=parsed.pattern.name,
-                    error_message=write_result.error.user_message if write_result.error else "Write failed",
-                    start_time=start_time,
-                    end_time=datetime.now(),
+                write_result = self._metadata_writer_service.write_smpte_metadata(
+                    file_path,
+                    parsed.smpte_timecode,
+                    fps,
+                    project_root,
                 )
 
-            output_path = write_result.value
+                if not write_result.success:
+                    return ProcessingResult(
+                        source_file=str(file_path),
+                        filename=file_path.name,
+                        status=ProcessingStatus.FAILED,
+                        success=False,
+                        frame_rate=fps,
+                        parsed_time=parsed.time_data.time_string,
+                        smpte_timecode=parsed.smpte_timecode,
+                        pattern_used=parsed.pattern.name,
+                        error_message=write_result.error.user_message if write_result.error else "Write failed",
+                        start_time=start_time,
+                        end_time=datetime.now(),
+                    )
+
+                output_path = write_result.value
 
             # Success
             end_time = datetime.now()

@@ -33,7 +33,8 @@ class FilenameParserSettings:
     base_output_directory: Optional[Path] = None
 
     # Processing options
-    export_csv: bool = True
+    write_metadata: bool = False  # Whether to write SMPTE to files (default: parse only)
+    export_csv: bool = False  # CSV export is manual action after parsing
     csv_output_path: Optional[Path] = None
 
     # Parallel processing
@@ -71,6 +72,7 @@ class FilenameParserSettings:
             "time_offset_seconds": self.time_offset_seconds,
             "use_mirrored_structure": self.use_mirrored_structure,
             "base_output_directory": str(self.base_output_directory) if self.base_output_directory else None,
+            "write_metadata": self.write_metadata,
             "export_csv": self.export_csv,
             "csv_output_path": str(self.csv_output_path) if self.csv_output_path else None,
             "use_parallel_processing": self.use_parallel_processing,
@@ -95,6 +97,7 @@ class FilenameParserSettings:
             time_offset_seconds=data.get("time_offset_seconds", 0),
             use_mirrored_structure=data.get("use_mirrored_structure", False),
             base_output_directory=Path(base_output) if base_output else None,
+            write_metadata=data.get("write_metadata", False),
             export_csv=data.get("export_csv", True),
             csv_output_path=Path(csv_output) if csv_output else None,
             use_parallel_processing=data.get("use_parallel_processing", True),

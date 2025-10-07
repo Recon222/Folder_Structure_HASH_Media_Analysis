@@ -81,7 +81,7 @@ class CSVExportService:
                     # Build row data
                     row = {
                         "source_file_path": result.get("source_file", ""),
-                        "smpte_timecode": result.get("timecode", ""),
+                        "smpte_timecode": result.get("smpte_timecode", result.get("timecode", "")),
                     }
 
                     if include_metadata:
@@ -89,10 +89,10 @@ class CSVExportService:
                             {
                                 "output_file_path": result.get("output_file", ""),
                                 "frame_rate": result.get("frame_rate", ""),
-                                "pattern_used": result.get("pattern", ""),
+                                "pattern_used": result.get("pattern_used", result.get("pattern", "")),
                                 "time_offset_applied": result.get("time_offset_applied", False),
                                 "status": result.get("status", "unknown"),
-                                "error_message": result.get("error", ""),
+                                "error_message": result.get("error_message", result.get("error", "")),
                             }
                         )
 
@@ -161,12 +161,12 @@ class CSVExportService:
                 row = {
                     "source_file_path": result.get("source_file", ""),
                     "output_file_path": result.get("output_file", ""),
-                    "smpte_timecode": result.get("timecode", ""),
+                    "smpte_timecode": result.get("smpte_timecode", result.get("timecode", "")),
                     "frame_rate": result.get("frame_rate", ""),
-                    "pattern_used": result.get("pattern", ""),
+                    "pattern_used": result.get("pattern_used", result.get("pattern", "")),
                     "time_offset_applied": result.get("time_offset_applied", False),
                     "status": result.get("status", "unknown"),
-                    "error_message": result.get("error", ""),
+                    "error_message": result.get("error_message", result.get("error", "")),
                 }
 
                 writer.writerow(row)
