@@ -1,14 +1,20 @@
 """
 SMPTE timecode conversion service.
 
-This service handles conversion of time data to SMPTE timecode format
-and application of time offsets.
+This service handles conversion of time data to SMPTE timecode format,
+application of time offsets, and timeline-critical conversions.
 """
 
 import math
 from typing import Optional, Dict, Any
 from filename_parser.models.time_models import TimeData
-from filename_parser.core.time_utils import milliseconds_to_frames, apply_time_offset as apply_offset_util
+from filename_parser.core.time_utils import (
+    milliseconds_to_frames,
+    apply_time_offset as apply_offset_util,
+    timecode_to_seconds,
+    frames_to_timecode,
+    seconds_to_timecode
+)
 from core.logger import logger
 
 

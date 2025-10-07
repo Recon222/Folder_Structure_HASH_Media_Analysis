@@ -248,3 +248,108 @@ def validate_time_components(
         return False
 
     return True
+
+
+def timecode_to_seconds(timecode: str, fps: float) -> float:
+    """
+    Convert SMPTE timecode to total seconds with subsecond precision.
+
+    This is critical for timeline calculations as it preserves accuracy
+    across frame rate conversions using time-based (not frame-based) calculations.
+
+    Args:
+        timecode: SMPTE timecode string (HH:MM:SS:FF)
+        fps: Frames per second
+
+    Returns:
+        Total seconds as float with subsecond precision
+
+    Example:
+        >>> timecode_to_seconds("14:32:18:05", 12.0)
+        52338.4166...  # 14*3600 + 32*60 + 18 + (5/12)
+    """
+    components = parse_smpte(timecode)
+    if not components:
+        raise ValueError(f"Invalid SMPTE timecode format: {timecode}")
+
+    hours = components["hours"]
+    minutes = components["minutes"]
+    seconds = components["seconds"]
+    frames = components["frames"]
+
+    # Convert to total seconds with frame precision
+    total_seconds = hours * 3600 + minutes * 60 + seconds
+
+    # Add fractional seconds from frames
+    # This preserves subsecond precision critical for timeline calculations
+    total_seconds += frames / fps
+
+    return total_seconds
+
+
+def frames_to_timecode(frames: int, fps: float) -> str:
+    """
+    Convert frame count to SMPTE timecode.
+
+    Handles rounding edge cases properly to ensure frame counts
+    never exceed fps-1 in the frames field.
+
+    Args:
+        frames: Total frame count
+        fps: Frames per second
+
+    Returns:
+        SMPTE timecode string (HH:MM:SS:FF)
+
+    Example:
+        >>> frames_to_timecode(628061, 12.0)
+        "14:32:18:05"
+    """
+    # Calculate total seconds
+    total_seconds = frames / fps
+
+    # Extract time components
+    hours = int(total_seconds / 3600)
+    remaining = total_seconds % 3600
+    minutes = int(remaining / 60)
+    seconds = int(remaining % 60)
+
+    # Calculate frame component with proper rounding
+    fractional_seconds = total_seconds - int(total_seconds)
+    frames_part = round(fractional_seconds * fps)
+
+    # Handle rounding edge case where frames_part == fps
+    if frames_part >= fps:
+        frames_part = 0
+        seconds += 1
+
+        # Cascade carries
+        if seconds >= 60:
+            seconds = 0
+            minutes += 1
+
+        if minutes >= 60:
+            minutes = 0
+            hours += 1
+
+        # Wrap hours at 24
+        hours = hours % 24
+
+    return format_smpte(hours, minutes, seconds, frames_part)
+
+
+def seconds_to_timecode(seconds: float, fps: float) -> str:
+    """
+    Convert seconds to SMPTE timecode.
+
+    Convenience function that converts seconds to frame count then to timecode.
+
+    Args:
+        seconds: Time in seconds
+        fps: Frames per second
+
+    Returns:
+        SMPTE timecode string (HH:MM:SS:FF)
+    """
+    frames = round(seconds * fps)
+    return frames_to_timecode(frames, fps)
