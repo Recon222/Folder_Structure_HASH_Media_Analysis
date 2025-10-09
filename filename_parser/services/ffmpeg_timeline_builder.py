@@ -95,6 +95,88 @@ class FFmpegTimelineBuilder:
     def __init__(self):
         self.logger = logger
 
+        # Windows CreateProcess argv limit
+        self.WINDOWS_ARGV_LIMIT = 32768
+        self.SAFE_ARGV_THRESHOLD = 29000  # 90% of limit for safety buffer
+
+    def estimate_argv_length(
+        self,
+        clips: List[Clip],
+        settings: RenderSettings,
+        with_hwaccel: bool = False
+    ) -> int:
+        """
+        Estimate total argv length before building command.
+
+        Args:
+            clips: List of video clips
+            settings: Render settings
+            with_hwaccel: Include hardware decode flags in estimate
+
+        Returns:
+            Estimated command line length in characters
+        """
+        # Normalize clips to get actual segments
+        norm_clips = self._normalize_clip_times(clips, timeline_is_absolute=True)
+        intervals = self._build_atomic_intervals(norm_clips)
+        segments = self._segments_from_intervals(intervals, settings)
+
+        # Base command overhead
+        ffmpeg_path_len = len(str(binary_manager.get_ffmpeg_path() or "ffmpeg"))
+        base_args = ffmpeg_path_len + 50  # -y, -filter_complex_script, etc.
+
+        # Encoding options overhead
+        encoding_args = 150  # NVENC settings
+
+        # Per-input overhead
+        inputs_count = 0
+        total_path_length = 0
+
+        for seg in segments:
+            if isinstance(seg, _SegSlate):
+                # Slates generate in filtergraph - no argv impact
+                continue
+            elif isinstance(seg, _SegSingle):
+                inputs_count += 1
+                total_path_length += len(str(seg.clip.path))
+            elif isinstance(seg, _SegOverlap2):
+                inputs_count += 2
+                total_path_length += len(str(seg.clip_a.path)) + len(str(seg.clip_b.path))
+
+        # Calculate per-input flag overhead
+        if with_hwaccel:
+            # -hwaccel cuda -hwaccel_output_format cuda -ss X.XXXXXX -t X.XXXXXX -i <path>
+            per_input_flags = len("-hwaccel") + 1 + len("cuda") + 1  # 15
+            per_input_flags += len("-hwaccel_output_format") + 1 + len("cuda") + 1  # 30
+            per_input_flags += len("-ss") + 1 + 10 + 1  # 14
+            per_input_flags += len("-t") + 1 + 10 + 1  # 13
+            per_input_flags += len("-i") + 1  # 3
+            # Total: ~75 chars per input (not including path)
+            flags_overhead = inputs_count * 75
+        else:
+            # -ss X.XXXXXX -t X.XXXXXX -i <path>
+            per_input_flags = len("-ss") + 1 + 10 + 1  # 14
+            per_input_flags += len("-t") + 1 + 10 + 1  # 13
+            per_input_flags += len("-i") + 1  # 3
+            # Total: ~30 chars per input (not including path)
+            flags_overhead = inputs_count * 30
+
+        # Total estimate
+        estimated_length = (
+            base_args +
+            flags_overhead +
+            total_path_length +
+            encoding_args +
+            (inputs_count * 2)  # Spaces between args
+        )
+
+        self.logger.debug(
+            f"Argv estimate: {inputs_count} inputs, {estimated_length} chars "
+            f"(hwaccel={with_hwaccel})"
+        )
+
+        return estimated_length
+
     def build_command(
         self,
         clips: List[Clip],
@@ -338,6 +420,10 @@ class FFmpegTimelineBuilder:
                 dur = seg.seg_end - seg.seg_start
                 ss = max(0.0, seg.seg_start - seg.clip.start)
 
+                # Add hardware decode flags if enabled
+                if settings.use_hardware_decode:
+                    argv += ["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"]
+
                 # Add real video file to inputs
                 argv += ["-ss", f"{ss:.6f}", "-t", f"{dur:.6f}", "-i", str(seg.clip.path)]
 
@@ -366,10 +452,18 @@ class FFmpegTimelineBuilder:
                 ss_a = max(0.0, seg.seg_start - seg.clip_a.start)
                 ss_b = max(0.0, seg.seg_start - seg.clip_b.start)
 
+                # Add hardware decode flags if enabled (for first input)
+                if settings.use_hardware_decode:
+                    argv += ["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"]
+
                 # Add both real video files to inputs
                 argv += ["-ss", f"{ss_a:.6f}", "-t", f"{dur:.6f}", "-i", str(seg.clip_a.path)]
                 idx_a = next_in_idx
                 next_in_idx += 1
+
+                # Add hardware decode flags if enabled (for second input)
+                if settings.use_hardware_decode:
+                    argv += ["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"]
 
                 argv += ["-ss", f"{ss_b:.6f}", "-t", f"{dur:.6f}", "-i", str(seg.clip_b.path)]
                 idx_b = next_in_idx

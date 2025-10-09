@@ -675,6 +675,45 @@ class FilenameParserTab(QWidget):
 
         layout.addWidget(params_group)
 
+        # Performance Settings Group (Three-Tier System)
+        perf_group = QGroupBox("⚡ Performance Settings")
+        perf_layout = QVBoxLayout(perf_group)
+
+        # Hardware Decode checkbox
+        self.timeline_hwdecode_check = QCheckBox("Use GPU Hardware Decode (NVDEC)")
+        self.timeline_hwdecode_check.setToolTip(
+            "<b>Speeds up rendering by using GPU to decode video instead of CPU.</b><br><br>"
+            "<b style='color: #ff9800;'>⚠️ Warning:</b> Increases command length. May cause errors with:<br>"
+            "• More than ~200 files<br>"
+            "• Long file paths (deep folder structures)<br><br>"
+            "If rendering fails, disable this option."
+        )
+        perf_layout.addWidget(self.timeline_hwdecode_check)
+
+        # Batch Rendering checkbox
+        self.timeline_batch_check = QCheckBox("Use Batch Rendering for Large Datasets")
+        self.timeline_batch_check.setToolTip(
+            "<b>Automatically splits rendering into multiple passes when file count<br>"
+            "or command length exceeds Windows limits.</b><br><br>"
+            "Prevents '[WinError 206]' failures with large datasets.<br>"
+            "Slightly slower (multiple passes) but handles unlimited files.<br><br>"
+            "<b style='color: #52c41a;'>✓ Recommended:</b> Enable for investigations with 250+ files."
+        )
+        perf_layout.addWidget(self.timeline_batch_check)
+
+        # Auto-fallback info label
+        auto_fallback_info = QLabel(
+            "ℹ️  Auto-fallback: Batch mode activates automatically if command exceeds Windows limits"
+        )
+        auto_fallback_info.setWordWrap(True)
+        auto_fallback_info.setStyleSheet(
+            "color: #6c757d; font-size: 10px; padding: 4px 8px; "
+            "background-color: #f8f9fa; border-radius: 3px; margin-top: 4px;"
+        )
+        perf_layout.addWidget(auto_fallback_info)
+
+        layout.addWidget(perf_group)
+
         layout.addStretch()
         scroll_area.setWidget(settings_widget)
         main_layout.addWidget(scroll_area)
@@ -1303,18 +1342,24 @@ class FilenameParserTab(QWidget):
             else:
                 resolution = (1920, 1080)
 
-            # Build RenderSettings
+            # Build RenderSettings (including performance settings)
             self.timeline_settings = RenderSettings(
                 output_resolution=resolution,
                 output_fps=self.timeline_fps_spin.value(),
                 output_directory=Path(output_dir),
-                output_filename=self.timeline_filename_input.text()
+                output_filename=self.timeline_filename_input.text(),
+                use_hardware_decode=self.timeline_hwdecode_check.isChecked(),
+                use_batch_rendering=self.timeline_batch_check.isChecked()
             )
 
             self._log("INFO", "Starting timeline rendering workflow...")
             self._log("INFO", f"Output: {output_dir}/{self.timeline_filename_input.text()}")
             self._log("INFO", f"Resolution: {resolution[0]}x{resolution[1]} @ {self.timeline_fps_spin.value()}fps")
             self._log("INFO", f"Processing {len(self.video_metadata_list)} videos")
+            if self.timeline_hwdecode_check.isChecked():
+                self._log("INFO", "Hardware decode (NVDEC) enabled")
+            if self.timeline_batch_check.isChecked():
+                self._log("INFO", "Batch rendering enabled (manual)")
 
             # NEW: GPT-5 Approach - Pass video metadata directly to renderer
             # No validation, no timeline calculation here - FFmpegTimelineBuilder handles it all!

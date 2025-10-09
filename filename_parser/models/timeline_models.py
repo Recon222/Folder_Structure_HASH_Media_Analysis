@@ -218,6 +218,11 @@ class RenderSettings:
     hardware_accel_type: Optional[str] = None  # "nvenc", "qsv", "vaapi"
     threads: int = 0  # 0 = auto-detect
 
+    # Three-tier performance system
+    use_hardware_decode: bool = False  # GPU decode (NVDEC) - faster but increases argv
+    use_batch_rendering: bool = False  # Split into batches for large datasets
+    batch_size: int = 150  # Max inputs per batch (stay under Windows argv limit)
+
     # Output paths
     output_directory: Path = Path(".")
     output_filename: str = "multicam_timeline.mp4"
