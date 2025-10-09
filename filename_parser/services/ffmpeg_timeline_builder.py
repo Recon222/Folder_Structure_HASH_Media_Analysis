@@ -117,9 +117,9 @@ class FFmpegTimelineBuilder:
             Estimated command line length in characters
         """
         # Normalize clips to get actual segments
-        norm_clips = self._normalize_clip_times(clips, absolute=True)
+        norm_clips, timeline_t0 = self._normalize_clip_times(clips, absolute=True)
         intervals = self._build_atomic_intervals(norm_clips)
-        segments = self._segments_from_intervals(intervals, settings)
+        segments = self._segments_from_intervals(intervals, settings, timeline_t0)
 
         # Base command overhead
         ffmpeg_path_len = len(str(binary_manager.get_ffmpeg_path() or "ffmpeg"))
@@ -202,13 +202,13 @@ class FFmpegTimelineBuilder:
             raise ValueError("No clips provided for timeline")
 
         # Step 1: Normalize clip times to seconds from t0
-        norm_clips = self._normalize_clip_times(clips, timeline_is_absolute)
+        norm_clips, timeline_t0 = self._normalize_clip_times(clips, timeline_is_absolute)
 
         # Step 2: Build atomic intervals
         intervals = self._build_atomic_intervals(norm_clips)
 
-        # Step 3: Create segments from intervals
-        segments = self._segments_from_intervals(intervals, settings)
+        # Step 3: Create segments from intervals (pass t0 for DVR time conversion in slates)
+        segments = self._segments_from_intervals(intervals, settings, timeline_t0)
 
         # Step 4: Emit FFmpeg command (returns argv and filter script path)
         argv, filter_script_path = self._emit_ffmpeg_argv(segments, settings, output_path)
@@ -217,12 +217,17 @@ class FFmpegTimelineBuilder:
 
     # ==================== Time Normalization ====================
 
-    def _normalize_clip_times(self, clips: List[Clip], absolute: bool) -> List[_NClip]:
+    def _normalize_clip_times(self, clips: List[Clip], absolute: bool) -> Tuple[List[_NClip], Optional[float]]:
         """
         Convert clip times to seconds from t0.
 
         Accepts float seconds or ISO8601 strings.
         If absolute=True, rebases all times to earliest start = 0.
+
+        Returns:
+            Tuple of (normalized_clips, timeline_t0)
+            - timeline_t0 is the Unix timestamp of the earliest clip (for DVR time conversion)
+            - timeline_t0 is None if absolute=False
         """
         parsed = []
 
@@ -242,17 +247,18 @@ class FFmpegTimelineBuilder:
             parsed.append((c.path, s, e, c.cam_id))
 
         if not parsed:
-            return []
+            return [], None
 
         if absolute:
             # Rebase to earliest start = 0
             t0 = min(s for _, s, _, _ in parsed)
             norm = [_NClip(p, s - t0, e - t0, cam) for p, s, e, cam in parsed]
+            norm.sort(key=lambda c: (c.start, c.cam_id, str(c.path)))
+            return norm, t0  # Return t0 for DVR time conversion
         else:
             norm = [_NClip(p, s, e, cam) for p, s, e, cam in parsed]
-
-        norm.sort(key=lambda c: (c.start, c.cam_id, str(c.path)))
-        return norm
+            norm.sort(key=lambda c: (c.start, c.cam_id, str(c.path)))
+            return norm, None
 
     # ==================== Atomic Interval Algorithm ====================
 
@@ -290,13 +296,19 @@ class FFmpegTimelineBuilder:
     def _segments_from_intervals(
         self,
         intervals: List[_Interval],
-        settings: RenderSettings
+        settings: RenderSettings,
+        timeline_t0: Optional[float] = None
     ) -> List[_Segment]:
         """
         Convert atomic intervals to renderable segments.
 
         Merges adjacent intervals with identical camera sets.
         Classifies as: GAP (no cameras), SINGLE (1 camera), OVERLAP (2+ cameras).
+
+        Args:
+            intervals: Atomic intervals with normalized times
+            settings: Render settings
+            timeline_t0: Unix timestamp of earliest clip (for DVR time conversion in slates)
         """
         segments: List[_Segment] = []
 
@@ -321,7 +333,16 @@ class FFmpegTimelineBuilder:
             if not active:
                 # GAP - no cameras
                 if settings.slate_duration_seconds > 0:
-                    text = f"GAP: {self._fmt_hms(t0)} → {self._fmt_hms(t1)}  (Δ {self._fmt_dur(t1 - t0)})"
+                    # Format slate text with DVR times if available
+                    if timeline_t0 is not None:
+                        # Convert normalized seconds back to Unix timestamps, then format as DVR time
+                        dvr_start = t0 + timeline_t0
+                        dvr_end = t1 + timeline_t0
+                        text = f"GAP: {self._fmt_dvr_time(dvr_start)} → {self._fmt_dvr_time(dvr_end)}  (Δ {self._fmt_dur(t1 - t0)})"
+                    else:
+                        # Fallback for relative timelines (no DVR time available)
+                        text = f"GAP: {self._fmt_hms(t0)} → {self._fmt_hms(t1)}  (Δ {self._fmt_dur(t1 - t0)})"
+
                     segments.append(_SegSlate(
                         gap_start=t0,
                         gap_end=t1,
@@ -610,6 +631,16 @@ class FFmpegTimelineBuilder:
         if m or (h and s): parts.append(f"{m}m")
         parts.append(f"{s}s")
         return " ".join(parts)
+
+    def _fmt_dvr_time(self, unix_timestamp: float) -> str:
+        """
+        Format Unix timestamp as readable DVR time.
+
+        Returns format: "Mon 28 Jan 14:30:00" (day, date, month, time)
+        This makes it clear these are wall clock times, not timeline positions.
+        """
+        dt = datetime.fromtimestamp(unix_timestamp)
+        return dt.strftime("%a %d %b %H:%M:%S")
 
     def _escape_drawtext(self, s: str) -> str:
         """Escape text for FFmpeg drawtext filter."""
