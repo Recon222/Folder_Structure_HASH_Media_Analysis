@@ -7,8 +7,9 @@ extracted components against their defined constraints.
 
 import os
 from typing import Optional, List
-from filename_parser.models.pattern_models import PatternDefinition, PatternMatch
+from filename_parser.models.pattern_models import PatternDefinition, PatternMatch, TimeComponentDefinition
 from filename_parser.services.pattern_library import pattern_library
+from filename_parser.services.component_extractor import component_extractor
 from core.logger import logger
 
 
@@ -61,8 +62,11 @@ class PatternMatcher:
                 )
                 return result
 
-        logger.warning(f"No pattern matched filename: '{basename}'")
-        return None
+        logger.warning(f"No monolithic pattern matched filename: '{basename}'")
+
+        # FALLBACK: Try two-phase component extraction
+        logger.info("Attempting two-phase component extraction fallback...")
+        return self._try_two_phase_extraction(basename)
 
     def match_multiple(
         self, filename: str, pattern_ids: List[str]
@@ -222,3 +226,76 @@ class PatternMatcher:
                 )
 
         return len(errors) == 0, errors
+
+    def _try_two_phase_extraction(self, basename: str) -> Optional[PatternMatch]:
+        """
+        Attempt two-phase component extraction as fallback.
+
+        This method is called when monolithic pattern matching fails.
+        It extracts date and time components independently, then combines them.
+
+        Args:
+            basename: The filename to parse
+
+        Returns:
+            PatternMatch if components extracted successfully, None otherwise
+        """
+        try:
+            # Extract best date and time components
+            best_date, best_time = component_extractor.extract_best_components(basename)
+
+            if not best_time:
+                logger.warning("Two-phase extraction failed: no valid time found")
+                return None
+
+            # Build component dictionary
+            components = {
+                "hours": best_time.hours,
+                "minutes": best_time.minutes,
+                "seconds": best_time.seconds,
+            }
+
+            if best_time.milliseconds > 0:
+                components["milliseconds"] = best_time.milliseconds
+
+            if best_date:
+                components["year"] = best_date.year
+                components["month"] = best_date.month
+                components["day"] = best_date.day
+
+            # Create synthetic pattern definition for two-phase match
+            synthetic_pattern = PatternDefinition(
+                id="two_phase_extraction",
+                name="Two-Phase Extraction",
+                description="Date and time extracted independently with smart heuristics",
+                example=basename,
+                regex="",  # No regex for two-phase
+                components=[],  # No component definitions needed
+                category="hybrid",
+                priority=0,  # Lowest priority (fallback only)
+                has_date=best_date is not None,
+                has_milliseconds=best_time.milliseconds > 0,
+                tags=["two_phase", "fallback", "smart_extraction"]
+            )
+
+            # Create PatternMatch
+            match = PatternMatch(
+                pattern=synthetic_pattern,
+                components=components,
+                raw_match="",  # No regex match for two-phase
+                valid=True,
+                validation_errors=[]
+            )
+
+            logger.info(
+                f"✅ Two-phase extraction succeeded: "
+                f"date={best_date.year}-{best_date.month:02d}-{best_date.day:02d} " if best_date else "date=None, "
+                f"time={best_time.hours:02d}:{best_time.minutes:02d}:{best_time.seconds:02d} "
+                f"(confidence: date={best_date.confidence:.2f}, time={best_time.confidence:.2f})" if best_date else f"(confidence: time={best_time.confidence:.2f})"
+            )
+
+            return match
+
+        except Exception as e:
+            logger.error(f"Two-phase extraction error: {e}")
+            return None

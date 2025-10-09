@@ -241,6 +241,27 @@ class PatternLibrary:
             ),
 
             PatternDefinition(
+                id="yyyymmddhhmmss_compact",
+                name="YYYYMMDDHHMMSS Compact",
+                description="ISO-style date and time with no delimiter (common in DVR systems)",
+                example="A02_20250521175603.mp4",
+                regex=r"(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})(?!\d)",
+                components=[
+                    TimeComponentDefinition("year", 1, 2000, 2099),
+                    TimeComponentDefinition("month", 2, 1, 12),
+                    TimeComponentDefinition("day", 3, 1, 31),
+                    TimeComponentDefinition("hours", 4, 0, MAX_HOURS),
+                    TimeComponentDefinition("minutes", 5, 0, MAX_MINUTES),
+                    TimeComponentDefinition("seconds", 6, 0, MAX_SECONDS),
+                ],
+                category=PatternCategory.ISO_DATETIME.value,
+                priority=75,  # Higher priority than yyyymmdd_hhmmss
+                has_date=True,
+                has_milliseconds=False,
+                tags=["iso", "datetime", "compact", "no_delimiter", "dvr"],
+            ),
+
+            PatternDefinition(
                 id="yyyy_mm_dd_hh_mm_ss",
                 name="YYYY-MM-DD HH:MM:SS",
                 description="ISO-style delimited date and time",
