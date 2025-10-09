@@ -19,6 +19,7 @@ from core.exceptions import FileOperationError
 
 from filename_parser.filename_parser_interfaces import IFrameRateService
 from filename_parser.core.binary_manager import binary_manager
+from filename_parser.services.video_metadata_extractor import VideoMetadataExtractor
 from filename_parser.models.timeline_models import VideoMetadata
 
 
@@ -378,6 +379,80 @@ class FrameRateService(BaseService, IFrameRateService):
                     continue
 
         return None
+
+    def detect_codec_mismatches(
+        self,
+        video_metadata_list: List[VideoMetadata]
+    ) -> Dict[str, any]:
+        """
+        Analyze video metadata to detect codec, resolution, or FPS mismatches.
+
+        Args:
+            video_metadata_list: List of VideoMetadata objects to analyze
+
+        Returns:
+            Dictionary with mismatch analysis:
+            {
+                'needs_normalization': bool,
+                'codec_mismatch': bool,
+                'resolution_mismatch': bool,
+                'fps_mismatch': bool,
+                'pixel_format_mismatch': bool,
+                'target_specs': {...}  # Recommended normalization targets
+            }
+        """
+        if not video_metadata_list:
+            return {'needs_normalization': False}
+
+        # Extract unique values for each property
+        codecs = set(v.codec for v in video_metadata_list)
+        resolutions = set((v.width, v.height) for v in video_metadata_list)
+        fps_values = set(v.frame_rate for v in video_metadata_list)
+        pix_fmts = set(v.pixel_format for v in video_metadata_list)
+
+        codec_mismatch = len(codecs) > 1
+        resolution_mismatch = len(resolutions) > 1
+        fps_mismatch = len(fps_values) > 1
+        pixel_format_mismatch = len(pix_fmts) > 1
+
+        needs_normalization = any([
+            codec_mismatch,
+            resolution_mismatch,
+            fps_mismatch,
+            pixel_format_mismatch
+        ])
+
+        # Determine target specs (use most common or highest quality)
+        target_codec = max(codecs, key=lambda c: sum(1 for v in video_metadata_list if v.codec == c))
+        target_resolution = max(resolutions, key=lambda r: r[0] * r[1])  # Highest resolution
+        target_fps = max(fps_values, key=lambda f: sum(1 for v in video_metadata_list if v.frame_rate == f))
+        target_pix_fmt = max(pix_fmts, key=lambda p: sum(1 for v in video_metadata_list if v.pixel_format == p))
+
+        self.logger.info(
+            f"Codec analysis: {len(codecs)} codec(s), {len(resolutions)} resolution(s), "
+            f"{len(fps_values)} FPS value(s) - Normalization needed: {needs_normalization}"
+        )
+
+        return {
+            'needs_normalization': needs_normalization,
+            'codec_mismatch': codec_mismatch,
+            'resolution_mismatch': resolution_mismatch,
+            'fps_mismatch': fps_mismatch,
+            'pixel_format_mismatch': pixel_format_mismatch,
+            'target_specs': {
+                'codec': target_codec,
+                'width': target_resolution[0],
+                'height': target_resolution[1],
+                'frame_rate': target_fps,
+                'pixel_format': target_pix_fmt
+            },
+            'detected_values': {
+                'codecs': list(codecs),
+                'resolutions': [f"{w}x{h}" for w, h in resolutions],
+                'fps_values': list(fps_values),
+                'pixel_formats': list(pix_fmts)
+            }
+        }
 
     def extract_video_metadata(
         self,

@@ -9,14 +9,14 @@ Follows the established unified worker pattern with:
 Renders multicam timeline video using MulticamRendererService.
 """
 
-from typing import Optional
+from typing import Optional, List
 
 from PySide6.QtCore import QThread, Signal
 
 from core.result_types import Result
 from core.logger import logger
 
-from filename_parser.models.timeline_models import Timeline, RenderSettings
+from filename_parser.models.timeline_models import RenderSettings, VideoMetadata
 from filename_parser.services.multicam_renderer_service import MulticamRendererService
 
 
@@ -35,7 +35,7 @@ class TimelineRenderWorker(QThread):
 
     def __init__(
         self,
-        timeline: Timeline,
+        videos: List[VideoMetadata],
         settings: RenderSettings,
         renderer_service: MulticamRendererService,
         parent=None
@@ -44,14 +44,14 @@ class TimelineRenderWorker(QThread):
         Initialize timeline render worker.
 
         Args:
-            timeline: Calculated timeline with gaps and overlaps
+            videos: List of video metadata (complete with start/end times)
             settings: Render settings
             renderer_service: Renderer service instance
             parent: Parent QObject
         """
         super().__init__(parent)
 
-        self.timeline = timeline
+        self.videos = videos
         self.settings = settings
         self.renderer_service = renderer_service
 
@@ -60,12 +60,12 @@ class TimelineRenderWorker(QThread):
     def run(self):
         """Execute timeline rendering in background thread."""
         try:
-            logger.info("Timeline render worker started")
+            logger.info(f"Timeline render worker started with {len(self.videos)} videos")
             self.progress_update.emit(0, "Initializing timeline render...")
 
-            # Render timeline with progress callbacks
+            # Render timeline with progress callbacks (GPT-5 approach - videos directly)
             result = self.renderer_service.render_timeline(
-                self.timeline,
+                self.videos,
                 self.settings,
                 progress_callback=self._on_progress
             )

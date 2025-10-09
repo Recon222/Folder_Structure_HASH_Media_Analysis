@@ -7,8 +7,9 @@ frame rate detection, and SMPTE timecode writing using injected services.
 
 import os
 import time
+import re
 from typing import List, Optional, Callable, Dict, Any
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from core.services.base_service import BaseService
@@ -28,6 +29,7 @@ from filename_parser.models.processing_result import (
     ProcessingStatus,
 )
 from filename_parser.services.csv_export_service import CSVExportService
+from filename_parser.services.video_metadata_extractor import VideoMetadataExtractor
 
 
 class BatchProcessorService(BaseService, IBatchProcessorService):
@@ -61,6 +63,9 @@ class BatchProcessorService(BaseService, IBatchProcessorService):
         self._frame_rate_service = frame_rate_service
         self._metadata_writer_service = metadata_writer_service
         self._csv_export_service = csv_export_service
+
+        # NEW: Video metadata extractor for timeline rendering
+        self._metadata_extractor = VideoMetadataExtractor()
 
         # Processing state
         self._processing = False
@@ -258,7 +263,17 @@ class BatchProcessorService(BaseService, IBatchProcessorService):
 
             parsed = parse_result.value
 
-            # Step 2: Write metadata (ONLY if write_metadata is True)
+            # Step 2: Extract full video metadata using VideoMetadataExtractor
+            video_probe_data = self._metadata_extractor.extract_metadata(file_path)
+
+            # Step 3: Calculate timeline timestamps (ISO8601)
+            start_time_iso = self._smpte_to_iso8601(parsed.smpte_timecode, fps)
+            end_time_iso = self._calculate_end_time_iso(start_time_iso, video_probe_data.duration_seconds)
+
+            # Step 4: Extract camera ID
+            camera_id = self._extract_camera_id(file_path)
+
+            # Step 5: Write metadata (ONLY if write_metadata is True)
             output_path = None
             if settings.write_metadata:
                 project_root = None
@@ -290,7 +305,7 @@ class BatchProcessorService(BaseService, IBatchProcessorService):
 
                 output_path = write_result.value
 
-            # Success
+            # Success - return complete metadata for timeline rendering
             end_time = datetime.now()
             processing_time = (end_time - start_time).total_seconds()
 
@@ -312,6 +327,16 @@ class BatchProcessorService(BaseService, IBatchProcessorService):
                 processing_time=processing_time,
                 start_time=start_time,
                 end_time=end_time,
+                # NEW: Full video metadata for timeline rendering
+                duration_seconds=video_probe_data.duration_seconds,
+                start_time_iso=start_time_iso,
+                end_time_iso=end_time_iso,
+                camera_id=camera_id,
+                width=video_probe_data.width,
+                height=video_probe_data.height,
+                codec=video_probe_data.codec_name,
+                pixel_format=video_probe_data.pixel_format,
+                video_bitrate=video_probe_data.bit_rate or 0,
             )
 
         except Exception as e:
@@ -363,3 +388,102 @@ class BatchProcessorService(BaseService, IBatchProcessorService):
             pct_range = end_pct - start_pct
             pct = start_pct + int((current / total) * pct_range)
             callback(pct, f"{message}: {current}/{file_count}")
+
+    def _extract_camera_id(self, file_path: Path) -> str:
+        """
+        Extract camera identifier from path or filename.
+
+        Strategies (in priority order):
+        1. Check parent directory name (e.g., "A02", "Camera_1")
+        2. Check filename prefix (e.g., "A02_20250521.mp4")
+        3. Fall back to parent directory path
+
+        Examples:
+            D:/footage/A02/A02_file.mp4 → "A02"
+            D:/footage/Camera_1/video.mp4 → "Camera_1"
+            D:/footage/20250521/file.mp4 → "20250521"
+
+        Args:
+            file_path: Path to video file
+
+        Returns:
+            Camera identifier string
+        """
+        # Strategy 1: Parent directory name
+        parent_name = file_path.parent.name
+
+        # Check if parent looks like camera ID (2-4 chars, alphanumeric)
+        if re.match(r'^[A-Z]\d{2,3}$', parent_name):
+            return parent_name
+
+        # Check if parent contains "Camera" or "Cam"
+        if 'camera' in parent_name.lower() or 'cam' in parent_name.lower():
+            return parent_name
+
+        # Strategy 2: Filename prefix
+        filename = file_path.stem
+
+        # Check for pattern like "A02_" at start
+        match = re.match(r'^([A-Z]\d{2,3})_', filename)
+        if match:
+            return match.group(1)
+
+        # Strategy 3: Fall back to parent directory name
+        return parent_name
+
+    def _smpte_to_iso8601(self, smpte_timecode: str, fps: float) -> str:
+        """
+        Convert SMPTE timecode to ISO8601 string.
+
+        Args:
+            smpte_timecode: SMPTE format (HH:MM:SS:FF)
+            fps: Frame rate for frame-to-second conversion
+
+        Returns:
+            ISO8601 string (e.g., "2025-05-21T14:30:25.500")
+
+        Note:
+            Uses today's date as base. For multi-day timelines,
+            caller should adjust based on actual date from filename.
+        """
+        try:
+            parts = smpte_timecode.split(":")
+            if len(parts) != 4:
+                self.logger.warning(f"Invalid SMPTE format: {smpte_timecode}, using as-is")
+                return smpte_timecode
+
+            hours, minutes, seconds, frames = map(int, parts)
+
+            # Convert frames to decimal seconds
+            frame_seconds = frames / fps if fps > 0 else 0
+
+            # Create datetime (use today's date as base)
+            today = datetime.now().date()
+            dt = datetime.combine(today, datetime.min.time())
+            dt = dt.replace(hour=hours, minute=minutes, second=seconds)
+            dt = dt + timedelta(seconds=frame_seconds)
+
+            return dt.isoformat()
+
+        except Exception as e:
+            self.logger.warning(f"Error converting SMPTE {smpte_timecode}: {e}")
+            return smpte_timecode
+
+    def _calculate_end_time_iso(self, start_iso: str, duration_seconds: float) -> str:
+        """
+        Calculate end time from start time + duration.
+
+        Args:
+            start_iso: ISO8601 start time
+            duration_seconds: Duration in seconds
+
+        Returns:
+            ISO8601 end time
+        """
+        try:
+            start_dt = datetime.fromisoformat(start_iso)
+            end_dt = start_dt + timedelta(seconds=duration_seconds)
+            return end_dt.isoformat()
+        except Exception as e:
+            self.logger.warning(f"Error calculating end time: {e}")
+            return start_iso

@@ -132,20 +132,26 @@ class SlateGeneratorService(BaseService):
             f"fontsize=64:"
             f"fontcolor=#ff4d4f:"
             f"x=(w-text_w)/2:"
-            f"y=300",
+            f"y=280",
 
-            # Line 2: Gap duration (white, medium)
-            f"drawtext=text='Gap Duration\\: {duration_str}':"
+            # Line 2: Gap duration (white, medium) - CLARIFIED WORDING
+            f"drawtext=text='Real-World Time Gap\\: {duration_str}':"
             f"fontsize=32:"
             f"fontcolor=white:"
             f"x=(w-text_w)/2:"
-            f"y=400",
+            f"y=380",
 
-            # Line 3: Timecode range (gray, small)
-            f"drawtext=text='Start\\: {self._escape_colons(gap.start_timecode)}  |  "
-            f"End\\: {self._escape_colons(gap.end_timecode)}':"
+            # Line 3: From time (gray, small)
+            f"drawtext=text='From\\: {self._escape_colons(gap.start_timecode)} (Real Time)':"
             f"fontsize=24:"
-            f"fontcolor=#6b6b6b:"
+            f"fontcolor=#8c8c8c:"
+            f"x=(w-text_w)/2:"
+            f"y=460",
+
+            # Line 4: To time (gray, small)
+            f"drawtext=text='To\\:   {self._escape_colons(gap.end_timecode)} (Real Time)':"
+            f"fontsize=24:"
+            f"fontcolor=#8c8c8c:"
             f"x=(w-text_w)/2:"
             f"y=500"
         ]

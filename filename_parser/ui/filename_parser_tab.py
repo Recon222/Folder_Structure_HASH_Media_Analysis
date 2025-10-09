@@ -16,14 +16,18 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QGroupBox, QCheckBox, QFileDialog, QProgressBar, QSplitter,
     QComboBox, QSpinBox, QRadioButton, QGridLayout, QListWidget,
-    QListWidgetItem, QScrollArea, QTextEdit, QButtonGroup, QSizePolicy
+    QListWidgetItem, QScrollArea, QTextEdit, QButtonGroup, QSizePolicy,
+    QLineEdit, QDoubleSpinBox, QMessageBox, QTabWidget
 )
 from PySide6.QtGui import QFont
 
 # Filename parser imports
 from filename_parser.controllers.filename_parser_controller import FilenameParserController
+from filename_parser.controllers.timeline_controller import TimelineController
 from filename_parser.models.filename_parser_models import FilenameParserSettings
 from filename_parser.models.processing_result import ProcessingStatistics
+from filename_parser.models.timeline_models import RenderSettings, VideoMetadata
+from filename_parser.services.json_timeline_export_service import JSONTimelineExportService
 
 # Core imports
 from core.models import FormData
@@ -49,8 +53,10 @@ class FilenameParserTab(QWidget):
         """
         super().__init__(parent)
 
-        # Controller for orchestration
+        # Controllers and services for orchestration
         self.controller = FilenameParserController()
+        self.timeline_controller = TimelineController()
+        self.json_export_service = JSONTimelineExportService()
 
         # Form data reference (optional)
         self.form_data = form_data
@@ -58,11 +64,14 @@ class FilenameParserTab(QWidget):
         # State management
         self.operation_active = False
         self.current_worker = None
+        self.timeline_worker = None
         self.last_stats: Optional[ProcessingStatistics] = None
+        self.video_metadata_list: List[VideoMetadata] = []  # Store complete metadata for timeline
         self.selected_files: List[Path] = []
 
         # Settings
         self.settings = FilenameParserSettings()
+        self.timeline_settings = RenderSettings()
 
         self._create_ui()
         self._connect_signals()
@@ -166,11 +175,61 @@ class FilenameParserTab(QWidget):
 
         return group
 
-    def _create_settings_panel(self) -> QWidget:
-        """Create right panel for processing settings"""
-        container = QWidget()
-        main_layout = QVBoxLayout(container)
-        main_layout.setSpacing(10)
+    def _create_settings_panel(self) -> QGroupBox:
+        """Create right panel for processing settings with tab-based layout"""
+        panel = QGroupBox("Processing Settings")
+        main_layout = QVBoxLayout(panel)
+        main_layout.setSpacing(8)
+
+        # Create tab widget for different features
+        self.settings_tabs = QTabWidget()
+
+        # Tab 1: Filename Parsing
+        parse_tab = self._create_parse_settings_tab()
+        self.settings_tabs.addTab(parse_tab, "🔍 Parse Filenames")
+
+        # Tab 2: Timeline Video Generation
+        timeline_tab = self._create_timeline_settings_tab()
+        self.settings_tabs.addTab(timeline_tab, "🎬 Timeline Video")
+
+        # Connect tab change signal
+        self.settings_tabs.currentChanged.connect(self._on_settings_tab_changed)
+
+        main_layout.addWidget(self.settings_tabs)
+
+        # Shared progress bar (below tabs)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setVisible(False)
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setMinimumHeight(28)
+        main_layout.addWidget(self.progress_bar)
+
+        self.progress_label = QLabel("")
+        self.progress_label.setVisible(False)
+        self.progress_label.setAlignment(Qt.AlignCenter)
+        self.progress_label.setObjectName("mutedText")
+        main_layout.addWidget(self.progress_label)
+
+        # Dynamic action buttons (change based on active tab)
+        self.action_button_container = QWidget()
+        self.action_button_layout = QVBoxLayout(self.action_button_container)
+        self.action_button_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.addWidget(self.action_button_container)
+
+        # Create button sets for each tab
+        self._create_parse_buttons()
+        self._create_timeline_buttons()
+
+        # Show parse buttons by default
+        self._show_parse_buttons()
+
+        return panel
+
+    def _create_parse_settings_tab(self) -> QWidget:
+        """Create filename parsing settings tab"""
+        tab = QWidget()
+        main_layout = QVBoxLayout(tab)
+        main_layout.setSpacing(8)
 
         # Create scroll area for settings
         scroll_area = QScrollArea()
@@ -202,11 +261,7 @@ class FilenameParserTab(QWidget):
         scroll_area.setWidget(settings_widget)
         main_layout.addWidget(scroll_area)
 
-        # Progress and action buttons (fixed at bottom)
-        progress_section = self._create_progress_section()
-        main_layout.addWidget(progress_section)
-
-        return container
+        return tab
 
     def _create_pattern_section(self) -> QGroupBox:
         """Create pattern selection section with preview"""
@@ -430,43 +485,29 @@ class FilenameParserTab(QWidget):
 
         return group
 
-    def _create_progress_section(self) -> QWidget:
-        """Create progress bar and action buttons"""
-        container = QWidget()
-        layout = QVBoxLayout(container)
+    def _create_parse_buttons(self):
+        """Create button set for Parse Filenames tab"""
+        self.parse_button_widget = QWidget()
+        layout = QVBoxLayout(self.parse_button_widget)
         layout.setContentsMargins(0, 10, 0, 0)
 
-        # Progress bar
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setVisible(False)
-        self.progress_bar.setTextVisible(True)
-        self.progress_bar.setMinimumHeight(28)
-        layout.addWidget(self.progress_bar)
-
-        # Progress message
-        self.progress_label = QLabel("")
-        self.progress_label.setVisible(False)
-        self.progress_label.setAlignment(Qt.AlignCenter)
-        self.progress_label.setObjectName("mutedText")
-        layout.addWidget(self.progress_label)
-
-        # Action buttons
-        button_layout = QHBoxLayout()
+        # Primary action buttons
+        primary_layout = QHBoxLayout()
 
         self.process_btn = QPushButton("🔍 Parse Filenames")
         self.process_btn.setObjectName("primaryAction")
         self.process_btn.clicked.connect(self._start_processing)
         self.process_btn.setEnabled(False)
         self.process_btn.setMinimumHeight(36)
-        button_layout.addWidget(self.process_btn)
+        primary_layout.addWidget(self.process_btn)
 
         self.cancel_btn = QPushButton("⏹️ Cancel")
         self.cancel_btn.clicked.connect(self._cancel_processing)
         self.cancel_btn.setEnabled(False)
         self.cancel_btn.setMinimumHeight(36)
-        button_layout.addWidget(self.cancel_btn)
+        primary_layout.addWidget(self.cancel_btn)
 
-        layout.addLayout(button_layout)
+        layout.addLayout(primary_layout)
 
         # Export action buttons (enabled after parsing)
         export_layout = QHBoxLayout()
@@ -477,6 +518,12 @@ class FilenameParserTab(QWidget):
         self.export_csv_btn.setMinimumHeight(32)
         export_layout.addWidget(self.export_csv_btn)
 
+        self.export_json_btn = QPushButton("📄 Export JSON Timeline")
+        self.export_json_btn.clicked.connect(self._export_json_timeline)
+        self.export_json_btn.setEnabled(False)
+        self.export_json_btn.setMinimumHeight(32)
+        export_layout.addWidget(self.export_json_btn)
+
         self.copy_with_smpte_btn = QPushButton("📹 Copy with SMPTE")
         self.copy_with_smpte_btn.clicked.connect(self._copy_with_smpte)
         self.copy_with_smpte_btn.setEnabled(False)
@@ -485,7 +532,154 @@ class FilenameParserTab(QWidget):
 
         layout.addLayout(export_layout)
 
-        return container
+    def _create_timeline_buttons(self):
+        """Create button set for Timeline Video tab"""
+        self.timeline_button_widget = QWidget()
+        layout = QHBoxLayout(self.timeline_button_widget)
+        layout.setContentsMargins(0, 10, 0, 0)
+
+        self.timeline_render_btn = QPushButton("🎬 Generate Timeline Video")
+        self.timeline_render_btn.setObjectName("primaryAction")
+        self.timeline_render_btn.clicked.connect(self._start_timeline_rendering)
+        self.timeline_render_btn.setEnabled(False)
+        self.timeline_render_btn.setMinimumHeight(36)
+        layout.addWidget(self.timeline_render_btn)
+
+        self.timeline_cancel_btn = QPushButton("⏹️ Cancel Render")
+        self.timeline_cancel_btn.clicked.connect(self._cancel_timeline_rendering)
+        self.timeline_cancel_btn.setEnabled(False)
+        self.timeline_cancel_btn.setMinimumHeight(36)
+        layout.addWidget(self.timeline_cancel_btn)
+
+    def _show_parse_buttons(self):
+        """Show parse buttons, hide timeline buttons"""
+        # Clear layout
+        while self.action_button_layout.count():
+            child = self.action_button_layout.takeAt(0)
+            if child.widget():
+                child.widget().setParent(None)
+
+        # Add parse buttons
+        self.action_button_layout.addWidget(self.parse_button_widget)
+        self.parse_button_widget.setVisible(True)
+        if hasattr(self, 'timeline_button_widget'):
+            self.timeline_button_widget.setVisible(False)
+
+    def _show_timeline_buttons(self):
+        """Show timeline buttons, hide parse buttons"""
+        # Clear layout
+        while self.action_button_layout.count():
+            child = self.action_button_layout.takeAt(0)
+            if child.widget():
+                child.widget().setParent(None)
+
+        # Add timeline buttons
+        self.action_button_layout.addWidget(self.timeline_button_widget)
+        self.timeline_button_widget.setVisible(True)
+        if hasattr(self, 'parse_button_widget'):
+            self.parse_button_widget.setVisible(False)
+
+    def _on_settings_tab_changed(self, index: int):
+        """Handle settings tab change to swap action buttons"""
+        if index == 0:  # Parse Filenames tab
+            self._show_parse_buttons()
+        elif index == 1:  # Timeline Video tab
+            self._show_timeline_buttons()
+
+    def _create_timeline_settings_tab(self) -> QWidget:
+        """Create timeline video generation settings tab - clean and focused"""
+        tab = QWidget()
+        main_layout = QVBoxLayout(tab)
+        main_layout.setSpacing(8)
+
+        # Create scroll area
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll_area.setFrameShape(QScrollArea.NoFrame)
+
+        settings_widget = QWidget()
+        layout = QVBoxLayout(settings_widget)
+        layout.setSpacing(12)
+
+        # Info banner
+        info_label = QLabel(
+            "ℹ️  Parse filenames first to extract SMPTE timecodes, "
+            "then generate seamless timeline videos with automatic gap detection."
+        )
+        info_label.setWordWrap(True)
+        info_label.setStyleSheet("color: #6c757d; font-size: 11px; padding: 8px;")
+        layout.addWidget(info_label)
+
+        # Output Settings Group
+        output_group = QGroupBox("Output Settings")
+        output_layout = QVBoxLayout(output_group)
+
+        # Output directory
+        dir_layout = QHBoxLayout()
+        dir_label = QLabel("Output Directory:")
+        dir_layout.addWidget(dir_label)
+
+        self.timeline_output_dir_input = QLabel("(Not selected)")
+        self.timeline_output_dir_input.setStyleSheet("color: #6c757d;")
+        dir_layout.addWidget(self.timeline_output_dir_input, 1)
+
+        self.timeline_browse_btn = QPushButton("📂 Browse")
+        self.timeline_browse_btn.clicked.connect(self._browse_timeline_output)
+        dir_layout.addWidget(self.timeline_browse_btn)
+        output_layout.addLayout(dir_layout)
+
+        # Output filename
+        filename_layout = QHBoxLayout()
+        filename_label = QLabel("Output Filename:")
+        filename_layout.addWidget(filename_label)
+
+        self.timeline_filename_input = QLineEdit("timeline.mp4")
+        filename_layout.addWidget(self.timeline_filename_input, 1)
+        output_layout.addLayout(filename_layout)
+
+        layout.addWidget(output_group)
+
+        # Timeline Parameters Group
+        params_group = QGroupBox("Timeline Parameters")
+        params_layout = QGridLayout(params_group)
+
+        # Timeline FPS
+        params_layout.addWidget(QLabel("Timeline FPS:"), 0, 0)
+        self.timeline_fps_spin = QDoubleSpinBox()
+        self.timeline_fps_spin.setRange(1.0, 120.0)
+        self.timeline_fps_spin.setValue(30.0)
+        self.timeline_fps_spin.setDecimals(2)
+        self.timeline_fps_spin.setSuffix(" fps")
+        params_layout.addWidget(self.timeline_fps_spin, 0, 1)
+
+        # Min gap duration
+        params_layout.addWidget(QLabel("Min Gap Duration:"), 1, 0)
+        self.timeline_min_gap_spin = QDoubleSpinBox()
+        self.timeline_min_gap_spin.setRange(0.1, 3600.0)
+        self.timeline_min_gap_spin.setValue(5.0)
+        self.timeline_min_gap_spin.setDecimals(1)
+        self.timeline_min_gap_spin.setSuffix(" seconds")
+        params_layout.addWidget(self.timeline_min_gap_spin, 1, 1)
+
+        # Output resolution
+        params_layout.addWidget(QLabel("Output Resolution:"), 2, 0)
+        self.timeline_resolution_combo = QComboBox()
+        self.timeline_resolution_combo.addItems([
+            "1920x1080 (1080p)",
+            "1280x720 (720p)",
+            "3840x2160 (4K)",
+            "2560x1440 (1440p)"
+        ])
+        params_layout.addWidget(self.timeline_resolution_combo, 2, 1)
+
+        layout.addWidget(params_group)
+
+        layout.addStretch()
+        scroll_area.setWidget(settings_widget)
+        main_layout.addWidget(scroll_area)
+
+        return tab
 
     def _create_console_section(self) -> QGroupBox:
         """Create console log display"""
@@ -737,6 +931,31 @@ class FilenameParserTab(QWidget):
             stats = result.value
             self.last_stats = stats
 
+            # Store complete video metadata for timeline rendering
+            if hasattr(stats, 'results'):
+                # Build VideoMetadata objects from ProcessingResult objects
+                self.video_metadata_list = []
+                for item in stats.results:
+                    if item.success:  # Only include successful parses
+                        metadata = VideoMetadata(
+                            file_path=Path(item.source_file),
+                            filename=item.filename,
+                            smpte_timecode=item.smpte_timecode or '00:00:00:00',
+                            start_time=item.start_time_iso,
+                            end_time=item.end_time_iso,
+                            frame_rate=item.frame_rate or 30.0,
+                            duration_seconds=item.duration_seconds,
+                            camera_path=item.camera_id or 'Unknown',
+                            width=item.width,
+                            height=item.height,
+                            codec=item.codec or 'h264',
+                            pixel_format=item.pixel_format or 'yuv420p',
+                            video_bitrate=item.video_bitrate or 0,
+                        )
+                        self.video_metadata_list.append(metadata)
+            else:
+                self.video_metadata_list = []
+
             self._log("SUCCESS", f"Processing complete: {stats.successful} successful, {stats.failed} failed")
 
             # Update statistics display
@@ -748,7 +967,13 @@ class FilenameParserTab(QWidget):
 
             # Enable export buttons now that parsing is complete
             self.export_csv_btn.setEnabled(True)
+            self.export_json_btn.setEnabled(True)
             self.copy_with_smpte_btn.setEnabled(True)
+
+            # Enable timeline rendering if we have metadata and output directory selected
+            if self.video_metadata_list and self.timeline_output_dir_input.text() != "(Not selected)":
+                self.timeline_render_btn.setEnabled(True)
+                self._log("INFO", f"✓ Timeline rendering now available with {len(self.video_metadata_list)} videos - select output directory and click 'Generate Timeline Video'")
 
             self.status_message.emit(f"Parsing complete: {stats.successful}/{stats.total_files} successful")
         else:
@@ -857,6 +1082,76 @@ class FilenameParserTab(QWidget):
             self._log("ERROR", f"Error exporting CSV: {e}")
             self.status_message.emit("CSV export error")
 
+    def _export_json_timeline(self):
+        """Export timeline data as GPT-5-compatible JSON"""
+        if not self.video_metadata_list:
+            self._log("WARNING", "No video metadata available to export")
+            QMessageBox.warning(
+                self,
+                "No Data",
+                "Please parse filenames first to generate timeline data."
+            )
+            return
+
+        # Ask user for save location
+        from datetime import datetime
+        default_filename = f"timeline_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Timeline JSON",
+            default_filename,
+            "JSON Files (*.json);;All Files (*)"
+        )
+
+        if not file_path:
+            return
+
+        self._log("INFO", f"Exporting timeline with {len(self.video_metadata_list)} videos to JSON...")
+
+        try:
+            # Export using JSON timeline service
+            result = self.json_export_service.export_timeline(
+                self.video_metadata_list,
+                Path(file_path)
+            )
+
+            if result.success:
+                self._log("SUCCESS", f"Timeline JSON exported successfully to: {file_path}")
+                self.status_message.emit(f"Timeline JSON exported: {len(self.video_metadata_list)} videos")
+
+                QMessageBox.information(
+                    self,
+                    "Export Complete",
+                    f"Timeline JSON exported successfully!\n\n"
+                    f"Location: {file_path}\n"
+                    f"Videos: {len(self.video_metadata_list)}\n\n"
+                    f"This JSON can be:\n"
+                    f"• Reviewed for timeline accuracy\n"
+                    f"• Edited manually if needed\n"
+                    f"• Used with GPT-5 timeline builder"
+                )
+            else:
+                self._log("ERROR", f"JSON export failed: {result.error.user_message}")
+                self.status_message.emit("JSON export failed")
+
+                QMessageBox.critical(
+                    self,
+                    "Export Failed",
+                    f"Failed to export timeline JSON:\n{result.error.user_message}"
+                )
+
+        except Exception as e:
+            logger.error(f"Error exporting JSON timeline: {e}", exc_info=True)
+            self._log("ERROR", f"Error exporting JSON: {e}")
+            self.status_message.emit("JSON export error")
+
+            QMessageBox.critical(
+                self,
+                "Export Error",
+                f"An unexpected error occurred:\n{str(e)}"
+            )
+
     def _copy_with_smpte(self):
         """Copy files with embedded SMPTE metadata"""
         if not self.last_stats or not self.last_stats.results:
@@ -943,6 +1238,306 @@ class FilenameParserTab(QWidget):
         if self.last_stats:
             self.export_csv_btn.setEnabled(True)
             self.copy_with_smpte_btn.setEnabled(True)
+
+    # ========================================
+    # TIMELINE RENDERING EVENT HANDLERS
+    # ========================================
+
+    def _browse_timeline_output(self):
+        """Browse for timeline output directory"""
+        directory = QFileDialog.getExistingDirectory(
+            self,
+            "Select Output Directory for Timeline Video",
+            "",
+            QFileDialog.ShowDirsOnly
+        )
+
+        if directory:
+            self.timeline_output_dir_input.setText(directory)
+            self.timeline_output_dir_input.setStyleSheet("""
+                QLabel {
+                    background-color: #1e1e1e;
+                    border: 1px solid #3a3a3a;
+                    border-radius: 4px;
+                    padding: 8px;
+                    color: #e8e8e8;
+                }
+            """)
+
+            # Enable render button if we have video metadata
+            if self.video_metadata_list:
+                self.timeline_render_btn.setEnabled(True)
+
+    def _start_timeline_rendering(self):
+        """Start timeline video rendering workflow"""
+        try:
+            # Validate output directory
+            output_dir = self.timeline_output_dir_input.text()
+            if output_dir == "(Not selected)" or not Path(output_dir).exists():
+                QMessageBox.warning(
+                    self,
+                    "Output Directory Required",
+                    "Please select an output directory for the timeline video."
+                )
+                return
+
+            # Validate we have video metadata
+            if not self.video_metadata_list:
+                QMessageBox.warning(
+                    self,
+                    "Parse Files First",
+                    "Please parse filenames first to extract SMPTE timecodes and metadata before generating timeline."
+                )
+                return
+
+            # Extract resolution from combo box
+            resolution_text = self.timeline_resolution_combo.currentText()
+            if "1920x1080" in resolution_text:
+                resolution = (1920, 1080)
+            elif "1280x720" in resolution_text:
+                resolution = (1280, 720)
+            elif "3840x2160" in resolution_text:
+                resolution = (3840, 2160)
+            elif "2560x1440" in resolution_text:
+                resolution = (2560, 1440)
+            else:
+                resolution = (1920, 1080)
+
+            # Build RenderSettings
+            self.timeline_settings = RenderSettings(
+                output_resolution=resolution,
+                output_fps=self.timeline_fps_spin.value(),
+                output_directory=Path(output_dir),
+                output_filename=self.timeline_filename_input.text()
+            )
+
+            self._log("INFO", "Starting timeline rendering workflow...")
+            self._log("INFO", f"Output: {output_dir}/{self.timeline_filename_input.text()}")
+            self._log("INFO", f"Resolution: {resolution[0]}x{resolution[1]} @ {self.timeline_fps_spin.value()}fps")
+            self._log("INFO", f"Processing {len(self.video_metadata_list)} videos")
+
+            # NEW: GPT-5 Approach - Pass video metadata directly to renderer
+            # No validation, no timeline calculation here - FFmpegTimelineBuilder handles it all!
+            self.progress_bar.setVisible(True)
+            self.progress_label.setVisible(True)
+            self.progress_bar.setValue(10)
+            self.progress_label.setText("Starting timeline render...")
+
+            # Start rendering with video metadata list (bypassing old timeline calculation)
+            render_result = self.timeline_controller.start_rendering(
+                videos=self.video_metadata_list,  # Pass metadata directly
+                settings=self.timeline_settings
+            )
+
+            if not render_result.success:
+                QMessageBox.critical(
+                    self,
+                    "Render Start Failed",
+                    f"Failed to start rendering:\n{render_result.error.user_message}"
+                )
+                self.progress_bar.setVisible(False)
+                self.progress_label.setVisible(False)
+                return
+
+            # Connect worker signals
+            self.timeline_worker = render_result.value
+            self.timeline_worker.progress_update.connect(self._on_timeline_progress)
+            self.timeline_worker.result_ready.connect(self._on_timeline_complete)
+
+            # Update UI state
+            self.timeline_render_btn.setEnabled(False)
+            self.timeline_cancel_btn.setEnabled(True)
+
+            self._log("INFO", "Timeline rendering in progress...")
+
+        except Exception as e:
+            logger.error(f"Timeline rendering error: {e}", exc_info=True)
+            QMessageBox.critical(
+                self,
+                "Unexpected Error",
+                f"An unexpected error occurred:\n{str(e)}"
+            )
+            self.progress_bar.setVisible(False)
+            self.progress_label.setVisible(False)
+
+    def _cancel_timeline_rendering(self):
+        """Cancel ongoing timeline rendering"""
+        if self.timeline_worker and self.timeline_worker.isRunning():
+            self._log("WARNING", "Cancelling timeline render...")
+            self.timeline_worker.cancel()
+            self.timeline_cancel_btn.setEnabled(False)
+
+    def _on_timeline_progress(self, percentage: int, message: str):
+        """Handle timeline rendering progress updates"""
+        self.progress_bar.setValue(percentage)
+        self.progress_label.setText(message)
+
+    def _on_timeline_complete(self, result: Result):
+        """Handle timeline rendering completion"""
+        # Reset UI state
+        self.progress_bar.setVisible(False)
+        self.progress_label.setVisible(False)
+        self.timeline_render_btn.setEnabled(True)
+        self.timeline_cancel_btn.setEnabled(False)
+
+        if result.success:
+            output_path = result.value
+            self._log("SUCCESS", f"✓ Timeline video generated successfully!")
+            self._log("SUCCESS", f"  Output: {output_path}")
+
+            QMessageBox.information(
+                self,
+                "Timeline Complete! 🎉",
+                f"Timeline video generated successfully!\n\n"
+                f"Location: {output_path}\n\n"
+                f"The video includes:\n"
+                f"• Chronological video segments\n"
+                f"• Gap slates showing missing coverage\n"
+                f"• SMPTE timecode information"
+            )
+        else:
+            self._log("ERROR", f"✗ Timeline rendering failed: {result.error.user_message}")
+
+            # Check if this is an audio codec error
+            error_context = result.error.context if hasattr(result.error, 'context') else {}
+            is_audio_error = error_context.get('is_audio_error', False)
+
+            if is_audio_error:
+                # Audio codec incompatibility detected - offer solutions
+                self._handle_audio_codec_error(error_context)
+            else:
+                # Generic error
+                QMessageBox.critical(
+                    self,
+                    "Rendering Failed",
+                    f"Timeline rendering failed:\n{result.error.user_message}"
+                )
+
+    def _handle_audio_codec_error(self, error_context: dict):
+        """Handle audio codec incompatibility with user-friendly dialog"""
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QRadioButton, QDialogButtonBox, QTextEdit
+
+        # Create custom dialog
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Audio Codec Incompatibility Detected")
+        dialog.setMinimumWidth(600)
+        layout = QVBoxLayout(dialog)
+
+        # Explanation
+        explanation = QLabel(
+            "⚠️ The audio codec in your videos (likely pcm_mulaw or pcm_alaw) is not compatible "
+            "with MP4 containers.\n\n"
+            "This is common with CCTV footage. Choose how to handle the audio:"
+        )
+        explanation.setWordWrap(True)
+        layout.addWidget(explanation)
+
+        # Options
+        self.audio_option_drop = QRadioButton(
+            "🔇 Drop Audio Track (Recommended for silent CCTV footage)\n"
+            "   Remove audio entirely - fastest option"
+        )
+        self.audio_option_drop.setChecked(True)  # Default
+        layout.addWidget(self.audio_option_drop)
+
+        self.audio_option_transcode = QRadioButton(
+            "🔊 Transcode Audio to AAC (If audio is important)\n"
+            "   Convert audio to MP4-compatible format - slower but preserves audio"
+        )
+        layout.addWidget(self.audio_option_transcode)
+
+        # Error details (collapsible)
+        details_label = QLabel("\n<b>Technical Details:</b>")
+        layout.addWidget(details_label)
+
+        details_text = QTextEdit()
+        details_text.setPlainText(error_context.get('stderr', 'No error details available'))
+        details_text.setReadOnly(True)
+        details_text.setMaximumHeight(150)
+        layout.addWidget(details_text)
+
+        # Buttons
+        button_box = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel
+        )
+        button_box.accepted.connect(dialog.accept)
+        button_box.rejected.connect(dialog.reject)
+        layout.addWidget(button_box)
+
+        # Show dialog
+        if dialog.exec() == QDialog.Accepted:
+            # Determine selected option
+            if self.audio_option_drop.isChecked():
+                audio_mode = "drop"
+                self._log("INFO", "User selected: Drop audio track")
+            else:
+                audio_mode = "transcode"
+                self._log("INFO", "User selected: Transcode audio to AAC")
+
+            # Retry rendering with selected audio handling
+            self._retry_timeline_with_audio_mode(audio_mode)
+        else:
+            self._log("INFO", "User cancelled audio handling selection")
+
+    def _retry_timeline_with_audio_mode(self, audio_mode: str):
+        """Retry timeline rendering with specified audio handling mode"""
+        try:
+            # Verify we have a stored timeline
+            if not hasattr(self, 'last_timeline') or self.last_timeline is None:
+                QMessageBox.warning(
+                    self,
+                    "Retry Not Possible",
+                    "Timeline data not available for retry. Please start rendering again."
+                )
+                return
+
+            self._log("INFO", f"Retrying timeline render with audio mode: {audio_mode}")
+
+            # Update settings with selected audio mode
+            self.timeline_settings.audio_handling = audio_mode
+
+            # Show progress bar again
+            self.progress_bar.setVisible(True)
+            self.progress_label.setVisible(True)
+            self.progress_bar.setValue(50)
+            self.progress_label.setText(f"Retrying with audio mode: {audio_mode}...")
+
+            # Start rendering with updated settings
+            render_result = self.timeline_controller.start_rendering(
+                timeline=self.last_timeline,
+                settings=self.timeline_settings
+            )
+
+            if not render_result.success:
+                QMessageBox.critical(
+                    self,
+                    "Retry Failed",
+                    f"Failed to restart rendering:\n{render_result.error.user_message}"
+                )
+                self.progress_bar.setVisible(False)
+                self.progress_label.setVisible(False)
+                return
+
+            # Connect worker signals
+            self.timeline_worker = render_result.value
+            self.timeline_worker.progress_update.connect(self._on_timeline_progress)
+            self.timeline_worker.result_ready.connect(self._on_timeline_complete)
+
+            # Update UI state
+            self.timeline_render_btn.setEnabled(False)
+            self.timeline_cancel_btn.setEnabled(True)
+
+            self._log("INFO", f"Timeline rendering resumed with {audio_mode} audio handling...")
+
+        except Exception as e:
+            logger.error(f"Timeline retry error: {e}", exc_info=True)
+            QMessageBox.critical(
+                self,
+                "Retry Error",
+                f"An error occurred while retrying:\n{str(e)}"
+            )
+            self.progress_bar.setVisible(False)
+            self.progress_label.setVisible(False)
 
     def _connect_signals(self):
         """Connect internal signals"""

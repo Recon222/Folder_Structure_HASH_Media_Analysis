@@ -61,12 +61,21 @@ class CSVExportService:
                 # Define column headers based on include_metadata flag
                 if include_metadata:
                     fieldnames = [
+                        "filename",
                         "source_file_path",
-                        "output_file_path",
+                        "camera_id",
                         "smpte_timecode",
+                        "start_time_iso",
+                        "end_time_iso",
+                        "duration_seconds",
                         "frame_rate",
+                        "resolution",
+                        "codec",
+                        "pixel_format",
+                        "video_bitrate",
                         "pattern_used",
                         "time_offset_applied",
+                        "output_file_path",
                         "status",
                         "error_message",
                     ]
@@ -85,12 +94,26 @@ class CSVExportService:
                     }
 
                     if include_metadata:
+                        # Format resolution as WxH
+                        width = result.get("width", 0)
+                        height = result.get("height", 0)
+                        resolution = f"{width}x{height}" if width and height else "N/A"
+
                         row.update(
                             {
-                                "output_file_path": result.get("output_file", ""),
-                                "frame_rate": result.get("frame_rate", ""),
+                                "filename": result.get("filename", ""),
+                                "camera_id": result.get("camera_id", "Unknown"),
+                                "start_time_iso": result.get("start_time_iso", "N/A"),
+                                "end_time_iso": result.get("end_time_iso", "N/A"),
+                                "duration_seconds": f"{result.get('duration_seconds', 0):.2f}",
+                                "frame_rate": f"{result.get('frame_rate', 0):.2f}",
+                                "resolution": resolution,
+                                "codec": result.get("codec", "N/A"),
+                                "pixel_format": result.get("pixel_format", "N/A"),
+                                "video_bitrate": result.get("video_bitrate", 0),
                                 "pattern_used": result.get("pattern_used", result.get("pattern", "")),
                                 "time_offset_applied": result.get("time_offset_applied", False),
+                                "output_file_path": result.get("output_file", ""),
                                 "status": result.get("status", "unknown"),
                                 "error_message": result.get("error_message", result.get("error", "")),
                             }

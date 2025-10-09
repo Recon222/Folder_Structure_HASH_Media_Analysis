@@ -34,18 +34,20 @@ class VideoMetadata:
     file_path: Path
     filename: str
 
-    # Timing information
-    smpte_timecode: str      # From filename parser (HH:MM:SS:FF)
-    frame_rate: float        # Native FPS (e.g., 29.97, 30.0)
-    duration_seconds: float  # Real-world duration
-    duration_frames: int     # Duration in native frames
+    # Timing information (for GPT-5 timeline builder)
+    smpte_timecode: str      # From filename parser (HH:MM:SS:FF) - START time
+    start_time: Optional[str] = None  # ISO 8601 string (e.g., "2025-05-21T14:30:00")
+    end_time: Optional[str] = None    # ISO 8601 string (start_time + duration_seconds)
+    frame_rate: float = 30.0          # Native FPS (e.g., 29.97, 30.0)
+    duration_seconds: float = 0.0     # Real-world duration from ffprobe
+    duration_frames: int = 0          # Duration in native frames
 
     # Video specifications
-    width: int               # Resolution width
-    height: int              # Resolution height
-    codec: str               # Video codec (e.g., "h264")
-    pixel_format: str        # Pixel format (e.g., "yuv420p")
-    video_bitrate: int       # Video bitrate in bits/sec
+    width: int = 1920               # Resolution width
+    height: int = 1080              # Resolution height
+    codec: str = "h264"             # Video codec (e.g., "h264")
+    pixel_format: str = "yuv420p"   # Pixel format (e.g., "yuv420p")
+    video_bitrate: int = 5000000    # Video bitrate in bits/sec
     video_profile: Optional[str] = None  # Codec profile (e.g., "high")
 
     # Audio specifications
@@ -197,11 +199,19 @@ class RenderSettings:
     audio_codec: str = "aac"
     audio_bitrate: str = "128k"
 
+    # Audio handling mode (copy, drop, or transcode)
+    audio_handling: str = "copy"  # "copy", "drop", or "transcode"
+
     # Slate settings
     slate_duration_seconds: int = 5
     slate_background_color: str = "#1a1a1a"  # Dark gray
     slate_text_color: str = "white"
     slate_font_size: int = 48
+    slate_text_template: str = "GAP: {start} → {end}  (Δ {duration})"  # Configurable via UI later
+
+    # Multi-camera overlap settings (GPT-5 approach)
+    split_mode: Literal["side_by_side", "stacked"] = "side_by_side"
+    split_alignment: Literal["top", "center", "bottom", "left", "right"] = "center"
 
     # Performance settings
     use_hardware_accel: bool = False

@@ -1,245 +1,178 @@
 """
-Multicam renderer service - orchestrates the entire rendering pipeline
+Multicam Renderer Service (GPT-5 Single-Pass Approach)
 
-This service coordinates all other services to generate the final timeline video:
-1. Generate slates for gaps
-2. Prepare timeline segments
-3. Concatenate all segments into final video
+Clean, simple orchestration of FFmpeg timeline rendering.
+Uses FFmpegTimelineBuilder for single-pass command generation.
 
-Phase 1: Single camera with gap slates
-Phase 2+: Will add multicam layout generation
+No normalization. No intermediate files. Just one beautiful FFmpeg command.
 """
 
-import subprocess
-import tempfile
 from pathlib import Path
 from typing import List, Optional, Callable
 
-from core.services.base_service import BaseService
 from core.result_types import Result
 from core.exceptions import FileOperationError
+from core.logger import logger
 
-from filename_parser.models.timeline_models import Timeline, RenderSettings, TimelineSegment
-from filename_parser.services.slate_generator_service import SlateGeneratorService
-from filename_parser.services.ffmpeg_command_builder_service import FFmpegCommandBuilderService
+from filename_parser.models.timeline_models import VideoMetadata, RenderSettings
+from filename_parser.services.ffmpeg_timeline_builder import FFmpegTimelineBuilder, Clip
 
 
-class MulticamRendererService(BaseService):
+class MulticamRendererService:
     """
-    Orchestrates multicam timeline video generation.
+    Orchestrates multicam timeline rendering using GPT-5's single-pass approach.
 
-    Phase 1: Single camera with gap slates
-    Phase 2+: Will add multicam layout generation
+    Responsibilities:
+    1. Convert VideoMetadata list to Clip list (for timeline builder)
+    2. Call FFmpegTimelineBuilder to generate command
+    3. Execute FFmpeg command
+    4. Report progress
+
+    No more normalization, no more segment preparation, no more complexity.
     """
 
     def __init__(self):
-        super().__init__("MulticamRendererService")
-        self.slate_gen = SlateGeneratorService()
-        self.cmd_builder = FFmpegCommandBuilderService()
+        self.logger = logger
+        self.builder = FFmpegTimelineBuilder()
 
     def render_timeline(
         self,
-        timeline: Timeline,
+        videos: List[VideoMetadata],
         settings: RenderSettings,
         progress_callback: Optional[Callable[[int, str], None]] = None
     ) -> Result[Path]:
         """
-        Render timeline to final video.
-
-        Workflow:
-        1. Generate slate videos for all gaps (10-30%)
-        2. Prepare segments (point to original videos or slates) (30-40%)
-        3. Concatenate all segments into final video (40-100%)
+        Render timeline video using single-pass FFmpeg.
 
         Args:
-            timeline: Calculated timeline with segments
+            videos: List of video metadata with start_time/end_time populated
             settings: Render settings
-            progress_callback: Optional progress callback (percentage, message)
+            progress_callback: Optional progress reporting (percentage, message)
 
         Returns:
-            Result containing output video path or error
+            Result containing output path or error
         """
-        try:
-            self.logger.info("Starting timeline render")
-
-            # Create temp directory for intermediate files
-            with tempfile.TemporaryDirectory(prefix="multicam_render_") as temp_dir:
-                temp_path = Path(temp_dir)
-
-                # Step 1: Generate slates for gaps (10-30%)
-                if progress_callback:
-                    progress_callback(10, "Generating gap slates...")
-
-                slate_result = self._generate_slates(timeline, settings, temp_path)
-                if not slate_result.success:
-                    return slate_result
-
-                if progress_callback:
-                    progress_callback(30, "Gap slates generated")
-
-                # Step 2: Prepare segments (30-40%)
-                if progress_callback:
-                    progress_callback(35, "Preparing timeline segments...")
-
-                segments = self._prepare_segments(timeline, settings)
-
-                if progress_callback:
-                    progress_callback(40, "Segments prepared")
-
-                # Step 3: Concatenate all segments (40-95%)
-                if progress_callback:
-                    progress_callback(45, "Concatenating timeline segments...")
-
-                output_path = settings.output_directory / settings.output_filename
-                concat_result = self._concatenate_segments(
-                    segments,
-                    settings,
-                    output_path,
-                    temp_path,
-                    progress_callback
-                )
-
-                if not concat_result.success:
-                    return concat_result
-
-                if progress_callback:
-                    progress_callback(100, "Timeline render complete")
-
-                self.logger.info(f"Timeline rendered successfully: {output_path}")
-                return Result.success(output_path)
-
-        except Exception as e:
-            self.logger.error(f"Timeline render failed: {e}", exc_info=True)
+        if not videos:
             return Result.error(
                 FileOperationError(
-                    f"Timeline render failed: {e}",
-                    user_message="Failed to render timeline video",
-                    context={"error": str(e)}
+                    "No videos provided",
+                    user_message="Please select video files to render."
                 )
             )
 
-    def _generate_slates(
-        self,
-        timeline: Timeline,
-        settings: RenderSettings,
-        temp_path: Path
-    ) -> Result[None]:
-        """
-        Generate slate videos for all gaps.
-
-        Creates 5-second title cards showing gap duration and timecodes.
-        """
-        for i, gap in enumerate(timeline.gaps):
-            slate_path = temp_path / f"slate_gap_{i:03d}.mp4"
-
-            self.logger.debug(f"Generating slate {i+1}/{len(timeline.gaps)}: {slate_path.name}")
-
-            result = self.slate_gen.generate_slate(gap, settings, slate_path)
-            if not result.success:
-                return result
-
-            # Store slate path in gap (mutates gap object)
-            gap.slate_video_path = slate_path
-
-        self.logger.info(f"Generated {len(timeline.gaps)} gap slates")
-        return Result.success(None)
-
-    def _prepare_segments(
-        self,
-        timeline: Timeline,
-        settings: RenderSettings
-    ) -> List[TimelineSegment]:
-        """
-        Prepare segments for concatenation.
-
-        Phase 1: Map video segments to source files, gap segments to slates
-        Phase 2+: Will generate multicam layouts for overlap segments
-        """
-        prepared = []
-
-        for segment in timeline.segments:
-            if segment.segment_type == "video":
-                # Use original source video
-                segment.output_video_path = segment.video.file_path
-                prepared.append(segment)
-
-            elif segment.segment_type == "gap":
-                # Use generated slate
-                segment.output_video_path = segment.gap.slate_video_path
-                prepared.append(segment)
-
-            # Phase 2+: Will handle "overlap" segments
-
-        self.logger.info(f"Prepared {len(prepared)} segments for concatenation")
-        return prepared
-
-    def _concatenate_segments(
-        self,
-        segments: List[TimelineSegment],
-        settings: RenderSettings,
-        output_path: Path,
-        temp_path: Path,
-        progress_callback: Optional[Callable]
-    ) -> Result[Path]:
-        """
-        Concatenate all segments into final video.
-
-        Uses FFmpeg concat demuxer for fast stream copying (no re-encoding).
-        """
-        concat_list_path = temp_path / "concat_list.txt"
-
-        # Build FFmpeg command
-        cmd = self.cmd_builder.build_concat_command(
-            segments,
-            settings,
-            output_path,
-            concat_list_path
-        )
-
-        self.logger.debug(f"FFmpeg concat command: {' '.join(cmd)}")
-
+        filter_script_path = None
         try:
-            # Execute FFmpeg with progress monitoring
+            if progress_callback:
+                progress_callback(5, "Preparing timeline...")
+
+            # Convert VideoMetadata to Clip objects
+            clips = self._videos_to_clips(videos)
+
+            if progress_callback:
+                progress_callback(10, "Building FFmpeg command...")
+
+            # Build output path
+            output_path = settings.output_directory / settings.output_filename
+
+            # Generate FFmpeg command using GPT-5 atomic interval approach
+            # Returns (command, filter_script_path) tuple
+            command, filter_script_path = self.builder.build_command(
+                clips=clips,
+                settings=settings,
+                output_path=output_path,
+                timeline_is_absolute=True  # Using ISO8601 times
+            )
+
+            # Log the command (argv only, not the huge filter script)
+            self.logger.info("FFmpeg command generated (using filter script file)")
+            self.logger.debug(f"Command: {' '.join(command[:20])}...")  # First 20 args only
+
+            if progress_callback:
+                progress_callback(15, "Rendering timeline (this may take several minutes)...")
+
+            # Execute FFmpeg command
+            import subprocess
+
             process = subprocess.Popen(
-                cmd,
+                command,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True
             )
 
-            # Monitor progress (FFmpeg writes progress to stderr)
+            # Monitor progress (FFmpeg writes to stderr)
             stderr_lines = []
             for line in process.stderr:
                 stderr_lines.append(line)
 
-                # Basic progress indication (FFmpeg output parsing is complex)
-                if progress_callback and "time=" in line:
-                    # Simple progress: increment from 50% to 95%
-                    # TODO: Calculate actual percentage based on total duration
-                    progress_callback(70, "Concatenating...")
+                # Parse FFmpeg progress
+                if "time=" in line and progress_callback:
+                    # TODO: Parse actual progress from FFmpeg output
+                    # For now, just show we're processing
+                    progress_callback(50, "Rendering timeline...")
 
-            process.wait()
+            returncode = process.wait()
 
-            if process.returncode != 0:
-                stderr = "".join(stderr_lines)
-                self.logger.error(f"FFmpeg concatenation failed: {stderr}")
+            if returncode != 0:
+                error_output = "\n".join(stderr_lines[-20:])  # Last 20 lines
                 return Result.error(
                     FileOperationError(
-                        f"FFmpeg concatenation failed: {stderr[:500]}",
-                        user_message="Failed to concatenate timeline segments",
-                        context={"stderr": stderr[:1000]}
+                        f"FFmpeg failed with code {returncode}",
+                        user_message="Video rendering failed. Check log for details.",
+                        context={"ffmpeg_error": error_output}
                     )
                 )
 
-            self.logger.info(f"Concatenation complete: {output_path}")
+            if progress_callback:
+                progress_callback(100, "Timeline rendering complete!")
+
+            self.logger.info(f"Timeline rendered successfully: {output_path}")
             return Result.success(output_path)
 
         except Exception as e:
-            self.logger.error(f"Concatenation failed: {e}", exc_info=True)
+            self.logger.exception("Timeline rendering failed")
             return Result.error(
                 FileOperationError(
-                    f"Concatenation error: {e}",
-                    user_message="Failed to concatenate timeline segments",
-                    context={"error": str(e)}
+                    f"Rendering error: {e}",
+                    user_message=f"Timeline rendering failed: {str(e)}"
                 )
             )
+        finally:
+            # PHASE 1: Clean up temp filter script file
+            if filter_script_path:
+                try:
+                    import os
+                    os.unlink(filter_script_path)
+                    self.logger.debug(f"Cleaned up filter script: {filter_script_path}")
+                except OSError as e:
+                    self.logger.warning(f"Could not remove filter script: {e}")
+
+    def _videos_to_clips(self, videos: List[VideoMetadata]) -> List[Clip]:
+        """
+        Convert VideoMetadata objects to Clip objects for timeline builder.
+
+        Args:
+            videos: List of video metadata
+
+        Returns:
+            List of Clip objects with ISO8601 times
+        """
+        clips = []
+
+        for video in videos:
+            if not video.start_time or not video.end_time:
+                self.logger.warning(
+                    f"Video {video.filename} missing start_time or end_time, skipping"
+                )
+                continue
+
+            clip = Clip(
+                path=video.file_path,
+                start=video.start_time,  # ISO8601 string
+                end=video.end_time,      # ISO8601 string
+                cam_id=video.camera_path  # Camera identifier
+            )
+            clips.append(clip)
+
+        self.logger.info(f"Converted {len(clips)} videos to clips for timeline builder")
+        return clips

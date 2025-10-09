@@ -42,10 +42,21 @@ class ProcessingResult:
     output_file: Optional[str] = None
     smpte_timecode: Optional[str] = None
 
-    # Metadata
+    # Metadata (basic)
     frame_rate: Optional[float] = None
     pattern_used: Optional[str] = None
     parsed_time: Optional[str] = None
+
+    # NEW: Full video metadata for timeline rendering (GPT-5 approach)
+    duration_seconds: float = 0.0
+    start_time_iso: Optional[str] = None  # ISO8601 format (e.g., "2025-05-21T14:30:00")
+    end_time_iso: Optional[str] = None    # ISO8601 format (start + duration)
+    camera_id: Optional[str] = None       # Extracted from path/filename
+    width: int = 0
+    height: int = 0
+    codec: str = ""
+    pixel_format: str = ""
+    video_bitrate: int = 0
 
     # Conversion information
     format_converted: bool = False
@@ -83,6 +94,17 @@ class ProcessingResult:
             "frame_rate": self.frame_rate,
             "pattern_used": self.pattern_used,
             "parsed_time": self.parsed_time,
+            # Full video metadata
+            "duration_seconds": self.duration_seconds,
+            "start_time_iso": self.start_time_iso,
+            "end_time_iso": self.end_time_iso,
+            "camera_id": self.camera_id,
+            "width": self.width,
+            "height": self.height,
+            "codec": self.codec,
+            "pixel_format": self.pixel_format,
+            "video_bitrate": self.video_bitrate,
+            # Conversion info
             "format_converted": self.format_converted,
             "format_conversion_reason": self.format_conversion_reason,
             "original_extension": self.original_extension,

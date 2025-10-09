@@ -82,8 +82,8 @@ class TimelineCalculatorService(BaseService):
             # Step 3: Detect gaps
             gaps = self._detect_gaps(positioned_videos, sequence_fps, min_gap_seconds)
 
-            # Step 4: Detect overlaps (Phase 2+, return empty for Phase 1)
-            overlaps = []  # Phase 1: Single camera only
+            # Step 4: Detect overlaps
+            overlaps = self._detect_overlaps(positioned_videos, sequence_fps)
 
             # Step 5: Build segments
             segments = self._build_segments(positioned_videos, gaps, overlaps)
@@ -257,23 +257,90 @@ class TimelineCalculatorService(BaseService):
         overlaps: List[OverlapGroup]
     ) -> List[TimelineSegment]:
         """
-        Build ordered list of timeline segments (videos + gaps).
+        DEPRECATED: This method causes over-segmentation due to buggy overlap detection.
+        The GPT-5 FFmpegTimelineBuilder handles segmentation correctly using atomic intervals.
+        This method is preserved for reference only and should NOT be used in the rendering path.
 
-        Phase 1: Only video and gap segments (no overlaps yet)
-        Phase 2+: Will include overlap segments
+        Build ordered list of timeline segments (videos + gaps + overlaps).
+
+        Strategy:
+        1. Build coverage map from overlap groups
+        2. For each video, check if it's part of an overlap
+        3. If in overlap: create overlap segment (only once per overlap group)
+        4. If not in overlap: create single video segment
+        5. Add gap segments
+        6. Sort all segments chronologically
         """
         segments = []
+        processed_overlaps = set()  # Track which overlaps we've added
 
-        # Create video segments
+        # Build lookup: frame position -> overlap group
+        overlap_map = {}  # {(start_frame, end_frame): OverlapGroup}
+        for overlap in overlaps:
+            overlap_map[(overlap.start_frame, overlap.end_frame)] = overlap
+
+        # Process each video
         for video in videos:
-            segment = TimelineSegment(
-                segment_type="video",
-                start_frame=video.start_frame,
-                end_frame=video.end_frame,
-                duration_frames=video.duration_seq,
-                video=video
-            )
-            segments.append(segment)
+            # Check if this video is part of an overlap
+            video_in_overlap = False
+
+            for overlap in overlaps:
+                # Video is in overlap if it's active during the overlap period
+                if (video.start_frame <= overlap.start_frame and
+                    video.end_frame > overlap.start_frame):
+
+                    overlap_key = (overlap.start_frame, overlap.end_frame)
+
+                    # Only create overlap segment once (not per video)
+                    if overlap_key not in processed_overlaps:
+                        segment = TimelineSegment(
+                            segment_type="overlap",
+                            start_frame=overlap.start_frame,
+                            end_frame=overlap.end_frame,
+                            duration_frames=overlap.duration_frames,
+                            overlap=overlap
+                        )
+                        segments.append(segment)
+                        processed_overlaps.add(overlap_key)
+
+                    # Check if video extends beyond overlap
+                    # If so, create video segments for non-overlapping portions
+
+                    # Before overlap
+                    if video.start_frame < overlap.start_frame:
+                        pre_segment = TimelineSegment(
+                            segment_type="video",
+                            start_frame=video.start_frame,
+                            end_frame=overlap.start_frame,
+                            duration_frames=overlap.start_frame - video.start_frame,
+                            video=video
+                        )
+                        segments.append(pre_segment)
+
+                    # After overlap
+                    if video.end_frame > overlap.end_frame:
+                        post_segment = TimelineSegment(
+                            segment_type="video",
+                            start_frame=overlap.end_frame,
+                            end_frame=video.end_frame,
+                            duration_frames=video.end_frame - overlap.end_frame,
+                            video=video
+                        )
+                        segments.append(post_segment)
+
+                    video_in_overlap = True
+                    break  # Video processed, move to next
+
+            # If video not in any overlap, create normal video segment
+            if not video_in_overlap:
+                segment = TimelineSegment(
+                    segment_type="video",
+                    start_frame=video.start_frame,
+                    end_frame=video.end_frame,
+                    duration_frames=video.duration_seq,
+                    video=video
+                )
+                segments.append(segment)
 
         # Create gap segments
         for gap in gaps:
@@ -335,3 +402,136 @@ class TimelineCalculatorService(BaseService):
     def _calculate_end_timecode(self, video: VideoMetadata, fps: float) -> str:
         """Calculate the end timecode of a video on the timeline."""
         return self._frames_to_timecode(video.end_frame, fps)
+
+    def _detect_overlaps(
+        self,
+        videos: List[VideoMetadata],
+        sequence_fps: float
+    ) -> List[OverlapGroup]:
+        """
+        DEPRECATED: This method has a critical bug - detects overlaps for sequential clips from the same camera.
+        The GPT-5 FFmpegTimelineBuilder handles overlap detection correctly using atomic intervals.
+        This method is preserved for reference only and should NOT be used in the rendering path.
+
+        Detect time periods where multiple cameras have simultaneous footage.
+
+        Uses interval sweep algorithm:
+        1. Collect all time points (clip start/end positions)
+        2. Process intervals between consecutive time points
+        3. Track which clips are active in each interval
+        4. When 2+ clips active = overlap
+        5. Merge adjacent intervals with identical active sets
+        6. Assign layouts based on active clip count
+
+        Args:
+            videos: List of positioned videos
+            sequence_fps: Sequence frame rate
+
+        Returns:
+            List of OverlapGroup objects with layout assignments
+        """
+        if not videos or len(videos) < 2:
+            return []
+
+        # Step 1: Collect all event points (where clips start or end)
+        time_points = set()
+        for video in videos:
+            time_points.add(video.start_frame)
+            time_points.add(video.end_frame)
+
+        sorted_time_points = sorted(time_points)
+
+        # Step 2: Process each interval between consecutive time points
+        overlap_groups = []
+
+        for i in range(len(sorted_time_points) - 1):
+            interval_start = sorted_time_points[i]
+            interval_end = sorted_time_points[i + 1]
+
+            # Find clips active in this interval
+            active_clips = []
+            for video in videos:
+                # Clip is active if it starts before/at interval start
+                # and ends after interval start
+                if video.start_frame <= interval_start and video.end_frame > interval_start:
+                    active_clips.append(video)
+
+            # Step 3: If multiple clips active, it's an overlap
+            if len(active_clips) > 1:
+                # Try to merge with previous group if same clips
+                if (overlap_groups and
+                    overlap_groups[-1].end_frame == interval_start and
+                    self._same_clip_set(overlap_groups[-1].videos, active_clips)):
+                    # Extend previous overlap group
+                    overlap_groups[-1] = OverlapGroup(
+                        start_frame=overlap_groups[-1].start_frame,
+                        end_frame=interval_end,
+                        duration_frames=interval_end - overlap_groups[-1].start_frame,
+                        videos=overlap_groups[-1].videos,
+                        layout_type=overlap_groups[-1].layout_type
+                    )
+                else:
+                    # Create new overlap group
+                    overlap_group = self._create_overlap_group(
+                        interval_start,
+                        interval_end,
+                        active_clips,
+                        sequence_fps
+                    )
+                    overlap_groups.append(overlap_group)
+
+        self.logger.info(f"Detected {len(overlap_groups)} overlap regions")
+        return overlap_groups
+
+    def _same_clip_set(
+        self,
+        clips1: List[VideoMetadata],
+        clips2: List[VideoMetadata]
+    ) -> bool:
+        """Check if two clip lists contain the same videos."""
+        paths1 = set(v.file_path for v in clips1)
+        paths2 = set(v.file_path for v in clips2)
+        return paths1 == paths2
+
+    def _create_overlap_group(
+        self,
+        start_frame: int,
+        end_frame: int,
+        clips: List[VideoMetadata],
+        sequence_fps: float
+    ) -> OverlapGroup:
+        """
+        Create overlap group with layout assignment.
+
+        Layout strategy:
+        - 2 clips: Side-by-side (50/50 horizontal split)
+        - 3 clips: Triple split (2 on top, 1 on bottom)
+        - 4 clips: 2x2 grid
+        - 5-9 clips: 3x3 grid
+        - 10+ clips: Custom (show first 9 in grid)
+        """
+        num_clips = len(clips)
+        duration_frames = end_frame - start_frame
+
+        # Sort clips by camera path for consistent ordering
+        sorted_clips = sorted(clips, key=lambda v: v.camera_path)
+
+        # Determine layout based on clip count
+        if num_clips == 2:
+            layout_type = LayoutType.SIDE_BY_SIDE
+        elif num_clips == 3:
+            layout_type = LayoutType.TRIPLE_SPLIT
+        elif num_clips == 4:
+            layout_type = LayoutType.GRID_2X2
+        elif num_clips <= 9:
+            layout_type = LayoutType.GRID_3X3
+        else:
+            layout_type = LayoutType.GRID_3X3  # Show first 9, others cycle
+
+        return OverlapGroup(
+            start_frame=start_frame,
+            end_frame=end_frame,
+            duration_frames=duration_frames,
+            videos=sorted_clips,
+            layout_type=layout_type
+        )

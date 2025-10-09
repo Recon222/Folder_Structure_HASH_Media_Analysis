@@ -12,6 +12,7 @@ Follows the established controller pattern from FilenameParserController.
 
 from pathlib import Path
 from typing import List, Optional
+from datetime import datetime, timedelta
 
 from core.result_types import Result
 from core.exceptions import ValidationError
@@ -106,7 +107,16 @@ class TimelineController:
                 errors.append(f"{file_path.name}: {metadata_result.error.user_message}")
                 continue
 
-            video_metadata_list.append(metadata_result.value)
+            # Add ISO8601 start_time and end_time for GPT-5 timeline builder
+            metadata = metadata_result.value
+            start_iso = self._smpte_to_iso8601(smpte_timecode, metadata.frame_rate)
+            end_iso = self._calculate_end_time_iso(start_iso, metadata.duration_seconds)
+
+            # Update metadata with calculated times
+            metadata.start_time = start_iso
+            metadata.end_time = end_iso
+
+            video_metadata_list.append(metadata)
 
         if errors:
             error_summary = "\n".join(errors)
@@ -148,14 +158,14 @@ class TimelineController:
 
     def start_rendering(
         self,
-        timeline: Timeline,
+        videos: List[VideoMetadata],
         settings: RenderSettings
     ) -> Result[TimelineRenderWorker]:
         """
-        Start timeline rendering in background worker.
+        Start timeline rendering in background worker (GPT-5 approach).
 
         Args:
-            timeline: Calculated timeline
+            videos: List of video metadata (with start_time/end_time populated)
             settings: Render settings
 
         Returns:
@@ -169,11 +179,11 @@ class TimelineController:
                 )
             )
 
-        logger.info("Starting timeline render worker...")
+        logger.info(f"Starting timeline render worker with {len(videos)} videos...")
 
-        # Create worker
+        # Create worker (pass videos directly - no timeline calculation here!)
         self.current_worker = TimelineRenderWorker(
-            timeline,
+            videos,
             settings,
             self.renderer_service
         )
@@ -221,3 +231,60 @@ class TimelineController:
         else:
             # Fallback to filename without extension
             return file_path.stem
+
+    def _smpte_to_iso8601(self, smpte_timecode: str, fps: float) -> str:
+        """
+        Convert SMPTE timecode to ISO8601 string.
+
+        Args:
+            smpte_timecode: SMPTE format (HH:MM:SS:FF)
+            fps: Frame rate for frame-to-second conversion
+
+        Returns:
+            ISO8601 string (e.g., "2025-05-21T14:30:25.500")
+
+        Note:
+            Uses today's date as base. For multi-day timelines,
+            caller should adjust based on actual date from filename.
+        """
+        try:
+            parts = smpte_timecode.split(":")
+            if len(parts) != 4:
+                logger.warning(f"Invalid SMPTE format: {smpte_timecode}, using as-is")
+                return smpte_timecode
+
+            hours, minutes, seconds, frames = map(int, parts)
+
+            # Convert frames to decimal seconds
+            frame_seconds = frames / fps
+
+            # Create datetime (use today's date as base)
+            today = datetime.now().date()
+            dt = datetime.combine(today, datetime.min.time())
+            dt = dt.replace(hour=hours, minute=minutes, second=seconds)
+            dt = dt + timedelta(seconds=frame_seconds)
+
+            return dt.isoformat()
+
+        except Exception as e:
+            logger.warning(f"Error converting SMPTE {smpte_timecode}: {e}")
+            return smpte_timecode
+
+    def _calculate_end_time_iso(self, start_iso: str, duration_seconds: float) -> str:
+        """
+        Calculate end time from start time + duration.
+
+        Args:
+            start_iso: ISO8601 start time
+            duration_seconds: Duration in seconds
+
+        Returns:
+            ISO8601 end time
+        """
+        try:
+            start_dt = datetime.fromisoformat(start_iso)
+            end_dt = start_dt + timedelta(seconds=duration_seconds)
+            return end_dt.isoformat()
+        except Exception as e:
+            logger.warning(f"Error calculating end time: {e}")
+            return start_iso

@@ -1,0 +1,1053 @@
+I think the best way to go about this is probably to create command builder module because I might give the user the option of resolution and maybe I will give the option between 30 FPS and 60 FPS but also my application identifies when there are multiple cameras it identifies the gaps in time but it also Identifies any time that there are overlapping cameras so more than one camera source occupying the same time so I would want a way or where my XML code does it where it identifies the overlaps and then applies a resize and reposition to create split screens. That would be a bit of a pain in the ass with different resolution sources, but if we normalize for resolution first and Pad out to 1920 by 1080 and then if it is only a two camera overlap, then we just do 50% resolution or 50% resize for each one and then move one to the left and one to the right and the user should be able to pick whether they want top of the frame centre of the frame or bottom of the frame for thesplit because after our resize, we will have empty space.
+ChatGPT said:
+Thought for 46s
+
+Love it. Here’s a clean, “builder-module” plan that does exactly what you want: 1080p (or user-chosen), 30/60 FPS option, 5-sec slates, and automatic split-screen only during overlaps—without ever pre-normalizing files on disk.
+
+How the command builder should work
+1) Inputs your module accepts
+
+Clips: [{ path, start_ts, end_ts }] (absolute wall-clock or unified timeline seconds)
+
+User options:
+
+out_w x out_h (e.g., 1920×1080; presets allowed)
+
+out_fps (30 or 60)
+
+slate_seconds (default 5)
+
+Split style for overlaps (N=2 most common):
+
+side_by_side (left|right) with vertical alignment = top|center|bottom
+
+optionally stacked (top|bottom) with horizontal alignment left|center|right
+
+(Optional) drop_audio (default true), encoder preset (NVENC options)
+
+2) Build a timeline of atomic intervals
+
+From all clip boundaries:
+
+Make a sorted list of events (every start and end).
+
+Walk the line to produce atomic intervals where the active set of cameras is constant.
+
+Classify each interval:
+
+Gap (no camera): create one slate interval of exactly slate_seconds (not the full gap).
+
+Single (exactly 1 camera): full-screen normalized view.
+
+Overlap (≥2 cameras): for now, support 2-way split; (future: 3/4 with grids).
+
+(This “intervalization” gives you a simple, ordered list you will render and then concat.)
+
+3) Per-leg normalization (reused everywhere)
+
+For any video leg (clip or split pane), apply the same chain before concatenation:
+
+fps=<out_fps>,               # duplicates frames for lower-fps sources
+scale=<out_w>:<out_h>:force_original_aspect_ratio=decrease,
+pad=<out_w>:<out_h>:(ow-iw)/2:(oh-ih)/2:color=black,
+setsar=1,format=yuv420p
+
+
+Guarantees: same fps/size/pixfmt/SAR → safe concat.
+
+This lets you freely mix codecs, containers, bitrates, profiles.
+
+4) Three render primitives (the builder combines these)
+A) Slate primitive (5 s)
+
+Input: -f lavfi -t {slate_seconds} -i "color=black:s=<out_w>x<out_h>:r=<out_fps>,drawtext=..."
+
+Normalize (already at target size/fps; still pass through the normalization chain for uniformity).
+
+Text: precompute “GAP: start → end (duration)” in your app.
+
+B) Single-camera primitive (full-screen)
+
+Input: the clip trimmed to this interval (-ss / -t on input is fine).
+
+Normalize with the chain above.
+
+No overlays needed.
+
+C) Two-camera split primitive (only during overlap)
+
+Side-by-side (recommended):
+
+Compute pane width = out_w / 2; height = out_h.
+
+For each camera in the overlap:
+
+scale={pane_w}:{out_h}:force_original_aspect_ratio=decrease
+
+Pad to pane width/height; vertical alignment based on user choice:
+
+top → pad y = 0
+
+center → pad y = (out_h - ih)/2
+
+bottom → pad y = out_h - ih
+
+Compose onto a black canvas (color=s=<out_w>x<out_h>:r=<out_fps>) using two overlays:
+
+Left pane at x=0, y=<align_y>
+
+Right pane at x=out_w/2, y=<align_y>
+
+Stacked is the same idea but split height in half and align horizontally.
+
+Why overlay chain instead of xstack? Because you want this only during overlap intervals. We generate a self-contained short composition per overlap interval, then concat segments. It’s simpler to script and reason about.
+
+5) Stitch everything in order with concat
+
+After you build the list of normalized video legs:
+
+[seg0][seg1][seg2]... concat=n=<num_segments>:v=1:a=0 [outv]
+
+Single encode:
+
+-map "[outv]" -an -c:v hevc_nvenc -preset p5 -rc vbr_hq -cq 20 -b:v 0 -g {2*fps} -bf 2 -spatial-aq 1 -temporal-aq 1
+
+(If you want audio later, standardize to AAC and add silence in slates. But for CCTV, -an is usually right.)
+
+Builder module flow (pseudo)
+
+Normalize options (W,H,fps,slate_seconds,split_style,align).
+
+Make intervals (gap / single / overlap(2)).
+
+For each interval:
+
+If gap → add Slate primitive (5 s).
+
+If single → add Single primitive (trim that portion).
+
+If overlap(2) → add Split primitive (trim both sources to the overlap window).
+
+Emit one FFmpeg command:
+
+One -i per leg input (slates via lavfi, clips with -ss/-t).
+
+One filter_complex that:
+
+Applies the per-input normalization (or per-pane for splits).
+
+Builds overlay chains for split intervals.
+
+Collects one labeled output per interval ([segN]).
+
+Final concat on all [seg*].
+
+NVENC settings; write the file.
+
+This stays one-pass encode even with hundreds of segments.
+
+Layout math you’ll need (side-by-side)
+
+pane_w = out_w / 2, pane_h = out_h
+
+For each pane after scale=...:decrease, compute padding:
+
+x_pad = (pane_w - iw)/2
+
+y_pad_top = 0
+
+y_pad_center = (pane_h - ih)/2
+
+y_pad_bottom = pane_h - ih
+
+Left composite: overlay=x=0:y=<y_align>
+
+Right composite: overlay=x=pane_w:y=<y_align>
+
+(For stacked: swap roles; pane_w = out_w, pane_h = out_h / 2, align horizontally.)
+
+Why this design works well for CCTV
+
+You never worry about mismatched specs—everything is normalized in-graph.
+
+Overlaps are clear: user sees both angles simultaneously, aligned to their chosen vertical/horizontal preference.
+
+Gaps are concise: immutable 5-second slates with accurate times.
+
+Scales to huge timelines: you operate on “atomic intervals,” which keeps the logic deterministic and composable.
+
+If you want, I can now produce a ready-to-paste generator (Python or PowerShell) that:
+
+takes your JSON timeline,
+
+supports 1080p/720p/custom & 30/60 fps,
+
+implements side-by-side (and optionally stacked) overlaps with user alignment,
+
+and outputs the full FFmpeg command with the filter_complex built for all segments.
+
+You said:
+Yes, please first produce it in python for me. Will call it command builder.
+
+
+
+Here’s a complete, ready-to-use Python module called command_builder.py. It builds a single-pass FFmpeg command (as an argv list) for:
+
+user-selectable resolution (default 1920×1080)
+
+user-selectable fps (30 or 60 recommended) with frame duplication for lower-FPS sources
+
+5-second slates for gaps (you can change the duration)
+
+two-camera overlaps rendered as split-screen (side-by-side or stacked), with alignment options
+
+mixing any codecs/containers/specs; everything is normalized in-graph
+
+final one encode (HEVC NVENC by default)
+
+Paste this into command_builder.py:
+
+# command_builder.py
+# Build a single-pass FFmpeg command for CCTV timelines with:
+# - 5s gap slates,
+# - two-camera overlaps as split-screen (SxS or stacked),
+# - per-leg normalization to one size/fps/SAR/pixfmt,
+# - single encode at the end (NVENC by default).
+#
+# Output: argv list suitable for subprocess.run(argv, check=True)
+
+from dataclasses import dataclass
+from typing import List, Optional, Literal, Tuple, Union
+from datetime import datetime
+
+# ---------- Public API ----------
+
+@dataclass
+class Clip:
+    path: str
+    start: Union[float, str]  # seconds from t0 OR ISO8601 string
+    end:   Union[float, str]  # seconds from t0 OR ISO8601 string
+    cam_id: Optional[str] = None  # optional label
+
+@dataclass
+class BuilderOptions:
+    out_w: int = 1920
+    out_h: int = 1080
+    out_fps: int = 30                 # 30 or 60 recommended
+    slate_seconds: float = 5.0
+    split_mode: Literal["side_by_side","stacked"] = "side_by_side"
+    # For side_by_side: vertical alignment of panes: top|center|bottom
+    # For stacked: horizontal alignment of panes: left|center|right
+    alignment: Literal["top","center","bottom","left","right"] = "center"
+    drop_audio: bool = True
+    encoder: Literal["hevc_nvenc","h264_nvenc","libx265","libx264"] = "hevc_nvenc"
+    cq: int = 20                      # quality knob for NVENC
+    preset: str = "p5"                # NVENC preset (p1..p7)
+    pix_fmt_out: str = "yuv420p"      # use "p010le" for 10-bit pipelines
+    gop_seconds: int = 2              # GOP length in seconds (e.g., 2s -> g = 2*out_fps)
+
+def build_ffmpeg_command(
+    clips: List[Clip],
+    options: BuilderOptions,
+    timeline_is_absolute: bool = False
+) -> List[str]:
+    """
+    Returns a subprocess-ready ffmpeg argv list.
+    - Inserts 5s slates for gaps (text auto-generated HH:MM:SS).
+    - Two-camera overlaps -> split screen according to options.
+    - Normalizes every leg to out_w x out_h @ out_fps, SAR=1, pix_fmt options.pix_fmt_out.
+    - Concatenates all segments, encodes once.
+
+    You can print it for logging:
+        print(" ".join(map(_shell_quote, argv)))
+    """
+    norm_clips = _normalize_clip_times(clips, timeline_is_absolute)
+    if not norm_clips:
+        raise ValueError("No clips provided")
+
+    intervals = _build_atomic_intervals(norm_clips)
+    segments  = _segments_from_intervals(intervals, options)
+    argv      = _emit_ffmpeg_argv(segments, options)
+    return argv
+
+# ---------- Internal: time & intervals ----------
+
+@dataclass
+class _NClip:
+    path: str
+    start: float  # seconds from t0
+    end:   float
+    cam_id: Optional[str]
+
+def _normalize_clip_times(clips: List[Clip], absolute: bool) -> List[_NClip]:
+    # Accept float seconds or ISO8601 strings. If absolute, convert all to seconds since the minimum start.
+    parsed = []
+    def to_sec(x: Union[float,str]) -> float:
+        if isinstance(x, (int,float)):
+            return float(x)
+        try:
+            return datetime.fromisoformat(x).timestamp()
+        except Exception:
+            raise ValueError(f"Unsupported time format: {x}")
+
+    for c in clips:
+        s = to_sec(c.start)
+        e = to_sec(c.end)
+        if e <= s:
+            continue
+        parsed.append((c.path, s, e, c.cam_id))
+
+    if not parsed:
+        return []
+
+    if absolute:
+        t0 = min(s for _, s, _, _ in parsed)
+        norm = [_NClip(p, s - t0, e - t0, cam) for p, s, e, cam in parsed]
+    else:
+        norm = [_NClip(p, s, e, cam) for p, s, e, cam in parsed]
+
+    norm.sort(key=lambda c: (c.start, c.cam_id or "", c.path))
+    return norm
+
+@dataclass
+class _Interval:
+    t0: float
+    t1: float
+    active: List[_NClip]  # clips active in [t0, t1)
+
+def _build_atomic_intervals(clips: List[_NClip]) -> List[_Interval]:
+    bounds = set()
+    for c in clips: bounds.add(c.start); bounds.add(c.end)
+    edges = sorted(bounds)
+    out: List[_Interval] = []
+    for i in range(len(edges)-1):
+        a, b = edges[i], edges[i+1]
+        if b <= a: continue
+        act = [c for c in clips if c.start < b and c.end > a]
+        out.append(_Interval(a, b, act))
+    return out
+
+# ---------- Internal: segments ----------
+
+@dataclass
+class _SegSlate:
+    gap_start: float
+    gap_end: float
+    text: str
+    dur: float
+
+@dataclass
+class _SegSingle:
+    clip: _NClip
+    seg_start: float
+    seg_end: float
+
+@dataclass
+class _SegOverlap2:
+    clip_a: _NClip
+    clip_b: _NClip
+    seg_start: float
+    seg_end: float
+
+_Segment = Union[_SegSlate, _SegSingle, _SegOverlap2]
+
+def _fmt_hms(t: float) -> str:
+    t = max(0, int(round(t)))
+    h = t // 3600; m = (t % 3600)//60; s = t % 60
+    return f"{h:02d}:{m:02d}:{s:02d}"
+
+def _fmt_dur(d: float) -> str:
+    d = max(0, int(round(d)))
+    h = d // 3600; m = (d % 3600)//60; s = d % 60
+    parts = []
+    if h: parts.append(f"{h}h")
+    if m or (h and s): parts.append(f"{m}m")
+    parts.append(f"{s}s")
+    return " ".join(parts)
+
+def _segments_from_intervals(intervals: List[_Interval], opt: BuilderOptions) -> List[_Segment]:
+    segs: List[_Segment] = []
+    def key(act: List[_NClip]):
+        ordered = sorted(act, key=lambda c: (c.cam_id or "", c.path))
+        return tuple((c.path, c.start, c.end) for c in ordered)
+
+    i = 0
+    while i < len(intervals):
+        a = intervals[i]
+        j = i + 1
+        while j < len(intervals) and key(intervals[j].active) == key(a.active):
+            j += 1
+        t0, t1 = a.t0, intervals[j-1].t1
+        act = a.active
+        if not act:
+            if opt.slate_seconds > 0:
+                text = f"GAP: {_fmt_hms(t0)} → {_fmt_hms(t1)}  (Δ {_fmt_dur(t1 - t0)})"
+                segs.append(_SegSlate(gap_start=t0, gap_end=t1, text=text, dur=float(opt.slate_seconds)))
+        elif len(act) == 1:
+            segs.append(_SegSingle(clip=act[0], seg_start=t0, seg_end=t1))
+        else:
+            ordered = sorted(act, key=lambda c: (c.cam_id or "", c.path))
+            segs.append(_SegOverlap2(clip_a=ordered[0], clip_b=ordered[1], seg_start=t0, seg_end=t1))
+        i = j
+    return segs
+
+# ---------- Internal: emit ffmpeg argv ----------
+
+def _escape_drawtext_text(s: str) -> str:
+    # drawtext text=... needs escaping of '\' ':' ',' '=' and "'"
+    return (s.replace('\\','\\\\')
+             .replace(':','\\:')
+             .replace(',','\\,')
+             .replace('=','\\=')
+             .replace("'", "\\'"))
+
+def _shell_quote(s: str) -> str:
+    # Minimal wrapper for logging
+    if any(c in s for c in ' \t"'):
+        return '"' + s.replace('"','\\"') + '"'
+    return s
+
+@dataclass
+class _InSpec:
+    # Each segment contributes one or more inputs; keep their ffmpeg -i index and local labels
+    in_idx: int
+    kind: Literal["slate","clip"]
+    # For clips:
+    path: Optional[str] = None
+    ss:   Optional[float] = None
+    t:    Optional[float] = None
+    # For slate:
+    slate_text: Optional[str] = None
+    slate_w: Optional[int] = None
+    slate_h: Optional[int] = None
+    slate_fps: Optional[int] = None
+    slate_dur: Optional[float] = None
+
+@dataclass
+class _SegEmit:
+    # What this segment contributes:
+    inputs: List[_InSpec]
+    # The filtergraph fragment that produces a final normalized output for this segment
+    filter_lines: List[str]
+    # The final label to feed into concat
+    out_label: str
+
+def _emit_ffmpeg_argv(segments: List[_Segment], opt: BuilderOptions) -> List[str]:
+    argv: List[str] = ["ffmpeg", "-y"]
+
+    # Encoder settings
+    g = max(1, int(round(opt.gop_seconds * opt.out_fps)))
+
+    # Build inputs & filtergraph per segment
+    in_specs: List[_InSpec] = []
+    seg_emits: List[_SegEmit] = []
+    next_in_index = 0
+    seg_count = 0
+
+    # Precompute pane geometry for overlaps
+    if opt.split_mode == "side_by_side":
+        pane_w, pane_h = opt.out_w // 2, opt.out_h
+    else:  # stacked
+        pane_w, pane_h = opt.out_w, opt.out_h // 2
+
+    # Alignment params
+    def _pad_pos_for_alignment(mode: str, iw_var: str = "iw", ih_var: str = "ih") -> Tuple[str, str]:
+        # Returns (x_expr, y_expr) for pad positioning inside pane
+        if opt.split_mode == "side_by_side":
+            # Vertical alignment within pane
+            if opt.alignment == "top":
+                return ("(ow - " + iw_var + ")/2", "0")
+            elif opt.alignment == "bottom":
+                return ("(ow - " + iw_var + ")/2", "oh-" + ih_var)
+            else:  # center
+                return ("(ow - " + iw_var + ")/2", "(oh-" + ih_var + ")/2")
+        else:
+            # stacked: Horizontal alignment within pane
+            if opt.alignment == "left":
+                return ("0", "(oh-" + ih_var + ")/2")
+            elif opt.alignment == "right":
+                return ("ow-" + iw_var, "(oh-" + ih_var + ")/2")
+            else:  # center
+                return ("(ow - " + iw_var + ")/2", "(oh-" + ih_var + ")/2")
+
+    # Build specs
+    for seg in segments:
+        if isinstance(seg, _SegSlate):
+            # One lavfi input
+            spec = _InSpec(
+                in_idx=next_in_index, kind="slate",
+                slate_text=seg.text, slate_w=opt.out_w, slate_h=opt.out_h,
+                slate_fps=opt.out_fps, slate_dur=seg.dur
+            )
+            in_specs.append(spec)
+            next_in_index += 1
+
+            # Filter: normalize (already the right size/fps, but enforce SAR/pixfmt)
+            v_in = f"[{spec.in_idx}:v]"
+            v_norm = f"[s{seg_count}]"
+            # No need to rescale/pad; ensure sar/pixfmt (and fps to be safe)
+            esc = _escape_drawtext_text(seg.text)
+            # NOTE: drawtext already baked in the source (lavfi) string, but we keep fps/setsar/format here
+            lines = [f"{v_in}fps={opt.out_fps},setsar=1,format={opt.pix_fmt_out}{v_norm}"]
+            seg_emits.append(_SegEmit(inputs=[spec], filter_lines=lines, out_label=v_norm))
+            seg_count += 1
+
+        elif isinstance(seg, _SegSingle):
+            dur = seg.seg_end - seg.seg_start
+            ss  = seg.seg_start - seg.clip.start
+            spec = _InSpec(in_idx=next_in_index, kind="clip", path=seg.clip.path, ss=max(0.0, ss), t=dur)
+            in_specs.append(spec)
+            next_in_index += 1
+
+            v_in   = f"[{spec.in_idx}:v]"
+            v_norm = f"[s{seg_count}]"
+            lines = [(
+                f"{v_in}"
+                f"fps={opt.out_fps},"
+                f"scale={opt.out_w}:{opt.out_h}:force_original_aspect_ratio=decrease,"
+                f"pad={opt.out_w}:{opt.out_h}:(ow-iw)/2:(oh-ih)/2:color=black,"
+                f"setsar=1,format={opt.pix_fmt_out}"
+                f"{v_norm}"
+            )]
+            seg_emits.append(_SegEmit(inputs=[spec], filter_lines=lines, out_label=v_norm))
+            seg_count += 1
+
+        else:  # _SegOverlap2
+            dur = seg.seg_end - seg.seg_start
+            ss_a = seg.seg_start - seg.clip_a.start
+            ss_b = seg.seg_start - seg.clip_b.start
+            spec_a = _InSpec(in_idx=next_in_index, kind="clip", path=seg.clip_a.path, ss=max(0.0, ss_a), t=dur)
+            next_in_index += 1
+            spec_b = _InSpec(in_idx=next_in_index, kind="clip", path=seg.clip_b.path, ss=max(0.0, ss_b), t=dur)
+            next_in_index += 1
+            in_specs.extend([spec_a, spec_b])
+
+            va_in = f"[{spec_a.in_idx}:v]"
+            vb_in = f"[{spec_b.in_idx}:v]"
+            va_p  = f"[p{seg_count}a]"
+            vb_p  = f"[p{seg_count}b]"
+            v_out = f"[s{seg_count}]"
+
+            # Normalize each to pane size, pad within pane with chosen alignment
+            x_pad, y_pad = _pad_pos_for_alignment(opt.split_mode)
+            norm_a = (
+                f"{va_in}"
+                f"fps={opt.out_fps},"
+                f"scale={pane_w}:{pane_h}:force_original_aspect_ratio=decrease,"
+                f"pad={pane_w}:{pane_h}:{x_pad}:{y_pad}:color=black,"
+                f"setsar=1,format={opt.pix_fmt_out}"
+                f"{va_p}"
+            )
+            norm_b = (
+                f"{vb_in}"
+                f"fps={opt.out_fps},"
+                f"scale={pane_w}:{pane_h}:force_original_aspect_ratio=decrease,"
+                f"pad={pane_w}:{pane_h}:{x_pad}:{y_pad}:color=black,"
+                f"setsar=1,format={opt.pix_fmt_out}"
+                f"{vb_p}"
+            )
+
+            # Stack panes into full frame
+            if opt.split_mode == "side_by_side":
+                xstack = f"{va_p}{vb_p}xstack=inputs=2:layout=0_0|w0_0:fill=black{v_out}"
+            else:  # stacked
+                xstack = f"{va_p}{vb_p}xstack=inputs=2:layout=0_0|0_h0:fill=black{v_out}"
+
+            lines = [norm_a, norm_b, xstack]
+            seg_emits.append(_SegEmit(inputs=[spec_a, spec_b], filter_lines=lines, out_label=v_out))
+            seg_count += 1
+
+    # ----- Assemble argv -----
+
+    # Add inputs
+    for spec in in_specs:
+        if spec.kind == "clip":
+            # Input-accurate trim: use -ss before -i for speed; if you need exact frame accuracy, move -ss after -i.
+            if spec.ss is not None:
+                argv += ["-ss", f"{spec.ss:.6f}"]
+            if spec.t is not None:
+                argv += ["-t", f"{spec.t:.6f}"]
+            argv += ["-i", spec.path]  # path must be a real file
+        else:
+            # Slate as a lavfi input with drawtext baked into the input itself
+            txt = _escape_drawtext_text(spec.slate_text or "")
+            lavfi = (
+                f"color=black:s={spec.slate_w}x{spec.slate_h}:r={spec.slate_fps},"
+                f"drawtext=text='{txt}':x=(w-tw)/2:y=(h-th)/2:"
+                f"fontsize={max(24, int(0.028*spec.slate_h))}:fontcolor=white:"
+                f"box=1:boxcolor=black@0.5"
+            )
+            argv += ["-f", "lavfi", "-t", f"{spec.slate_dur:.6f}", "-i", lavfi]
+
+    # Build filter_complex
+    filter_lines: List[str] = []
+    for se in seg_emits:
+        filter_lines.extend(se.filter_lines)
+    # Concat them in order
+    concat_inputs = "".join(se.out_label for se in seg_emits)
+    vout = "[vout]"
+    filter_lines.append(f"{concat_inputs}concat=n={len(seg_emits)}:v=1:a=0{vout}")
+    argv += ["-filter_complex", "; ".join(filter_lines)]
+    argv += ["-map", vout]
+
+    # Audio
+    if opt.drop_audio:
+        argv += ["-an"]
+
+    # Encoder
+    if opt.encoder in ("hevc_nvenc", "h264_nvenc"):
+        argv += ["-c:v", opt.encoder, "-preset", opt.preset, "-cq", str(opt.cq), "-rc", "vbr_hq", "-b:v", "0", "-g", str(max(1, opt.out_fps * opt.gop_seconds)), "-bf", "2", "-spatial-aq", "1", "-temporal-aq", "1"]
+        if opt.pix_fmt_out == "p010le":
+            argv += ["-profile:v", "main10"]
+    else:
+        # CPU encoders
+        argv += ["-c:v", opt.encoder]
+        if opt.encoder in ("libx265", "libx264"):
+            argv += ["-crf", str(max(0, min(51, opt.cq)))]
+
+    # Output file placeholder (caller should append a final path)
+    # Example:
+    # argv += ["D:\\Height Analysis\\master_timeline_1080p30.mp4"]
+    return argv
+
+# ---------- Example usage ----------
+
+if __name__ == "__main__":
+    # Example timeline with overlap and a gap:
+    clips = [
+        Clip(path=r"D:\Height Analysis\vape\A02\A02_20250521140357.mp4", start=0.0,   end=120.0, cam_id="A02"),
+        Clip(path=r"D:\Height Analysis\vape\A04\A04_20250521140430.mp4", start=60.0,  end=200.0, cam_id="A04"),
+        Clip(path=r"D:\Height Analysis\vape\A02\A02_20250521140800.mp4", start=260.0, end=320.0, cam_id="A02"),
+    ]
+    opt = BuilderOptions(
+        out_w=1920, out_h=1080, out_fps=30,
+        slate_seconds=5,
+        split_mode="side_by_side",   # or "stacked"
+        alignment="center",           # "top"/"center"/"bottom" for SxS ; "left"/"center"/"right" for stacked
+        drop_audio=True,
+        encoder="hevc_nvenc",
+        cq=20, preset="p5",
+        pix_fmt_out="yuv420p",
+        gop_seconds=2
+    )
+    argv = build_ffmpeg_command(clips, opt, timeline_is_absolute=False)
+    # Append your output path:
+    argv = argv + [r"D:\Height Analysis\master_timeline_1080p30.mp4"]
+    print("FFmpeg command:\n", " ".join(map(_shell_quote, argv)))
+
+How to use it
+from command_builder import Clip, BuilderOptions, build_ffmpeg_command
+import subprocess
+
+clips = [
+    Clip(r"D:\Height Analysis\vape\A02\A02_20250521140357.mp4", start=0.0, end=120.0, cam_id="A02"),
+    Clip(r"D:\Height Analysis\vape\A04\A04_20250521140430.mp4", start=60.0, end=200.0, cam_id="A04"),
+    # ... add all clips with their timeline-relative start/end seconds
+]
+
+opt = BuilderOptions(
+    out_w=1920, out_h=1080, out_fps=30,
+    slate_seconds=5,
+    split_mode="side_by_side",     # or "stacked"
+    alignment="center",            # "top/center/bottom" (SxS) or "left/center/right" (stacked)
+    drop_audio=True,
+    encoder="hevc_nvenc", cq=20, preset="p5",
+    pix_fmt_out="yuv420p", gop_seconds=2
+)
+
+argv = build_ffmpeg_command(clips, opt, timeline_is_absolute=False)
+argv += [r"D:\Height Analysis\master_timeline_1080p30.mp4"]
+print(" ".join(argv))             # for logging
+subprocess.run(argv, check=True)  # run it
+
+Notes / tweaks
+
+Absolute timestamps? If your clip start/end are ISO8601 wall-clock times, pass timeline_is_absolute=True. The builder will normalize them to seconds from the earliest start.
+
+Two-camera overlaps only: For now, overlaps with ≥3 cameras take the first two deterministically (by cam_id, then path). You can expand to 3/4 grids later.
+
+Accurate trimming: This uses -ss before -i for speed. If you see off-by-a-few-frames in edge cases, move -ss after -i (slower but frame-accurate) in the clip path section.
+
+10-bit pipelines: set pix_fmt_out="p010le" and the NVENC profile to main10 (done automatically by the builder).
+
+Fonts for slates: drawtext uses the default system font. If you need a specific font on Windows, replace the lavfi string to include fontfile='C\\:\\\\Windows\\\\Fonts\\\\arial.ttf' and remove fontsize computation if you prefer a fixed size.
+
+If you want a variant that emits a string with escaped quotes for direct pasting into PowerShell, say the word and I’ll add a helper.
+
+
+
+
+
+
+
+You mentioned that the format that the command builder would take as the timeline would be Jason if you were to write out the actual Jason that the builder requires in order to build the command could you provide me an example. Let’s use 20 clips per camera with 10 gaps Where there is no video from either camera, five overlaps but not just stacking two clips on top of each other maybe clip one or camera one is the only camera for 10 seconds. Then the second clip starts and they overlap for three minutes then the first camera ends and the second camera continues on For another 30 seconds. Mixup the gap times and overlap times so they are not all the same. The time frame from start to end should be 13:00:00 to 14:30:00
+ChatGPT said:
+Thought for 48s
+
+Totally—here’s exactly what the timeline JSON looks like for the command builder:
+
+The format the builder expects
+
+An array of objects; each object is one clip:
+
+[
+  {
+    "path": "D:\\Height Analysis\\vape\\A02\\A02_0001.mp4",
+    "start": "2025-05-21T13:00:00",
+    "end":   "2025-05-21T13:00:10",
+    "cam_id": "A02"
+  },
+  {
+    "path": "D:\\Height Analysis\\vape\\A04\\A04_0001.mp4",
+    "start": "2025-05-21T13:03:10",
+    "end":   "2025-05-21T13:03:40",
+    "cam_id": "A04"
+  }
+  // ... more clips
+]
+
+
+start/end are ISO 8601 datetimes (naïve is fine).
+
+Gaps are implicit—you simply don’t list any clip covering those times.
+
+Overlaps are represented by two clips whose time windows overlap (one per camera).
+
+A concrete example (first dozen entries)
+
+Below is the beginning of a full example that matches your rules and includes the “special” start you requested (A02-only 10 s → 3 min overlap → A04-only 30 s), with mixed gaps/overlaps. This is enough to show the shape; you can keep adding entries in the same pattern until 14:30:00 and a full 20 clips per camera, 10 gaps, 5 overlaps total.
+
+[
+  {
+    "path": "D:\\Height Analysis\\vape\\A02\\A02_0001.mp4",
+    "start": "2025-05-21T13:00:00",
+    "end":   "2025-05-21T13:00:10",
+    "cam_id": "A02"
+  },
+  {
+    "path": "D:\\Height Analysis\\vape\\A02\\A02_0002.mp4",
+    "start": "2025-05-21T13:00:10",
+    "end":   "2025-05-21T13:03:10",
+    "cam_id": "A02"
+  },
+  {
+    "path": "D:\\Height Analysis\\vape\\A04\\A04_0001.mp4",
+    "start": "2025-05-21T13:00:10",
+    "end":   "2025-05-21T13:03:10",
+    "cam_id": "A04"
+  },
+  {
+    "path": "D:\\Height Analysis\\vape\\A04\\A04_0002.mp4",
+    "start": "2025-05-21T13:03:10",
+    "end":   "2025-05-21T13:03:40",
+    "cam_id": "A04"
+  },
+
+  // GAP #1 → 2025-05-21T13:03:40 to 13:04:40 (implicit; nothing listed)
+
+  {
+    "path": "D:\\Height Analysis\\vape\\A02\\A02_0003.mp4",
+    "start": "2025-05-21T13:04:40",
+    "end":   "2025-05-21T13:05:55",
+    "cam_id": "A02"
+  },
+  {
+    "path": "D:\\Height Analysis\\vape\\A04\\A04_0003.mp4",
+    "start": "2025-05-21T13:05:55",
+    "end":   "2025-05-21T13:07:20",
+    "cam_id": "A04"
+  },
+
+  // GAP #2 → 13:07:20–13:07:50
+
+  {
+    "path": "D:\\Height Analysis\\vape\\A02\\A02_0004.mp4",
+    "start": "2025-05-21T13:07:50",
+    "end":   "2025-05-21T13:09:25",
+    "cam_id": "A02"
+  },
+  {
+    "path": "D:\\Height Analysis\\vape\\A04\\A04_0004.mp4",
+    "start": "2025-05-21T13:09:25",
+    "end":   "2025-05-21T13:10:55",
+    "cam_id": "A04"
+  },
+
+  // OVERLAP #2 (varied duration) → both cams active 13:10:55–13:12:25
+
+  {
+    "path": "D:\\Height Analysis\\vape\\A02\\A02_0005.mp4",
+    "start": "2025-05-21T13:10:55",
+    "end":   "2025-05-21T13:12:25",
+    "cam_id": "A02"
+  },
+  {
+    "path": "D:\\Height Analysis\\vape\\A04\\A04_0005.mp4",
+    "start": "2025-05-21T13:10:55",
+    "end":   "2025-05-21T13:12:25",
+    "cam_id": "A04"
+  },
+
+  // GAP #3 → 13:12:25–13:12:55
+
+  {
+    "path": "D:\\Height Analysis\\vape\\A02\\A02_0006.mp4",
+    "start": "2025-05-21T13:12:55",
+    "end":   "2025-05-21T13:14:30",
+    "cam_id": "A02"
+  }
+]
+
+
+Continue in the same fashion until you reach 14:30:00, ensuring:
+
+20 clips for A02 and 20 for A04 total
+
+10 distinct gaps with varied durations (just leave time uncovered)
+
+5 overlap blocks with varied durations (each represented by two entries—one per camera—with the same [start, end])
+
+Want me to generate the entire 13:00:00 → 14:30:00 JSON for you?
+
+Say the word and tell me:
+
+the date you want embedded in the ISO timestamps (I used 2025-05-21 above), and
+
+your preferred file name pattern (I used A02_0001.mp4, A04_0001.mp4, …).
+
+I’ll spit out a complete JSON you can drop straight into the builder.
+
+You said:
+No, I think that is sufficient. I also want to fully optimize the start end time calculation. We are extrapolating the start time based on the file name which for most DVRs contains the start time. I already have a great system that is pulling the start time from Each file intelligently based on a library of formats. I have FF probe pulling the frame rate butt to calculate the end time I can get FF probe to pull the duration. Does frame rate if duration is in seconds does frame rate even come into playor is it just the extrapolated start time plus duration equals the end timeor is it just the extrapolated start time plus duration equals the end time. And if SF probe returns the duration in frames, it would be the start time plus the duration in seconds that would be calculated by the amount of frames divided by the frame rate or however, that calculation works can you clarify exactly what information FF probe should be pulling and exactly how the calculation should work.
+ChatGPT said:
+Thought for 15s
+
+Great question. Short version:
+
+If you already trust your start time (from filename), then the end time = start time + duration.
+
+Frame rate doesn’t matter if you have a reliable duration in seconds.
+
+Only if duration comes in frames do you need frame rate to convert: duration_seconds = frames / fps.
+
+Here’s the clean way to pull what you need with ffprobe, and how to compute end time robustly.
+
+What to pull from ffprobe (and why)
+
+Use one call and collect both container-level and stream-level timing:
+
+ffprobe -v error -of json ^
+  -show_format ^
+  -show_streams ^
+  -select_streams v:0 "input.mp4"
+
+
+Key fields:
+
+Container (format)
+
+format.duration → float seconds (best first choice)
+
+format.start_time → container PTS offset (usually not needed for your calc if you’re using filename start)
+
+Video stream (stream[0] typically)
+
+streams[].duration or streams[].duration_ts + streams[].time_base
+
+streams[].nb_frames
+
+streams[].avg_frame_rate (e.g., "30000/1001")
+
+streams[].r_frame_rate (real frame rate “hint”; often same fraction)
+
+Why both? Some files have only container duration; others only stream duration. You want the most reliable duration you can get.
+
+How to compute the duration (fallback logic)
+
+If format.duration exists and is > 0
+Use it. That’s already seconds (float).
+
+Pros: simple, already aggregated.
+
+Cons: sometimes missing or slightly off for weird containers.
+
+Else, if stream.duration exists and is > 0 (video stream)
+Use it. That’s seconds (float) as well.
+
+Else, if duration_ts and time_base exist
+
+duration_seconds = duration_ts * time_base
+
+
+(Both are per-stream. time_base is like "1/90000"; multiply properly as a rational.)
+
+Else, if nb_frames and a usable frame rate exist
+Get fps as a rational from avg_frame_rate (prefer) or r_frame_rate:
+
+fps = num / den
+duration_seconds = nb_frames / fps
+
+
+Note: nb_frames is often missing or unreliable for some formats. Use only as a fallback.
+
+If video is absent but audio is present and longer (rare for CCTV), compute duration for each stream and take the max across streams and format.duration.
+
+In your CCTV world, (1) or (3) usually wins. (4) is last resort.
+
+The actual end-time formula
+
+Once you have start_time_wallclock (from your filename parser) and duration_seconds (from the logic above):
+
+end_time_wallclock = start_time_wallclock + duration_seconds
+
+
+That’s it. Frame rate only enters the chat if you had to convert frames → seconds.
+
+Practical details & gotchas
+
+VFR vs CFR: It doesn’t matter if you’re using duration in seconds. Only when converting frames→seconds you’ll rely on avg_frame_rate (average over the stream). That’s fine for end-time stamping.
+
+Rational parsing: avg_frame_rate like "30000/1001" → treat as fraction, don’t parse as float until the end to avoid drift.
+
+Rounding: For human-readable end times, round to milliseconds or nearest frame at your master FPS if you want pretty timestamps:
+
+e.g., rounded = round(duration_seconds * master_fps) / master_fps
+
+Weird containers (PS/TS): Sometimes format.duration is missing. In those cases duration_ts * time_base from the video stream is usually reliable.
+
+Probing depth: If you see missing duration, try increasing probe size:
+
+ffprobe -v error -probesize 100M -analyzeduration 100M -of json -show_format -show_streams -select_streams v:0 "input.mp4"
+
+
+Clock alignment: You’re using filename start as ground truth (good). Ignore format.start_time for end-time math; it’s a container PTS offset, not wall-clock.
+
+Multiple segments per file (rare): If a file contains edits, always trust the total duration logic above; don’t try to sum packet deltas unless you must.
+
+Minimal JSON parse example (pseudocode)
+import json
+from fractions import Fraction
+from datetime import datetime, timedelta
+
+def parse_fps(rate_str):
+    # "30000/1001" -> Fraction(30000,1001)
+    num, den = rate_str.split('/')
+    return Fraction(int(num), int(den))
+
+def pick_duration_seconds(ffj):
+    fmt = ffj.get("format", {})
+    if fmt.get("duration"):
+        return float(fmt["duration"])
+
+    # look at the first video stream
+    vstreams = [s for s in ffj.get("streams", []) if s.get("codec_type") == "video"]
+    if vstreams:
+        s = vstreams[0]
+        if s.get("duration"):
+            return float(s["duration"])
+        if s.get("duration_ts") is not None and s.get("time_base"):
+            tb = Fraction(s["time_base"])
+            return int(s["duration_ts"]) * float(tb)
+        if s.get("nb_frames") and (s.get("avg_frame_rate") or s.get("r_frame_rate")):
+            fps_str = s.get("avg_frame_rate") or s.get("r_frame_rate")
+            fps = parse_fps(fps_str)
+            return int(s["nb_frames"]) / float(fps)
+
+    # fallback: 0 (unknown)
+    return 0.0
+
+# Example:
+# ffjson = json.loads(subprocess.check_output([...]))
+# start_dt = your_filename_parser(...)   # datetime
+# duration = pick_duration_seconds(ffjson)
+# end_dt = start_dt + timedelta(seconds=duration)
+
+TL;DR
+
+Prefer format.duration (seconds).
+
+Else use stream.duration or duration_ts * time_base.
+
+Only if you only have frames → divide by fps.
+
+Then: end = start_from_filename + duration_seconds.
+
+That’s the whole play.
+
+You said:
+You actually raised a good point that if we are normalizing to 30 or 60 FPS and duplicating frames would PTS be better so that it knew what frames to duplicate and how many frames to duplicate within a certain second so that you didn’t have speed ups   And slow downs because of the vfr?
+ChatGPT said:
+Thought for 14s
+
+Yep—you’re thinking about the right thing. To avoid any “speed-ups/slow-downs” when normalizing VFR sources to CFR (30 or 60 fps), you want frame duplication (or dropping) to be driven by the timestamps (PTS), not by raw frame counts.
+
+Key points
+
+Don’t rely on -r alone at input or output—it can ignore real timestamps and cause temporal drift.
+
+Do resample inside the filtergraph with the fps filter, which uses PTS to decide which frames to keep/duplicate so playback speed stays correct.
+
+For robustness, normalize each leg’s timestamps before fps so the resampler sees a clean, zero-based timeline.
+
+Per-leg normalization pattern (good for VFR→CFR without speed change)
+
+For each clip (and for slates too, though they’re already CFR):
+
+settb=AVTB, setpts=PTS-STARTPTS, fps=30:round=near
+
+
+Then your existing resize/pad:
+
+scale=<W>:<H>:force_original_aspect_ratio=decrease,
+pad=<W>:<H>:(ow-iw)/2:(oh-ih)/2:color=black,
+setsar=1, format=yuv420p
+
+
+Put together (example at 1080p30):
+
+[in] settb=AVTB,setpts=PTS-STARTPTS,fps=30:round=near,
+     scale=1920:1080:force_original_aspect_ratio=decrease,
+     pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=black,
+     setsar=1,format=yuv420p [v_norm]
+
+Why each piece matters
+
+settb=AVTB
+Normalizes the stream’s time base to a sane common denominator so subsequent timing math is stable.
+
+setpts=PTS-STARTPTS
+Rebases timestamps to start at 0 for each leg. This removes any container offset weirdness and makes the fps filter’s sampling deterministic.
+
+fps=30:round=near
+Uses PTS-aware resampling to produce CFR.
+
+round=near minimizes duration bias; round=up is conservative (never shortens), and round=down can shorten—near is usually best for forensic timelines.
+
+setsar=1, format=yuv420p
+Keeps concat/encoder happy and consistent.
+
+Global output sync hints
+
+Since the filtergraph already dictates the frame rate, tell the muxer/encoder not to second-guess it:
+
+Add -vsync 0 (passthrough) or -fps_mode passthrough on the command.
+(Pick one; -vsync 0 is widely used.)
+
+Edge cases & tips
+
+Trimming (-ss/-t): If you trim per-input, your PTS will still be reset by setpts=PTS-STARTPTS, which is what you want before fps.
+
+Broken/missing timestamps: if you hit truly bad sources, try -fflags +genpts on that input so FFmpeg synthesizes monotonic PTS; then the same chain above works.
+
+Interlaced: insert yadif (or yadif_cuda) before fps.
+
+Audio: if you ever keep audio, resample it similarly (e.g., aresample=async=1:first_pts=0) so it stays aligned after trims; but you’ve been dropping audio, which sidesteps this.
+
+TL;DR
+
+Yes—PTS-driven resampling is the right way. Use:
+
+settb=AVTB,setpts=PTS-STARTPTS,fps=30:round=near
+
+
+per leg, then your scale/pad. Avoid plain -r tricks. That keeps real-time pace intact while normalizing to CFR, with duplicates chosen exactly where the timestamps indicate.
