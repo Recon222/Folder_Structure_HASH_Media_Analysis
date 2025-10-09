@@ -193,7 +193,7 @@ class RenderSettings:
     # Output video settings
     output_resolution: tuple[int, int] = (1920, 1080)
     output_fps: float = 30.0
-    output_codec: str = "libx264"
+    output_codec: str = "hevc_nvenc"  # Use NVENC for hardware encoding
     output_pixel_format: str = "yuv420p"
     video_bitrate: str = "5M"
     audio_codec: str = "aac"

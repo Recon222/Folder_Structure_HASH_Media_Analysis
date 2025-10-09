@@ -86,6 +86,7 @@ class MulticamRendererService:
             # Log the command (argv only, not the huge filter script)
             self.logger.info("FFmpeg command generated (using filter script file)")
             self.logger.debug(f"Command: {' '.join(command[:20])}...")  # First 20 args only
+            self.logger.debug(f"Command has {len(command)} arguments, {len(' '.join(command))} chars total")
 
             if progress_callback:
                 progress_callback(15, "Rendering timeline (this may take several minutes)...")
@@ -115,6 +116,8 @@ class MulticamRendererService:
 
             if returncode != 0:
                 error_output = "\n".join(stderr_lines[-20:])  # Last 20 lines
+                self.logger.error(f"FFmpeg failed with return code {returncode}")
+                self.logger.error(f"FFmpeg stderr (last 20 lines):\n{error_output}")
                 return Result.error(
                     FileOperationError(
                         f"FFmpeg failed with code {returncode}",
