@@ -47,6 +47,11 @@ class ProcessingResult:
     pattern_used: Optional[str] = None
     parsed_time: Optional[str] = None
 
+    # Date components (extracted from filename)
+    year: Optional[int] = None
+    month: Optional[int] = None
+    day: Optional[int] = None
+
     # NEW: Full video metadata for timeline rendering (GPT-5 approach)
     duration_seconds: float = 0.0
     start_time_iso: Optional[str] = None  # ISO8601 format (e.g., "2025-05-21T14:30:00")
@@ -94,6 +99,10 @@ class ProcessingResult:
             "frame_rate": self.frame_rate,
             "pattern_used": self.pattern_used,
             "parsed_time": self.parsed_time,
+            # Date components
+            "year": self.year,
+            "month": self.month,
+            "day": self.day,
             # Full video metadata
             "duration_seconds": self.duration_seconds,
             "start_time_iso": self.start_time_iso,

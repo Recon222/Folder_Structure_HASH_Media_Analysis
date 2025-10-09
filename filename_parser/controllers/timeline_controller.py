@@ -109,7 +109,17 @@ class TimelineController:
 
             # Add ISO8601 start_time and end_time for GPT-5 timeline builder
             metadata = metadata_result.value
-            start_iso = self._smpte_to_iso8601(smpte_timecode, metadata.frame_rate)
+
+            # Extract date components from parsing result if available
+            date_tuple = None
+            year = result.get("year")
+            month = result.get("month")
+            day = result.get("day")
+            if year and month and day:
+                date_tuple = (year, month, day)
+                logger.info(f"{file_path.name}: Using extracted date {year}-{month:02d}-{day:02d}")
+
+            start_iso = self._smpte_to_iso8601(smpte_timecode, metadata.frame_rate, date_tuple)
             end_iso = self._calculate_end_time_iso(start_iso, metadata.duration_seconds)
 
             # Update metadata with calculated times
@@ -232,20 +242,25 @@ class TimelineController:
             # Fallback to filename without extension
             return file_path.stem
 
-    def _smpte_to_iso8601(self, smpte_timecode: str, fps: float) -> str:
+    def _smpte_to_iso8601(
+        self,
+        smpte_timecode: str,
+        fps: float,
+        date_components: Optional[tuple[int, int, int]] = None
+    ) -> str:
         """
         Convert SMPTE timecode to ISO8601 string.
 
         Args:
             smpte_timecode: SMPTE format (HH:MM:SS:FF)
             fps: Frame rate for frame-to-second conversion
+            date_components: Optional (year, month, day) tuple from filename parsing
 
         Returns:
             ISO8601 string (e.g., "2025-05-21T14:30:25.500")
 
         Note:
-            Uses today's date as base. For multi-day timelines,
-            caller should adjust based on actual date from filename.
+            If date_components not provided, falls back to system date with warning.
         """
         try:
             parts = smpte_timecode.split(":")
@@ -258,10 +273,21 @@ class TimelineController:
             # Convert frames to decimal seconds
             frame_seconds = frames / fps
 
-            # Create datetime (use today's date as base)
-            today = datetime.now().date()
-            dt = datetime.combine(today, datetime.min.time())
-            dt = dt.replace(hour=hours, minute=minutes, second=seconds)
+            # Create datetime using extracted date or system date fallback
+            if date_components:
+                year, month, day = date_components
+                dt = datetime(year, month, day, hours, minutes, seconds)
+                logger.debug(f"Using extracted date: {year}-{month:02d}-{day:02d}")
+            else:
+                # Fallback for files without date (legacy support)
+                today = datetime.now().date()
+                dt = datetime.combine(today, datetime.min.time())
+                dt = dt.replace(hour=hours, minute=minutes, second=seconds)
+                logger.warning(
+                    f"No date extracted from filename, using system date: {today} "
+                    f"(this may be incorrect for forensic analysis)"
+                )
+
             dt = dt + timedelta(seconds=frame_seconds)
 
             return dt.isoformat()

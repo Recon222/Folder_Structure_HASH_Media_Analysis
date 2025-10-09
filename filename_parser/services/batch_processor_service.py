@@ -266,8 +266,21 @@ class BatchProcessorService(BaseService, IBatchProcessorService):
             # Step 2: Extract full video metadata using VideoMetadataExtractor
             video_probe_data = self._metadata_extractor.extract_metadata(file_path)
 
-            # Step 3: Calculate timeline timestamps (ISO8601)
-            start_time_iso = self._smpte_to_iso8601(parsed.smpte_timecode, fps)
+            # Step 3: Extract date components from parsed filename
+            date_tuple = None
+            if parsed.time_data.year and parsed.time_data.month and parsed.time_data.day:
+                date_tuple = (
+                    parsed.time_data.year,
+                    parsed.time_data.month,
+                    parsed.time_data.day
+                )
+                self.logger.info(
+                    f"{file_path.name}: Extracted date {parsed.time_data.year}-"
+                    f"{parsed.time_data.month:02d}-{parsed.time_data.day:02d}"
+                )
+
+            # Step 4: Calculate timeline timestamps (ISO8601)
+            start_time_iso = self._smpte_to_iso8601(parsed.smpte_timecode, fps, date_tuple)
             end_time_iso = self._calculate_end_time_iso(start_time_iso, video_probe_data.duration_seconds)
 
             # Step 4: Extract camera ID
@@ -298,6 +311,9 @@ class BatchProcessorService(BaseService, IBatchProcessorService):
                         parsed_time=parsed.time_data.time_string,
                         smpte_timecode=parsed.smpte_timecode,
                         pattern_used=parsed.pattern.name,
+                        year=parsed.time_data.year,
+                        month=parsed.time_data.month,
+                        day=parsed.time_data.day,
                         error_message=write_result.error.user_message if write_result.error else "Write failed",
                         start_time=start_time,
                         end_time=datetime.now(),
@@ -319,6 +335,9 @@ class BatchProcessorService(BaseService, IBatchProcessorService):
                 parsed_time=parsed.time_data.time_string,
                 smpte_timecode=parsed.smpte_timecode,
                 pattern_used=parsed.pattern.name,
+                year=parsed.time_data.year,
+                month=parsed.time_data.month,
+                day=parsed.time_data.day,
                 time_offset_applied=parsed.time_offset_applied,
                 time_offset_direction=parsed.time_offset_direction,
                 time_offset_hours=parsed.time_offset_hours,
@@ -431,20 +450,25 @@ class BatchProcessorService(BaseService, IBatchProcessorService):
         # Strategy 3: Fall back to parent directory name
         return parent_name
 
-    def _smpte_to_iso8601(self, smpte_timecode: str, fps: float) -> str:
+    def _smpte_to_iso8601(
+        self,
+        smpte_timecode: str,
+        fps: float,
+        date_components: Optional[tuple[int, int, int]] = None
+    ) -> str:
         """
         Convert SMPTE timecode to ISO8601 string.
 
         Args:
             smpte_timecode: SMPTE format (HH:MM:SS:FF)
             fps: Frame rate for frame-to-second conversion
+            date_components: Optional (year, month, day) tuple from filename parsing
 
         Returns:
             ISO8601 string (e.g., "2025-05-21T14:30:25.500")
 
         Note:
-            Uses today's date as base. For multi-day timelines,
-            caller should adjust based on actual date from filename.
+            If date_components not provided, falls back to system date with warning.
         """
         try:
             parts = smpte_timecode.split(":")
@@ -457,10 +481,21 @@ class BatchProcessorService(BaseService, IBatchProcessorService):
             # Convert frames to decimal seconds
             frame_seconds = frames / fps if fps > 0 else 0
 
-            # Create datetime (use today's date as base)
-            today = datetime.now().date()
-            dt = datetime.combine(today, datetime.min.time())
-            dt = dt.replace(hour=hours, minute=minutes, second=seconds)
+            # Create datetime using extracted date or system date fallback
+            if date_components:
+                year, month, day = date_components
+                dt = datetime(year, month, day, hours, minutes, seconds)
+                self.logger.debug(f"Using extracted date: {year}-{month:02d}-{day:02d}")
+            else:
+                # Fallback for files without date (legacy support)
+                today = datetime.now().date()
+                dt = datetime.combine(today, datetime.min.time())
+                dt = dt.replace(hour=hours, minute=minutes, second=seconds)
+                self.logger.warning(
+                    f"No date extracted from filename, using system date: {today} "
+                    f"(this may be incorrect for forensic analysis)"
+                )
+
             dt = dt + timedelta(seconds=frame_seconds)
 
             return dt.isoformat()
