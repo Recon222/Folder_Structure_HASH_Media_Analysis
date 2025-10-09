@@ -117,7 +117,7 @@ class FFmpegTimelineBuilder:
             Estimated command line length in characters
         """
         # Normalize clips to get actual segments
-        norm_clips = self._normalize_clip_times(clips, timeline_is_absolute=True)
+        norm_clips = self._normalize_clip_times(clips, absolute=True)
         intervals = self._build_atomic_intervals(norm_clips)
         segments = self._segments_from_intervals(intervals, settings)
 
