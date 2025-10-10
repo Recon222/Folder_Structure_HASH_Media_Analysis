@@ -8,12 +8,12 @@ from pathlib import Path
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 
-from .base_controller import BaseController
+from controllers.base_controller import BaseController
 from core.services.interfaces import IMediaAnalysisService, IReportService
-from core.workers.media_analysis_worker import MediaAnalysisWorker
+from ..workers.media_analysis_worker import MediaAnalysisWorker
 from core.workers.exiftool_worker import ExifToolWorker
-from core.media_analysis_models import MediaAnalysisSettings, MediaAnalysisResult
-from core.exiftool.exiftool_models import ExifToolSettings, ExifToolAnalysisResult, GPSData
+from ..core.media_analysis_models import MediaAnalysisSettings, MediaAnalysisResult
+from ..exiftool.exiftool_models import ExifToolSettings, ExifToolAnalysisResult, GPSData
 from core.models import FormData
 from core.result_types import Result
 from core.exceptions import MediaAnalysisError

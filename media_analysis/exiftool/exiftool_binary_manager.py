@@ -9,7 +9,7 @@ import platform
 from pathlib import Path
 from typing import Optional, Dict, Any
 
-from ..logger import logger
+from core.logger import logger
 
 
 class ExifToolBinaryManager:

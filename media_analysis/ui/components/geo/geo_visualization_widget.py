@@ -20,7 +20,7 @@ from PySide6.QtGui import QAction, QIcon
 
 from .geo_bridge import GeoBridge
 from .map_template import MAP_HTML_TEMPLATE
-from core.exiftool.exiftool_models import ExifToolMetadata, GPSData
+from media_analysis.exiftool.exiftool_models import ExifToolMetadata, GPSData
 from core.logger import logger
 from core.settings_manager import settings
 

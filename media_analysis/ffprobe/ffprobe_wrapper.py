@@ -14,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from core.result_types import Result
 from core.exceptions import MediaExtractionError, FFProbeNotFoundError
 from core.logger import logger
-from core.media.ffprobe_command_builder import FFProbeCommandBuilder
+from .ffprobe_command_builder import FFProbeCommandBuilder
 
 
 class FFProbeWrapper:
@@ -49,7 +49,7 @@ class FFProbeWrapper:
         try:
             # Use default settings if none provided
             if settings is None:
-                from core.media_analysis_models import MediaAnalysisSettings
+                from ..core.media_analysis_models import MediaAnalysisSettings
                 settings = MediaAnalysisSettings()
             
             # Build optimized command based on settings
@@ -166,7 +166,7 @@ class FFProbeWrapper:
         
         # Use default settings if none provided
         if settings is None:
-            from core.media_analysis_models import MediaAnalysisSettings
+            from ..core.media_analysis_models import MediaAnalysisSettings
             settings = MediaAnalysisSettings()
         
         # Limit workers to reasonable number

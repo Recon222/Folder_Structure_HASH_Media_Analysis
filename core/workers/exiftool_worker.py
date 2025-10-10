@@ -11,7 +11,7 @@ from threading import Event
 from PySide6.QtCore import Signal
 
 from .base_worker import BaseWorkerThread
-from ..exiftool.exiftool_models import ExifToolSettings, ExifToolAnalysisResult
+from media_analysis.exiftool.exiftool_models import ExifToolSettings, ExifToolAnalysisResult
 from ..result_types import Result
 from ..exceptions import MediaAnalysisError
 from ..logger import logger

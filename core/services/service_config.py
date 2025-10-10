@@ -20,7 +20,7 @@ from .report_service import ReportService
 from .archive_service import ArchiveService
 from .validation_service import ValidationService
 from .copy_verify_service import CopyVerifyService
-from .media_analysis_service import MediaAnalysisService
+# MediaAnalysisService now self-registers via media_analysis module
 from .thread_management_service import ThreadManagementService, IThreadManagementService
 from .performance_formatter_service import PerformanceFormatterService, IPerformanceFormatterService
 from .resource_management_service import ResourceManagementService
@@ -28,7 +28,7 @@ from .resource_management_service import ResourceManagementService
 from .success_builders.forensic_success import ForensicSuccessBuilder
 from .success_builders.hashing_success import HashingSuccessBuilder
 from .success_builders.copy_verify_success import CopyVerifySuccessBuilder
-from .success_builders.media_analysis_success import MediaAnalysisSuccessBuilder
+# MediaAnalysisSuccessBuilder now self-registers via media_analysis module
 from .success_builders.batch_success import BatchSuccessBuilder
 
 def configure_services(zip_controller=None):
@@ -49,10 +49,10 @@ def configure_services(zip_controller=None):
         
         # ✅ COPY VERIFY SERVICE: SOA-compliant copy and verify operations
         register_service(ICopyVerifyService, CopyVerifyService())
-        
-        # ✅ MEDIA ANALYSIS SERVICE: FFprobe-based media metadata extraction
-        register_service(IMediaAnalysisService, MediaAnalysisService())
-        
+
+        # ✅ MEDIA ANALYSIS SERVICE: Self-registers via media_analysis module (optional)
+        # Service registration happens automatically when media_analysis module is imported
+
         # ✅ THREAD MANAGEMENT SERVICE: Centralized thread lifecycle management
         register_service(IThreadManagementService, ThreadManagementService())
         
@@ -63,7 +63,7 @@ def configure_services(zip_controller=None):
         register_service(IForensicSuccessService, ForensicSuccessBuilder())
         register_service(IHashingSuccessService, HashingSuccessBuilder())
         register_service(ICopyVerifySuccessService, CopyVerifySuccessBuilder())
-        register_service(IMediaAnalysisSuccessService, MediaAnalysisSuccessBuilder())
+        # MediaAnalysisSuccessService self-registers via media_analysis module
         register_service(IBatchSuccessService, BatchSuccessBuilder())
 
         # ✅ VEHICLE TRACKING SERVICE: Optional module with graceful fallback

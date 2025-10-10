@@ -9,7 +9,7 @@ from typing import List, Optional, Any
 import time
 
 from core.workers.base_worker import BaseWorkerThread
-from core.media_analysis_models import MediaAnalysisSettings, MediaAnalysisResult
+from ..core.media_analysis_models import MediaAnalysisSettings, MediaAnalysisResult
 from core.models import FormData
 from core.result_types import Result
 from core.exceptions import MediaAnalysisError

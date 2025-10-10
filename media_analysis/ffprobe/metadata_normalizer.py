@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Dict, Any, Optional, Tuple, List
 import re
 
-from core.media_analysis_models import MediaMetadata, MediaAnalysisSettings
+from ..core.media_analysis_models import MediaMetadata, MediaAnalysisSettings
 from core.logger import logger
 
 

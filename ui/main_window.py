@@ -32,7 +32,7 @@ from ui.styles.adobe_theme import AdobeTheme
 from ui.dialogs import ZipSettingsDialog, AboutDialog, UserSettingsDialog
 from ui.tabs import ForensicTab, HashingTab
 from ui.tabs.batch_tab import BatchTab
-from ui.tabs.media_analysis_tab import MediaAnalysisTab
+from media_analysis import MediaAnalysisTab  # Modularized media analysis
 from core.error_handler import get_error_handler
 from core.exceptions import FSAError
 

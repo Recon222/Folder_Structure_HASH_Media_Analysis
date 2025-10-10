@@ -10,27 +10,27 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional, Callable
 from collections import defaultdict
 
-from .interfaces import IMediaAnalysisService
-from .base_service import BaseService
-from ..models import FormData
-from ..media_analysis_models import (
+from core.services.interfaces import IMediaAnalysisService
+from core.services.base_service import BaseService
+from core.models import FormData
+from .media_analysis_models import (
     MediaAnalysisSettings, MediaAnalysisResult, MediaMetadata
 )
-from ..result_types import Result
-from ..exceptions import (
+from core.result_types import Result
+from core.exceptions import (
     ValidationError, MediaAnalysisError, FFProbeNotFoundError,
     MediaExtractionError, MediaReportError
 )
-from ..media.ffprobe_binary_manager import FFProbeBinaryManager
-from ..media.ffprobe_wrapper import FFProbeWrapper
-from ..media.metadata_normalizer import MetadataNormalizer
+from ..ffprobe.ffprobe_binary_manager import FFProbeBinaryManager
+from ..ffprobe.ffprobe_wrapper import FFProbeWrapper
+from ..ffprobe.metadata_normalizer import MetadataNormalizer
 from ..exiftool.exiftool_binary_manager import ExifToolBinaryManager
 from ..exiftool.exiftool_wrapper import ExifToolWrapper
 from ..exiftool.exiftool_normalizer import ExifToolNormalizer
 from ..exiftool.exiftool_models import (
     ExifToolSettings, ExifToolAnalysisResult, ExifToolMetadata
 )
-from ..logger import logger
+from core.logger import logger
 
 
 class MediaAnalysisService(BaseService, IMediaAnalysisService):
@@ -881,7 +881,7 @@ class MediaAnalysisService(BaseService, IMediaAnalysisService):
             Result containing report path or error
         """
         try:
-            from ..pdf_gen import PDFGenerator
+            from core.pdf_gen import PDFGenerator
             
             # Ensure output directory exists
             output_path.parent.mkdir(parents=True, exist_ok=True)
