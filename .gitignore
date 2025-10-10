@@ -106,4 +106,7 @@ vehicle_tracking/tauri-map/src-tauri/icons/
 vehicle_tracking/tauri-map/.tauri/
 
 # Tauri auto-generated files
-vehicle_tracking/tauri-map/src/ws-config.js 
+vehicle_tracking/tauri-map/src/ws-config.js
+
+# Windows null device files
+nul
