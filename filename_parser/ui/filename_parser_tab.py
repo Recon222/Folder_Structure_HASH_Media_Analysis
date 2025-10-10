@@ -701,6 +701,17 @@ class FilenameParserTab(QWidget):
         )
         perf_layout.addWidget(self.timeline_batch_check)
 
+        # Keep temp files checkbox (debugging)
+        self.timeline_keep_temp_check = QCheckBox("Keep Temp Files (Debugging)")
+        self.timeline_keep_temp_check.setToolTip(
+            "<b>Preserve temporary batch files for manual inspection.</b><br><br>"
+            "When enabled, intermediate batch files are NOT deleted after rendering.<br>"
+            "Useful for debugging batch rendering issues.<br><br>"
+            "<b style='color: #ff9800;'>⚠️ Warning:</b> Temp files can be large (GBs).<br>"
+            "Remember to manually delete them when done!"
+        )
+        perf_layout.addWidget(self.timeline_keep_temp_check)
+
         # Auto-fallback info label
         auto_fallback_info = QLabel(
             "ℹ️  Auto-fallback: Batch mode activates automatically if command exceeds Windows limits"
@@ -1349,7 +1360,8 @@ class FilenameParserTab(QWidget):
                 output_directory=Path(output_dir),
                 output_filename=self.timeline_filename_input.text(),
                 use_hardware_decode=self.timeline_hwdecode_check.isChecked(),
-                use_batch_rendering=self.timeline_batch_check.isChecked()
+                use_batch_rendering=self.timeline_batch_check.isChecked(),
+                keep_batch_temp_files=self.timeline_keep_temp_check.isChecked()
             )
 
             self._log("INFO", "Starting timeline rendering workflow...")

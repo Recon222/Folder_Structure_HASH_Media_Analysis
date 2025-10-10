@@ -285,15 +285,22 @@ class MulticamRendererService:
                 return Result.success(final_output)
 
             finally:
-                # Cleanup temp files
-                try:
-                    for batch_file in batch_files:
-                        if batch_file.exists():
-                            batch_file.unlink()
-                    temp_dir.rmdir()
-                    self.logger.debug(f"Cleaned up temp batch directory: {temp_dir}")
-                except Exception as e:
-                    self.logger.warning(f"Could not clean up temp batch files: {e}")
+                # Cleanup temp files (unless debugging)
+                if settings.keep_batch_temp_files:
+                    self.logger.warning(
+                        f"⚠️  TEMP FILES PRESERVED FOR DEBUGGING: {temp_dir}\n"
+                        f"   Batch files: {[f.name for f in batch_files]}\n"
+                        f"   Remember to delete this directory when done!"
+                    )
+                else:
+                    try:
+                        for batch_file in batch_files:
+                            if batch_file.exists():
+                                batch_file.unlink()
+                        temp_dir.rmdir()
+                        self.logger.debug(f"Cleaned up temp batch directory: {temp_dir}")
+                    except Exception as e:
+                        self.logger.warning(f"Could not clean up temp batch files: {e}")
 
         except Exception as e:
             self.logger.exception("Batch rendering failed")
@@ -310,23 +317,109 @@ class MulticamRendererService:
         settings: RenderSettings
     ) -> List[List[Clip]]:
         """
-        Split clips into batches that stay under argv limit.
+        Split clips into batches at timeline boundaries (gaps) to preserve continuity.
+
+        Strategy:
+        1. Build timeline segments to identify gaps
+        2. Group clips by their timeline position
+        3. Split at gap boundaries to avoid breaking overlaps
+        4. Ensure each batch stays under argv limit
 
         Args:
             clips: Full list of clips
             settings: Render settings (contains batch_size)
 
         Returns:
-            List of clip batches
+            List of clip batches, split at natural timeline boundaries
         """
-        # For simplicity, just split by count
-        # More sophisticated: split at gap boundaries
-        batch_size = settings.batch_size
-        batches = []
+        if len(clips) <= settings.batch_size:
+            return [clips]
 
-        for i in range(0, len(clips), batch_size):
-            batch = clips[i:i + batch_size]
-            batches.append(batch)
+        # Build timeline to identify gaps (natural split points)
+        from filename_parser.services.ffmpeg_timeline_builder import _SegSlate
+
+        # Create timeline builder instance
+        builder = self.builder
+
+        # Normalize clips and build segments
+        norm_clips, timeline_t0 = builder._normalize_clip_times(clips, absolute=True)
+        intervals = builder._build_atomic_intervals(norm_clips)
+        segments = builder._segments_from_intervals(intervals, settings, timeline_t0)
+
+        self.logger.info(
+            f"Timeline-aware splitting: {len(segments)} segments "
+            f"({sum(1 for s in segments if isinstance(s, _SegSlate))} gaps)"
+        )
+
+        # Map segments to their clips
+        segment_to_clips = {}
+        for i, seg in enumerate(segments):
+            if isinstance(seg, _SegSlate):
+                segment_to_clips[i] = []  # Gaps have no clips
+            elif hasattr(seg, 'clip'):
+                # _SegSingle
+                segment_to_clips[i] = [seg.clip]
+            elif hasattr(seg, 'clip_a'):
+                # _SegOverlap2
+                segment_to_clips[i] = [seg.clip_a, seg.clip_b]
+            else:
+                segment_to_clips[i] = []
+
+        # Build batches by accumulating clips until we hit a gap AND size threshold
+        batches = []
+        current_batch_clips = []  # List of clips in current batch
+        seen_paths = set()  # Track paths for O(1) duplicate checking
+        current_batch_size = 0
+
+        for i, seg in enumerate(segments):
+            seg_clips = segment_to_clips.get(i, [])
+
+            # Add clips from this segment
+            for clip in seg_clips:
+                if clip.path not in seen_paths:
+                    current_batch_clips.append(clip)
+                    seen_paths.add(clip.path)
+                    current_batch_size += 1
+
+            # Check if we should split here
+            is_gap = isinstance(seg, _SegSlate)
+            size_exceeded = current_batch_size >= settings.batch_size * 0.8  # 80% threshold
+
+            if is_gap and size_exceeded and current_batch_clips:
+                # Natural split point: we're at a gap and batch is large enough
+                batch_list = sorted(current_batch_clips, key=lambda c: (c.start, c.cam_id))
+                batches.append(batch_list)
+
+                self.logger.debug(
+                    f"Split at gap (segment {i}): batch size = {len(batch_list)}"
+                )
+
+                current_batch_clips = []
+                seen_paths = set()
+                current_batch_size = 0
+
+        # Add remaining clips as final batch
+        if current_batch_clips:
+            batch_list = sorted(current_batch_clips, key=lambda c: (c.start, c.cam_id))
+            batches.append(batch_list)
+            self.logger.debug(f"Final batch: size = {len(batch_list)}")
+
+        # Fallback: if timeline-aware splitting failed or produced too few batches,
+        # fall back to simple splitting
+        if not batches or (len(clips) > settings.batch_size and len(batches) == 1):
+            self.logger.warning(
+                "Timeline-aware splitting produced suboptimal results, "
+                "falling back to simple split"
+            )
+            batches = []
+            for i in range(0, len(clips), settings.batch_size):
+                batch = clips[i:i + settings.batch_size]
+                batches.append(batch)
+
+        self.logger.info(
+            f"Split {len(clips)} clips into {len(batches)} batches: "
+            f"{[len(b) for b in batches]}"
+        )
 
         return batches
 

@@ -222,6 +222,7 @@ class RenderSettings:
     use_hardware_decode: bool = False  # GPU decode (NVDEC) - faster but increases argv
     use_batch_rendering: bool = False  # Split into batches for large datasets
     batch_size: int = 150  # Max inputs per batch (stay under Windows argv limit)
+    keep_batch_temp_files: bool = False  # Preserve temp files for debugging batch rendering
 
     # Output paths
     output_directory: Path = Path(".")
