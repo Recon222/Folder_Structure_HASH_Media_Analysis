@@ -668,7 +668,7 @@ class MediaAnalysisTab(QWidget):
     def _connect_signals(self):
         """Connect internal signals"""
         # Log message signal to console
-        self.log_message.connect(self.console.append_log)
+        self.log_message.connect(self.console.log)
 
     def _check_ffprobe_status(self):
         """Check FFprobe availability and log status"""
