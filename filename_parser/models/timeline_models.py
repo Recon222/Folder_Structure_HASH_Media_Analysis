@@ -212,7 +212,12 @@ class RenderSettings:
     slate_background_color: str = "#1a1a1a"  # Dark gray
     slate_text_color: str = "white"
     slate_font_size: int = 48
-    slate_text_template: str = "GAP: {start} → {end}  (Δ {duration})"  # Configurable via UI later
+    slate_text_template: str = "GAP: {start} → {end}  (Δ {duration})"  # Legacy field, replaced by preset system
+
+    # Slate text customization (NEW)
+    slate_label_preset: str = "gap"  # "gap", "nothing_of_interest", "motion_gap", "chronology_gap", "custom"
+    slate_label_custom: str = ""     # Used when preset = "custom"
+    slate_time_format: str = "time_only"  # "time_only", "date_time", "duration_multiline"
 
     # Multi-camera overlap settings (GPT-5 approach)
     split_mode: Literal["side_by_side", "stacked"] = "side_by_side"
@@ -232,3 +237,29 @@ class RenderSettings:
     # Output paths
     output_directory: Path = Path(".")
     output_filename: str = "multicam_timeline.mp4"
+
+
+# Slate label presets (user-facing text options)
+SLATE_LABEL_PRESETS = {
+    "gap": "GAP",
+    "nothing_of_interest": "Nothing of Interest",
+    "motion_gap": "Motion Gap",
+    "chronology_gap": "Gap in Chronology",
+    "custom": "[Custom]"  # Placeholder, uses slate_label_custom field
+}
+
+# Time format display styles for slate text
+SLATE_TIME_FORMATS = {
+    "time_only": {
+        "name": "HH:MM:SS only",
+        "example": "19:35:00 to 19:40:15\nDuration: 5m 15s"
+    },
+    "date_time": {
+        "name": "Full Date & Time",
+        "example": "Tue 21 May 19:35:00 → Tue 21 May 19:40:15  (Δ 5m 15s)"
+    },
+    "duration_multiline": {
+        "name": "Multiline Duration",
+        "example": "19:35:00 to 19:40:15\nTotal Duration = 5 min 15 sec"
+    }
+}

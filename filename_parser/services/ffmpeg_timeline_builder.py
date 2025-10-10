@@ -390,8 +390,13 @@ class FFmpegTimelineBuilder:
                             f"t0={t0:.2f}s, gap_start={gap_start_dt.isoformat()}"
                         )
 
-                        # Format as readable text
-                        text = f"GAP: {self._fmt_iso_time(gap_start_dt.isoformat())} → {self._fmt_iso_time(gap_end_dt.isoformat())}  (Δ {self._fmt_dur(t1 - t0)})"
+                        # Format slate text using user-configured template
+                        text = self._format_slate_text(
+                            gap_start_dt=gap_start_dt,
+                            gap_end_dt=gap_end_dt,
+                            duration_seconds=(t1 - t0),
+                            settings=settings
+                        )
                     else:
                         # Fallback for relative timelines (no absolute time available)
                         text = f"GAP: {self._fmt_hms(t0)} → {self._fmt_hms(t1)}  (Δ {self._fmt_dur(t1 - t0)})"
@@ -685,6 +690,44 @@ class FFmpegTimelineBuilder:
         parts.append(f"{s}s")
         return " ".join(parts)
 
+    def _fmt_dur_expanded(self, d: float) -> str:
+        """
+        Format duration as expanded human-readable text.
+
+        Examples:
+            - 75 seconds → "1 min 15 sec"
+            - 3665 seconds → "1 hr 1 min 5 sec"
+            - 90 seconds → "1 min 30 sec"
+
+        Args:
+            d: Duration in seconds
+
+        Returns:
+            Formatted duration string
+        """
+        d = max(0, int(round(d)))
+        h = d // 3600
+        m = (d % 3600) // 60
+        s = d % 60
+
+        parts = []
+        if h == 1:
+            parts.append("1 hr")
+        elif h > 1:
+            parts.append(f"{h} hrs")
+
+        if m == 1:
+            parts.append("1 min")
+        elif m > 1 or (h and s):
+            parts.append(f"{m} min")
+
+        if s == 1:
+            parts.append("1 sec")
+        elif s > 1 or (not h and not m):
+            parts.append(f"{s} sec")
+
+        return " ".join(parts)
+
     def _fmt_iso_time(self, iso_string: str) -> str:
         """
         Format ISO8601 string to readable slate text.
@@ -702,6 +745,64 @@ class FFmpegTimelineBuilder:
         except Exception as e:
             self.logger.warning(f"Error formatting ISO time '{iso_string}': {e}")
             return iso_string  # Fallback to raw string
+
+    def _format_slate_text(
+        self,
+        gap_start_dt: datetime,
+        gap_end_dt: datetime,
+        duration_seconds: float,
+        settings: RenderSettings
+    ) -> str:
+        """
+        Format gap slate text using user-configured templates.
+
+        Args:
+            gap_start_dt: Gap start datetime
+            gap_end_dt: Gap end datetime
+            duration_seconds: Duration in seconds
+            settings: Render settings with slate customization
+
+        Returns:
+            Formatted slate text string
+        """
+        from filename_parser.models.timeline_models import SLATE_LABEL_PRESETS
+
+        # Determine label text
+        if settings.slate_label_preset == "custom":
+            label = settings.slate_label_custom if settings.slate_label_custom else "GAP"
+        else:
+            label = SLATE_LABEL_PRESETS.get(settings.slate_label_preset, "GAP")
+
+        # Format times based on selected format
+        if settings.slate_time_format == "time_only":
+            # HH:MM:SS only
+            start_str = gap_start_dt.strftime("%H:%M:%S")
+            end_str = gap_end_dt.strftime("%H:%M:%S")
+            duration_str = self._fmt_dur(duration_seconds)
+            text = f"{label} from {start_str} to {end_str}\nDuration: {duration_str}"
+
+        elif settings.slate_time_format == "date_time":
+            # Full date & time (current behavior)
+            start_str = self._fmt_iso_time(gap_start_dt.isoformat())
+            end_str = self._fmt_iso_time(gap_end_dt.isoformat())
+            duration_str = self._fmt_dur(duration_seconds)
+            text = f"{label}: {start_str} → {end_str}  (Δ {duration_str})"
+
+        elif settings.slate_time_format == "duration_multiline":
+            # Multiline with expanded duration format
+            start_str = gap_start_dt.strftime("%H:%M:%S")
+            end_str = gap_end_dt.strftime("%H:%M:%S")
+            duration_str = self._fmt_dur_expanded(duration_seconds)
+            text = f"{label} from {start_str} to {end_str}\nTotal Duration = {duration_str}"
+
+        else:
+            # Fallback to original format
+            start_str = self._fmt_iso_time(gap_start_dt.isoformat())
+            end_str = self._fmt_iso_time(gap_end_dt.isoformat())
+            duration_str = self._fmt_dur(duration_seconds)
+            text = f"{label}: {start_str} → {end_str}  (Δ {duration_str})"
+
+        return text
 
     def _escape_drawtext(self, s: str) -> str:
         """Escape text for FFmpeg drawtext filter."""

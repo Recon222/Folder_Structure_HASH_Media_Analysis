@@ -15,8 +15,8 @@ from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QGroupBox, QCheckBox, QFileDialog, QProgressBar, QSplitter,
-    QComboBox, QSpinBox, QRadioButton, QGridLayout, QListWidget,
-    QListWidgetItem, QScrollArea, QTextEdit, QButtonGroup, QSizePolicy,
+    QComboBox, QSpinBox, QRadioButton, QGridLayout, QTreeWidget,
+    QTreeWidgetItem, QScrollArea, QTextEdit, QButtonGroup, QSizePolicy,
     QLineEdit, QDoubleSpinBox, QMessageBox, QTabWidget
 )
 from PySide6.QtGui import QFont
@@ -126,12 +126,14 @@ class FilenameParserTab(QWidget):
         button_layout.addStretch()
         layout.addLayout(button_layout)
 
-        # File list widget
-        self.file_list = QListWidget()
-        self.file_list.setSelectionMode(QListWidget.ExtendedSelection)
-        self.file_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.file_list.setMinimumHeight(200)
-        layout.addWidget(self.file_list)
+        # File tree widget (hierarchical directory structure)
+        self.file_tree = QTreeWidget()
+        self.file_tree.setHeaderLabels(["Video Files"])
+        self.file_tree.setSelectionMode(QTreeWidget.ExtendedSelection)
+        self.file_tree.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.file_tree.setMinimumHeight(200)
+        self.file_tree.setAlternatingRowColors(True)
+        layout.addWidget(self.file_tree)
 
         # File count label
         self.file_count_label = QLabel("No files selected")
@@ -675,6 +677,71 @@ class FilenameParserTab(QWidget):
 
         layout.addWidget(params_group)
 
+        # Slate Appearance Group
+        slate_group = QGroupBox("🎨 Slate Appearance")
+        slate_layout = QGridLayout(slate_group)
+        slate_layout.setColumnStretch(1, 1)  # Make second column expandable
+
+        # Row 0: Slate Label Preset
+        slate_layout.addWidget(QLabel("Slate Label:"), 0, 0)
+        self.slate_label_combo = QComboBox()
+        self.slate_label_combo.addItem("GAP", "gap")
+        self.slate_label_combo.addItem("Nothing of Interest", "nothing_of_interest")
+        self.slate_label_combo.addItem("Motion Gap", "motion_gap")
+        self.slate_label_combo.addItem("Gap in Chronology", "chronology_gap")
+        self.slate_label_combo.addItem("Custom...", "custom")
+        self.slate_label_combo.setToolTip(
+            "<b>Choose the text label displayed on gap slates.</b><br><br>"
+            "Select 'Custom...' to enter your own text."
+        )
+        self.slate_label_combo.currentIndexChanged.connect(self._toggle_custom_slate_label)
+        slate_layout.addWidget(self.slate_label_combo, 0, 1)
+
+        # Row 1: Custom Slate Label Input (hidden by default)
+        slate_layout.addWidget(QLabel("Custom Label:"), 1, 0)
+        self.slate_label_custom_input = QLineEdit()
+        self.slate_label_custom_input.setPlaceholderText("Enter custom label text...")
+        self.slate_label_custom_input.setEnabled(False)
+        self.slate_label_custom_input.setMaxLength(50)
+        self.slate_label_custom_input.setToolTip(
+            "Enter your custom slate label text.<br>"
+            "Example: 'No Activity', 'Coverage Gap', etc.<br>"
+            "Maximum 50 characters."
+        )
+        slate_layout.addWidget(self.slate_label_custom_input, 1, 1)
+
+        # Row 2: Time Format
+        slate_layout.addWidget(QLabel("Time Format:"), 2, 0)
+        self.slate_time_format_combo = QComboBox()
+        self.slate_time_format_combo.addItem("HH:MM:SS only", "time_only")
+        self.slate_time_format_combo.addItem("Full Date & Time", "date_time")
+        self.slate_time_format_combo.addItem("Multiline Duration", "duration_multiline")
+        self.slate_time_format_combo.setToolTip(
+            "<b>Choose how times are displayed on gap slates.</b><br><br>"
+            "<b>HH:MM:SS only:</b><br>"
+            "19:35:00 to 19:40:15<br>"
+            "Duration: 5m 15s<br><br>"
+            "<b>Full Date & Time:</b><br>"
+            "Tue 21 May 19:35:00 → Tue 21 May 19:40:15  (Δ 5m 15s)<br><br>"
+            "<b>Multiline Duration:</b><br>"
+            "19:35:00 to 19:40:15<br>"
+            "Total Duration = 5 min 15 sec"
+        )
+        slate_layout.addWidget(self.slate_time_format_combo, 2, 1)
+
+        # Row 3: Preview info
+        slate_preview_label = QLabel(
+            "ℹ️  Preview updates when rendering starts"
+        )
+        slate_preview_label.setWordWrap(True)
+        slate_preview_label.setStyleSheet(
+            "color: #6c757d; font-size: 10px; padding: 4px 8px; "
+            "background-color: #f8f9fa; border-radius: 3px; margin-top: 4px;"
+        )
+        slate_layout.addWidget(slate_preview_label, 3, 0, 1, 2)
+
+        layout.addWidget(slate_group)
+
         # Performance Settings Group (Three-Tier System)
         perf_group = QGroupBox("⚡ Performance Settings")
         perf_layout = QVBoxLayout(perf_group)
@@ -782,9 +849,9 @@ class FilenameParserTab(QWidget):
                 path = Path(file_path)
                 if path not in self.selected_files:
                     self.selected_files.append(path)
-                    self.file_list.addItem(f"🎥 {path.name}")
                     added += 1
 
+            self._rebuild_file_tree()
             self._update_file_list()
             self._log("INFO", f"Added {added} file(s)")
 
@@ -804,19 +871,87 @@ class FilenameParserTab(QWidget):
                 if file_path.is_file() and file_path.suffix.lower() in video_extensions:
                     if file_path not in self.selected_files:
                         self.selected_files.append(file_path)
-                        self.file_list.addItem(f"🎥 {file_path.name}")
                         added += 1
 
+            self._rebuild_file_tree()
             self._update_file_list()
             self._log("INFO", f"Added {added} file(s) from folder")
 
     def _clear_files(self):
         """Clear all selected files"""
         self.selected_files.clear()
-        self.file_list.clear()
+        self.file_tree.clear()
         self._update_file_list()
         self.stats_group.setVisible(False)
         self._log("INFO", "File list cleared")
+
+    def _rebuild_file_tree(self):
+        """Rebuild file tree from selected_files with hierarchical folder structure"""
+        self.file_tree.clear()
+
+        if not self.selected_files:
+            return
+
+        # Find common root path
+        if len(self.selected_files) == 1:
+            common_root = self.selected_files[0].parent
+        else:
+            # Find common ancestor
+            all_parts = [list(f.parents)[::-1] for f in self.selected_files]
+            common_root = None
+            for parts in zip(*all_parts):
+                if len(set(parts)) == 1:
+                    common_root = parts[0]
+                else:
+                    break
+
+        if common_root is None:
+            common_root = Path("/")
+
+        # Build folder hierarchy
+        folder_items = {}  # Path -> QTreeWidgetItem
+
+        for file_path in sorted(self.selected_files):
+            # Get relative path from common root
+            try:
+                rel_path = file_path.relative_to(common_root)
+            except ValueError:
+                # File not under common root, use full path
+                rel_path = file_path
+
+            # Create folder items for all parent directories
+            current_parent = None
+            for i, part in enumerate(rel_path.parts[:-1]):
+                # Build path up to this level
+                partial_path = common_root / Path(*rel_path.parts[:i+1])
+
+                if partial_path not in folder_items:
+                    # Create folder item
+                    folder_item = QTreeWidgetItem()
+                    folder_item.setText(0, f"📁 {part}")
+                    folder_item.setData(0, Qt.UserRole, str(partial_path))
+
+                    if current_parent is None:
+                        self.file_tree.addTopLevelItem(folder_item)
+                    else:
+                        current_parent.addChild(folder_item)
+
+                    folder_items[partial_path] = folder_item
+
+                current_parent = folder_items[partial_path]
+
+            # Add file item
+            file_item = QTreeWidgetItem()
+            file_item.setText(0, f"🎥 {file_path.name}")
+            file_item.setData(0, Qt.UserRole, str(file_path))
+
+            if current_parent is None:
+                self.file_tree.addTopLevelItem(file_item)
+            else:
+                current_parent.addChild(file_item)
+
+        # Expand all folders by default
+        self.file_tree.expandAll()
 
     def _update_file_list(self):
         """Update file count label and button states"""
@@ -870,6 +1005,16 @@ class FilenameParserTab(QWidget):
         """Toggle base directory controls"""
         self.base_dir_input.setEnabled(checked)
         self.browse_btn.setEnabled(checked)
+
+    def _toggle_custom_slate_label(self, index):
+        """Toggle custom slate label input based on dropdown selection"""
+        selected_data = self.slate_label_combo.currentData()
+        is_custom = (selected_data == "custom")
+        self.slate_label_custom_input.setEnabled(is_custom)
+
+        # Auto-focus the input when custom is selected
+        if is_custom:
+            self.slate_label_custom_input.setFocus()
 
     def _browse_base_directory(self):
         """Browse for base output directory"""
@@ -1353,12 +1498,15 @@ class FilenameParserTab(QWidget):
             else:
                 resolution = (1920, 1080)
 
-            # Build RenderSettings (including performance settings)
+            # Build RenderSettings (including performance settings and slate customization)
             self.timeline_settings = RenderSettings(
                 output_resolution=resolution,
                 output_fps=self.timeline_fps_spin.value(),
                 output_directory=Path(output_dir),
                 output_filename=self.timeline_filename_input.text(),
+                slate_label_preset=self.slate_label_combo.currentData(),
+                slate_label_custom=self.slate_label_custom_input.text(),
+                slate_time_format=self.slate_time_format_combo.currentData(),
                 use_hardware_decode=self.timeline_hwdecode_check.isChecked(),
                 use_batch_rendering=self.timeline_batch_check.isChecked(),
                 keep_batch_temp_files=self.timeline_keep_temp_check.isChecked()
