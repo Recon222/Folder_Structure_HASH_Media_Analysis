@@ -384,6 +384,12 @@ class FFmpegTimelineBuilder:
                         gap_start_dt = earliest_dt + timedelta(seconds=t0)
                         gap_end_dt = earliest_dt + timedelta(seconds=t1)
 
+                        # Debug logging to verify correct dates
+                        self.logger.debug(
+                            f"Gap slate calculation: earliest_dt={earliest_dt.isoformat()}, "
+                            f"t0={t0:.2f}s, gap_start={gap_start_dt.isoformat()}"
+                        )
+
                         # Format as readable text
                         text = f"GAP: {self._fmt_iso_time(gap_start_dt.isoformat())} → {self._fmt_iso_time(gap_end_dt.isoformat())}  (Δ {self._fmt_dur(t1 - t0)})"
                     else:

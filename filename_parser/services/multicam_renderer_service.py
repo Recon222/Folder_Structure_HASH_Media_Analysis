@@ -260,7 +260,11 @@ class MulticamRendererService:
                         batch_size=settings.batch_size
                     )
 
-                    result = self._render_single_pass(batch_clips, batch_settings, None)
+                    # Convert _NClip objects back to Clip objects with ISO8601 strings
+                    # This preserves the original timestamps and prevents slate date bugs
+                    batch_clips_converted = self._nclips_to_clips(batch_clips)
+
+                    result = self._render_single_pass(batch_clips_converted, batch_settings, None)
                     if not result.success:
                         self.logger.error(f"Batch {i} failed: {result.error}")
                         return result
@@ -520,4 +524,46 @@ class MulticamRendererService:
             clips.append(clip)
 
         self.logger.info(f"Converted {len(clips)} videos to clips for timeline builder")
+        return clips
+
+    def _nclips_to_clips(self, nclips: List) -> List[Clip]:
+        """
+        Convert normalized _NClip objects back to Clip objects for rendering.
+
+        This is needed for batch rendering where clips are normalized for splitting,
+        then need to be converted back to Clip objects with ISO8601 strings for
+        the rendering pipeline.
+
+        Args:
+            nclips: List of _NClip objects (from timeline builder internals)
+
+        Returns:
+            List of Clip objects with ISO8601 start/end times
+
+        Note:
+            Uses preserved start_iso/end_iso fields from _NClip to restore
+            original ISO8601 timestamps, preventing slate date bugs.
+        """
+        from filename_parser.services.ffmpeg_timeline_builder import Clip
+
+        clips = []
+        for nc in nclips:
+            # Use preserved ISO8601 strings if available, fall back to normalized floats
+            clip = Clip(
+                path=nc.path,
+                start=nc.start_iso if nc.start_iso else nc.start,
+                end=nc.end_iso if nc.end_iso else nc.end,
+                cam_id=nc.cam_id
+            )
+            clips.append(clip)
+
+            # Debug logging to verify conversion
+            self.logger.debug(
+                f"Converted _NClip → Clip: {nc.path.name}, "
+                f"start={nc.start:.2f}s (normalized) → {clip.start} (ISO8601 or float)"
+            )
+
+        self.logger.info(
+            f"Converted {len(clips)} _NClip objects back to Clip objects for rendering"
+        )
         return clips
