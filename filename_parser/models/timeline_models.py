@@ -63,6 +63,11 @@ class VideoMetadata:
     end_frame: int = 0       # End position on timeline (sequence frames)
     duration_seq: int = 0    # Duration in sequence frames
 
+    # Frame-accurate timing and diagnostics (NEW for CCTV SMPTE integration)
+    first_frame_pts: float = 0.0              # Sub-second offset (e.g., 0.333333)
+    first_frame_type: Optional[str] = None    # "I", "P", or "B" frame type
+    first_frame_is_keyframe: bool = False     # Closed GOP indicator (True if I-frame)
+
 
 @dataclass
 class TimelinePosition:

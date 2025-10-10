@@ -63,6 +63,11 @@ class ProcessingResult:
     pixel_format: str = ""
     video_bitrate: int = 0
 
+    # Frame-accurate timing fields (CCTV SMPTE integration)
+    first_frame_pts: float = 0.0              # Sub-second offset (e.g., 0.297222)
+    first_frame_type: Optional[str] = None    # "I", "P", or "B" frame type
+    first_frame_is_keyframe: bool = False     # Closed GOP indicator
+
     # Conversion information
     format_converted: bool = False
     format_conversion_reason: Optional[str] = None
@@ -113,6 +118,10 @@ class ProcessingResult:
             "codec": self.codec,
             "pixel_format": self.pixel_format,
             "video_bitrate": self.video_bitrate,
+            # Frame-accurate timing fields
+            "first_frame_pts": self.first_frame_pts,
+            "first_frame_type": self.first_frame_type,
+            "first_frame_is_keyframe": self.first_frame_is_keyframe,
             # Conversion info
             "format_converted": self.format_converted,
             "format_conversion_reason": self.format_conversion_reason,

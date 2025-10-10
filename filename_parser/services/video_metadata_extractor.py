@@ -47,6 +47,11 @@ class VideoProbeData:
     duration_ts: Optional[int] = None
     nb_frames: Optional[int] = None
 
+    # Frame-accurate timing (NEW for CCTV SMPTE integration)
+    first_frame_pts: float = 0.0  # Sub-second offset of first frame (e.g., 0.333333)
+    first_frame_type: Optional[str] = None  # "I", "P", or "B" frame type
+    first_frame_is_keyframe: bool = False  # True if I-frame (closed GOP)
+
     # Container info
     format_name: str = ""
     format_long_name: str = ""
@@ -99,7 +104,7 @@ class VideoMetadataExtractor:
             )
 
         try:
-            # Comprehensive ffprobe command - get both format and stream data
+            # Comprehensive ffprobe command - get format, stream, AND first frame data
             cmd = [
                 ffprobe_path,
                 "-v", "error",
@@ -107,6 +112,8 @@ class VideoMetadataExtractor:
                 "-analyzeduration", "100M",
                 "-show_format",                # Container-level info
                 "-show_streams",               # Stream-level info
+                "-show_frames",                # Frame-level info (NEW for PTS extraction)
+                "-read_intervals", "%+#1",     # Read ONLY first frame (fast!)
                 "-select_streams", "v:0",      # First video stream only
                 "-of", "json",                 # JSON output
                 str(file_path)
@@ -180,6 +187,9 @@ class VideoMetadataExtractor:
             except (ValueError, TypeError):
                 nb_frames = None
 
+        # Extract first frame data (NEW for frame-accurate timing)
+        first_frame_pts, first_frame_type, first_frame_is_keyframe = self._extract_first_frame_data(data)
+
         # Extract container info
         format_name = fmt.get("format_name", "")
         format_long_name = fmt.get("format_long_name", "")
@@ -207,6 +217,9 @@ class VideoMetadataExtractor:
             start_pts=start_pts,
             duration_ts=duration_ts,
             nb_frames=nb_frames,
+            first_frame_pts=first_frame_pts,
+            first_frame_type=first_frame_type,
+            first_frame_is_keyframe=first_frame_is_keyframe,
             format_name=format_name,
             format_long_name=format_long_name,
             bit_rate=bit_rate,
@@ -308,6 +321,56 @@ class VideoMetadataExtractor:
                 return Fraction(int(rational_str), 1)
         except (ValueError, ZeroDivisionError):
             return None
+
+    def _extract_first_frame_data(self, data: Dict[str, Any]) -> tuple[float, Optional[str], bool]:
+        """
+        Extract first frame PTS, type, and keyframe flag for frame-accurate timing.
+
+        Args:
+            data: FFprobe JSON output containing frames data
+
+        Returns:
+            Tuple of (first_frame_pts, frame_type, is_keyframe)
+            - first_frame_pts: Sub-second offset in seconds (e.g., 0.297222)
+            - frame_type: "I", "P", or "B" (or None if not available)
+            - is_keyframe: True if first frame is a keyframe (closed GOP)
+        """
+        frames = data.get("frames", [])
+
+        if not frames:
+            # No frame data - return defaults (fallback to current behavior)
+            return 0.0, None, False
+
+        first_frame = frames[0]
+
+        # Extract PTS time (already in seconds)
+        # Note: FFprobe returns "pts_time" not "pkt_pts_time" in frame data
+        pts_time = first_frame.get("pts_time")
+        if pts_time is not None:
+            try:
+                raw_pts = float(pts_time)
+
+                # CRITICAL: Extract only sub-second offset using modulo
+                # CCTV cameras often have PTS starting from boot time (e.g., 71723.297222s)
+                # We only need the fractional part for frame-accurate timing
+                # Example: 71723.297222 % 1.0 = 0.297222 (frame 9 @ 30fps)
+                first_frame_pts = raw_pts % 1.0
+
+                self.logger.debug(
+                    f"First frame PTS: raw={raw_pts:.6f}s, sub-second offset={first_frame_pts:.6f}s"
+                )
+            except (ValueError, TypeError):
+                first_frame_pts = 0.0
+        else:
+            first_frame_pts = 0.0
+
+        # Extract frame type (I/P/B)
+        frame_type = first_frame.get("pict_type")  # "I", "P", or "B"
+
+        # Extract keyframe flag
+        is_keyframe = (first_frame.get("key_frame") == 1)
+
+        return first_frame_pts, frame_type, is_keyframe
 
     def _error_result(self, file_path: Path, error_message: str) -> VideoProbeData:
         """Create error result."""

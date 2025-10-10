@@ -69,6 +69,12 @@ class CSVExportService:
                         "end_time_iso",
                         "duration_seconds",
                         "frame_rate",
+                        # Frame-accurate timing fields (NEW)
+                        "first_frame_pts",
+                        "start_frame_number",
+                        "first_frame_type",
+                        "first_frame_is_keyframe",
+                        # Video specs
                         "resolution",
                         "codec",
                         "pixel_format",
@@ -99,6 +105,11 @@ class CSVExportService:
                         height = result.get("height", 0)
                         resolution = f"{width}x{height}" if width and height else "N/A"
 
+                        # Calculate start frame number from PTS
+                        first_frame_pts = result.get("first_frame_pts", 0.0)
+                        frame_rate = result.get("frame_rate", 30.0)
+                        start_frame_number = int(round(first_frame_pts * frame_rate))
+
                         row.update(
                             {
                                 "filename": result.get("filename", ""),
@@ -106,7 +117,13 @@ class CSVExportService:
                                 "start_time_iso": result.get("start_time_iso", "N/A"),
                                 "end_time_iso": result.get("end_time_iso", "N/A"),
                                 "duration_seconds": f"{result.get('duration_seconds', 0):.2f}",
-                                "frame_rate": f"{result.get('frame_rate', 0):.2f}",
+                                "frame_rate": f"{frame_rate:.2f}",
+                                # Frame-accurate timing fields
+                                "first_frame_pts": f"{first_frame_pts:.6f}",
+                                "start_frame_number": start_frame_number,
+                                "first_frame_type": result.get("first_frame_type", "N/A"),
+                                "first_frame_is_keyframe": result.get("first_frame_is_keyframe", False),
+                                # Video specs
                                 "resolution": resolution,
                                 "codec": result.get("codec", "N/A"),
                                 "pixel_format": result.get("pixel_format", "N/A"),

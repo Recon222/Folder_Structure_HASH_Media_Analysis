@@ -484,75 +484,45 @@ class FrameRateService(BaseService, IFrameRateService):
             )
 
         try:
-            # Single FFprobe call for all metadata (efficient)
-            cmd = [
-                binary_manager.get_ffprobe_path(),
-                "-v", "error",
-                "-show_entries",
-                "stream=codec_name,codec_type,width,height,r_frame_rate,pix_fmt,profile,bit_rate,sample_rate,channels",
-                "-show_entries", "format=duration",
-                "-of", "json",
-                str(file_path)
-            ]
+            # Use VideoMetadataExtractor for comprehensive metadata extraction
+            # This includes first frame PTS for frame-accurate timing
+            extractor = VideoMetadataExtractor()
+            probe_data = extractor.extract_metadata(file_path)
 
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                check=True,
-                timeout=10  # 10 second timeout
-            )
-
-            data = json.loads(result.stdout)
-
-            # Parse video stream
-            video_stream = next(
-                (s for s in data.get("streams", []) if s.get("codec_type") == "video"),
-                None
-            )
-            if not video_stream:
+            if not probe_data.success:
                 return Result.error(
                     FileOperationError(
-                        f"No video stream found in {file_path.name}",
-                        user_message=f"Could not find video stream in {file_path.name}",
+                        probe_data.error_message,
+                        user_message=f"Could not extract metadata from {file_path.name}",
                         context={"file_path": str(file_path)}
                     )
                 )
 
-            # Parse audio stream (optional)
-            audio_stream = next(
-                (s for s in data.get("streams", []) if s.get("codec_type") == "audio"),
-                None
-            )
+            # Calculate duration in frames
+            duration_frames = int(probe_data.duration_seconds * probe_data.frame_rate)
 
-            # Calculate frame rate
-            r_frame_rate = video_stream.get("r_frame_rate", "30/1")
-            fps = self._parse_frame_rate_fraction(r_frame_rate)
-            if fps is None:
-                fps = self.DEFAULT_FRAME_RATE
-
-            # Calculate duration
-            duration_seconds = float(data.get("format", {}).get("duration", 0))
-            duration_frames = int(duration_seconds * fps)
-
-            # Build VideoMetadata
+            # Build VideoMetadata with frame-accurate timing fields
             metadata = VideoMetadata(
                 file_path=file_path,
                 filename=file_path.name,
                 smpte_timecode=smpte_timecode,
-                frame_rate=fps,
-                duration_seconds=duration_seconds,
+                frame_rate=probe_data.frame_rate,
+                duration_seconds=probe_data.duration_seconds,
                 duration_frames=duration_frames,
-                width=int(video_stream.get("width", 1920)),
-                height=int(video_stream.get("height", 1080)),
-                codec=video_stream.get("codec_name", "h264"),
-                pixel_format=video_stream.get("pix_fmt", "yuv420p"),
-                video_bitrate=int(video_stream.get("bit_rate", 5000000)),
-                video_profile=video_stream.get("profile"),
-                audio_codec=audio_stream.get("codec_name") if audio_stream else None,
-                audio_bitrate=int(audio_stream.get("bit_rate", 128000)) if audio_stream else None,
-                sample_rate=int(audio_stream.get("sample_rate", 48000)) if audio_stream else None,
-                camera_path=camera_path
+                width=probe_data.width,
+                height=probe_data.height,
+                codec=probe_data.codec_name,
+                pixel_format=probe_data.pixel_format,
+                video_bitrate=probe_data.bit_rate or 5000000,
+                video_profile=None,  # Not currently extracted
+                audio_codec=None,    # Audio extraction not in VideoMetadataExtractor yet
+                audio_bitrate=None,
+                sample_rate=None,
+                camera_path=camera_path,
+                # NEW: Frame-accurate timing fields
+                first_frame_pts=probe_data.first_frame_pts,
+                first_frame_type=probe_data.first_frame_type,
+                first_frame_is_keyframe=probe_data.first_frame_is_keyframe
             )
 
             return Result.success(metadata)

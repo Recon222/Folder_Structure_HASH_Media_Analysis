@@ -119,12 +119,25 @@ class TimelineController:
                 date_tuple = (year, month, day)
                 logger.info(f"{file_path.name}: Using extracted date {year}-{month:02d}-{day:02d}")
 
-            start_iso = self._smpte_to_iso8601(smpte_timecode, metadata.frame_rate, date_tuple)
-            end_iso = self._calculate_end_time_iso(start_iso, metadata.duration_seconds)
+            # Convert SMPTE to ISO8601 with frame-accurate PTS offset
+            start_iso = self._smpte_to_iso8601(
+                smpte_timecode,
+                metadata.frame_rate,
+                date_tuple,
+                first_frame_pts=metadata.first_frame_pts
+            )
 
-            # Update metadata with calculated times
-            metadata.start_time = start_iso
-            metadata.end_time = end_iso
+            # Handle None dates (relative timeline mode)
+            if start_iso is None:
+                # No date available - use relative timeline mode
+                metadata.start_time = None
+                metadata.end_time = None
+                logger.info(f"{file_path.name}: No date available, using relative timeline mode")
+            else:
+                # Calculate end time from frame-accurate start time
+                end_iso = self._calculate_end_time_iso(start_iso, metadata.duration_seconds)
+                metadata.start_time = start_iso
+                metadata.end_time = end_iso
 
             video_metadata_list.append(metadata)
 
@@ -246,55 +259,52 @@ class TimelineController:
         self,
         smpte_timecode: str,
         fps: float,
-        date_components: Optional[tuple[int, int, int]] = None
-    ) -> str:
+        date_components: Optional[tuple[int, int, int]] = None,
+        first_frame_pts: float = 0.0
+    ) -> Optional[str]:
         """
-        Convert SMPTE timecode to ISO8601 string.
+        Convert SMPTE timecode to ISO8601 string with frame-accurate PTS offset.
 
         Args:
             smpte_timecode: SMPTE format (HH:MM:SS:FF)
             fps: Frame rate for frame-to-second conversion
             date_components: Optional (year, month, day) tuple from filename parsing
+            first_frame_pts: Sub-second offset of first frame (e.g., 0.333333 for frame 10 @ 30fps)
 
         Returns:
-            ISO8601 string (e.g., "2025-05-21T14:30:25.500")
+            ISO8601 string (e.g., "2025-05-21T14:30:25.333") or None if no date available
 
         Note:
-            If date_components not provided, falls back to system date with warning.
+            Returns None if date_components not provided (signals relative timeline mode).
+            No system date fallback - better to be honest about missing data.
         """
         try:
             parts = smpte_timecode.split(":")
             if len(parts) != 4:
-                logger.warning(f"Invalid SMPTE format: {smpte_timecode}, using as-is")
-                return smpte_timecode
+                logger.warning(f"Invalid SMPTE format: {smpte_timecode}")
+                return None
 
             hours, minutes, seconds, frames = map(int, parts)
 
-            # Convert frames to decimal seconds
-            frame_seconds = frames / fps
-
-            # Create datetime using extracted date or system date fallback
-            if date_components:
-                year, month, day = date_components
-                dt = datetime(year, month, day, hours, minutes, seconds)
-                logger.debug(f"Using extracted date: {year}-{month:02d}-{day:02d}")
-            else:
-                # Fallback for files without date (legacy support)
-                today = datetime.now().date()
-                dt = datetime.combine(today, datetime.min.time())
-                dt = dt.replace(hour=hours, minute=minutes, second=seconds)
-                logger.warning(
-                    f"No date extracted from filename, using system date: {today} "
-                    f"(this may be incorrect for forensic analysis)"
+            # Require date for absolute timeline mode
+            if not date_components:
+                logger.info(
+                    f"No date found in filename. Timeline will use relative time mode. "
+                    f"For forensic accuracy, use date-aware filenames (YYYYMMDD_HHMMSS format)."
                 )
+                return None
 
-            dt = dt + timedelta(seconds=frame_seconds)
+            year, month, day = date_components
+            dt = datetime(year, month, day, hours, minutes, seconds)
+
+            # Add first frame PTS offset for frame-accurate start time
+            dt = dt + timedelta(seconds=first_frame_pts)
 
             return dt.isoformat()
 
         except Exception as e:
             logger.warning(f"Error converting SMPTE {smpte_timecode}: {e}")
-            return smpte_timecode
+            return None
 
     def _calculate_end_time_iso(self, start_iso: str, duration_seconds: float) -> str:
         """

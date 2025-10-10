@@ -279,11 +279,23 @@ class BatchProcessorService(BaseService, IBatchProcessorService):
                     f"{parsed.time_data.month:02d}-{parsed.time_data.day:02d}"
                 )
 
-            # Step 4: Calculate timeline timestamps (ISO8601)
-            start_time_iso = self._smpte_to_iso8601(parsed.smpte_timecode, fps, date_tuple)
+            # Step 4: Calculate timeline timestamps (ISO8601) with frame-accurate PTS
+            start_time_iso = self._smpte_to_iso8601(
+                parsed.smpte_timecode,
+                fps,
+                date_tuple,
+                first_frame_pts=video_probe_data.first_frame_pts
+            )
             end_time_iso = self._calculate_end_time_iso(start_time_iso, video_probe_data.duration_seconds)
 
-            # Step 4: Extract camera ID
+            # Step 4b: Recalculate SMPTE timecode with frame-accurate PTS offset
+            frame_accurate_smpte = self._add_pts_to_smpte(
+                parsed.smpte_timecode,
+                video_probe_data.first_frame_pts,
+                fps
+            )
+
+            # Step 5: Extract camera ID
             camera_id = self._extract_camera_id(file_path)
 
             # Step 5: Write metadata (ONLY if write_metadata is True)
@@ -333,7 +345,7 @@ class BatchProcessorService(BaseService, IBatchProcessorService):
                 output_file=str(output_path),
                 frame_rate=fps,
                 parsed_time=parsed.time_data.time_string,
-                smpte_timecode=parsed.smpte_timecode,
+                smpte_timecode=frame_accurate_smpte,
                 pattern_used=parsed.pattern.name,
                 year=parsed.time_data.year,
                 month=parsed.time_data.month,
@@ -356,6 +368,10 @@ class BatchProcessorService(BaseService, IBatchProcessorService):
                 codec=video_probe_data.codec_name,
                 pixel_format=video_probe_data.pixel_format,
                 video_bitrate=video_probe_data.bit_rate or 0,
+                # Frame-accurate timing fields
+                first_frame_pts=video_probe_data.first_frame_pts,
+                first_frame_type=video_probe_data.first_frame_type,
+                first_frame_is_keyframe=video_probe_data.first_frame_is_keyframe,
             )
 
         except Exception as e:
@@ -454,18 +470,20 @@ class BatchProcessorService(BaseService, IBatchProcessorService):
         self,
         smpte_timecode: str,
         fps: float,
-        date_components: Optional[tuple[int, int, int]] = None
+        date_components: Optional[tuple[int, int, int]] = None,
+        first_frame_pts: float = 0.0
     ) -> str:
         """
-        Convert SMPTE timecode to ISO8601 string.
+        Convert SMPTE timecode to ISO8601 string with frame-accurate PTS offset.
 
         Args:
             smpte_timecode: SMPTE format (HH:MM:SS:FF)
             fps: Frame rate for frame-to-second conversion
             date_components: Optional (year, month, day) tuple from filename parsing
+            first_frame_pts: Sub-second offset of first frame (e.g., 0.297222)
 
         Returns:
-            ISO8601 string (e.g., "2025-05-21T14:30:25.500")
+            ISO8601 string (e.g., "2025-05-21T14:30:25.297222")
 
         Note:
             If date_components not provided, falls back to system date with warning.
@@ -477,9 +495,6 @@ class BatchProcessorService(BaseService, IBatchProcessorService):
                 return smpte_timecode
 
             hours, minutes, seconds, frames = map(int, parts)
-
-            # Convert frames to decimal seconds
-            frame_seconds = frames / fps if fps > 0 else 0
 
             # Create datetime using extracted date or system date fallback
             if date_components:
@@ -496,12 +511,66 @@ class BatchProcessorService(BaseService, IBatchProcessorService):
                     f"(this may be incorrect for forensic analysis)"
                 )
 
-            dt = dt + timedelta(seconds=frame_seconds)
+            # Add first frame PTS offset for frame-accurate start time
+            dt = dt + timedelta(seconds=first_frame_pts)
 
             return dt.isoformat()
 
         except Exception as e:
             self.logger.warning(f"Error converting SMPTE {smpte_timecode}: {e}")
+            return smpte_timecode
+
+    def _add_pts_to_smpte(
+        self,
+        smpte_timecode: str,
+        first_frame_pts: float,
+        fps: float
+    ) -> str:
+        """
+        Add PTS offset to SMPTE timecode for frame-accurate display.
+
+        Args:
+            smpte_timecode: Base SMPTE from filename (e.g., "13:45:10:00")
+            first_frame_pts: Sub-second offset (e.g., 0.297222)
+            fps: Frame rate (e.g., 30.0)
+
+        Returns:
+            Frame-accurate SMPTE (e.g., "13:45:10:09")
+        """
+        try:
+            parts = smpte_timecode.split(":")
+            if len(parts) != 4:
+                self.logger.warning(f"Invalid SMPTE format: {smpte_timecode}, using as-is")
+                return smpte_timecode
+
+            hours, minutes, seconds, frames = map(int, parts)
+
+            # Calculate frame offset from PTS
+            frame_offset = int(round(first_frame_pts * fps))
+
+            # Add frame offset
+            total_frames = frames + frame_offset
+
+            # Handle frame overflow (wrap to next second)
+            if total_frames >= fps:
+                extra_seconds = int(total_frames // fps)
+                total_frames = int(total_frames % fps)
+                seconds += extra_seconds
+
+                # Handle second overflow
+                if seconds >= 60:
+                    minutes += seconds // 60
+                    seconds = seconds % 60
+
+                    # Handle minute overflow
+                    if minutes >= 60:
+                        hours += minutes // 60
+                        minutes = minutes % 60
+
+            return f"{hours:02d}:{minutes:02d}:{seconds:02d}:{total_frames:02d}"
+
+        except Exception as e:
+            self.logger.warning(f"Error adding PTS to SMPTE {smpte_timecode}: {e}")
             return smpte_timecode
 
     def _calculate_end_time_iso(self, start_iso: str, duration_seconds: float) -> str:

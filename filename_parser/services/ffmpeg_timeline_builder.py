@@ -39,11 +39,15 @@ class Clip:
 
 @dataclass
 class _NClip:
-    """Normalized clip (internal - times as floats)."""
+    """Normalized clip (internal - times as floats) with preserved ISO8601 strings."""
     path: Path
-    start: float  # seconds from t0
-    end: float
+    start: float  # Normalized seconds from t0
+    end: float    # Normalized seconds from t0
     cam_id: str
+
+    # ISO8601 preservation (NEW - eliminates Unix timestamp bugs)
+    start_iso: Optional[str] = None  # Original ISO8601 string (e.g., "2025-05-21T19:30:45.333")
+    end_iso: Optional[str] = None    # Original ISO8601 string (e.g., "2025-05-21T19:35:12.100")
 
 
 @dataclass
@@ -117,9 +121,9 @@ class FFmpegTimelineBuilder:
             Estimated command line length in characters
         """
         # Normalize clips to get actual segments
-        norm_clips, timeline_t0 = self._normalize_clip_times(clips, absolute=True)
+        norm_clips, earliest_dt = self._normalize_clip_times(clips, absolute=True)
         intervals = self._build_atomic_intervals(norm_clips)
-        segments = self._segments_from_intervals(intervals, settings, timeline_t0)
+        segments = self._segments_from_intervals(intervals, settings, earliest_dt)
 
         # Base command overhead
         ffmpeg_path_len = len(str(binary_manager.get_ffmpeg_path() or "ffmpeg"))
@@ -202,13 +206,13 @@ class FFmpegTimelineBuilder:
             raise ValueError("No clips provided for timeline")
 
         # Step 1: Normalize clip times to seconds from t0
-        norm_clips, timeline_t0 = self._normalize_clip_times(clips, timeline_is_absolute)
+        norm_clips, earliest_dt = self._normalize_clip_times(clips, timeline_is_absolute)
 
         # Step 2: Build atomic intervals
         intervals = self._build_atomic_intervals(norm_clips)
 
-        # Step 3: Create segments from intervals (pass t0 for DVR time conversion in slates)
-        segments = self._segments_from_intervals(intervals, settings, timeline_t0)
+        # Step 3: Create segments from intervals (pass datetime for gap time calculation)
+        segments = self._segments_from_intervals(intervals, settings, earliest_dt)
 
         # Step 4: Emit FFmpeg command (returns argv and filter script path)
         argv, filter_script_path = self._emit_ffmpeg_argv(segments, settings, output_path)
@@ -217,46 +221,86 @@ class FFmpegTimelineBuilder:
 
     # ==================== Time Normalization ====================
 
-    def _normalize_clip_times(self, clips: List[Clip], absolute: bool) -> Tuple[List[_NClip], Optional[float]]:
+    def _normalize_clip_times(self, clips: List[Clip], absolute: bool) -> Tuple[List[_NClip], Optional[datetime]]:
         """
-        Convert clip times to seconds from t0.
+        Convert clip times to seconds from t0, PRESERVING original ISO8601 strings.
 
         Accepts float seconds or ISO8601 strings.
         If absolute=True, rebases all times to earliest start = 0.
 
         Returns:
-            Tuple of (normalized_clips, timeline_t0)
-            - timeline_t0 is the Unix timestamp of the earliest clip (for DVR time conversion)
-            - timeline_t0 is None if absolute=False
+            Tuple of (normalized_clips, earliest_datetime)
+            - earliest_datetime is the datetime object of the earliest clip (NOT Unix timestamp!)
+            - earliest_datetime is None if absolute=False or no ISO8601 times
         """
         parsed = []
 
-        def to_sec(x: Union[float, str]) -> float:
-            if isinstance(x, (int, float)):
-                return float(x)
-            try:
-                return datetime.fromisoformat(x).timestamp()
-            except Exception:
-                raise ValueError(f"Unsupported time format: {x}")
-
         for c in clips:
-            s = to_sec(c.start)
-            e = to_sec(c.end)
-            if e <= s:
-                continue  # Skip invalid clips
-            parsed.append((c.path, s, e, c.cam_id))
+            # Parse times and preserve ISO8601 strings
+            if isinstance(c.start, str) and isinstance(c.end, str):
+                # ISO8601 mode - preserve strings
+                try:
+                    start_dt = datetime.fromisoformat(c.start)
+                    end_dt = datetime.fromisoformat(c.end)
+                    s = start_dt.timestamp()  # Only for ordering/normalization
+                    e = end_dt.timestamp()
+
+                    # Skip invalid clips
+                    if e <= s:
+                        self.logger.warning(f"Invalid clip duration: {c.start} to {c.end}, skipping")
+                        continue
+
+                    parsed.append((c.path, s, e, c.cam_id, c.start, c.end))  # Keep ISO strings
+                except Exception as ex:
+                    self.logger.warning(f"Invalid ISO8601 format: {c.start}, skipping clip: {ex}")
+                    continue
+            else:
+                # Relative time mode (float seconds)
+                s = float(c.start)
+                e = float(c.end)
+
+                # Skip invalid clips
+                if e <= s:
+                    self.logger.warning(f"Invalid clip duration: {s} to {e}, skipping")
+                    continue
+
+                parsed.append((c.path, s, e, c.cam_id, None, None))  # No ISO strings
 
         if not parsed:
             return [], None
 
         if absolute:
             # Rebase to earliest start = 0
-            t0 = min(s for _, s, _, _ in parsed)
-            norm = [_NClip(p, s - t0, e - t0, cam) for p, s, e, cam in parsed]
+            t0 = min(s for _, s, _, _, _, _ in parsed)
+            earliest_dt = datetime.fromtimestamp(t0)  # Datetime object, not Unix timestamp
+
+            # Create normalized clips WITH preserved ISO8601 strings
+            norm = [
+                _NClip(
+                    path=p,
+                    start=s - t0,    # Normalized position
+                    end=e - t0,
+                    cam_id=cam,
+                    start_iso=start_iso,  # Preserved ISO8601
+                    end_iso=end_iso
+                )
+                for p, s, e, cam, start_iso, end_iso in parsed
+            ]
             norm.sort(key=lambda c: (c.start, c.cam_id, str(c.path)))
-            return norm, t0  # Return t0 for DVR time conversion
+            return norm, earliest_dt  # Return datetime, not Unix timestamp
         else:
-            norm = [_NClip(p, s, e, cam) for p, s, e, cam in parsed]
+            # Relative mode
+            norm = [
+                _NClip(
+                    path=p,
+                    start=s,
+                    end=e,
+                    cam_id=cam,
+                    start_iso=start_iso,
+                    end_iso=end_iso
+                )
+                for p, s, e, cam, start_iso, end_iso in parsed
+            ]
             norm.sort(key=lambda c: (c.start, c.cam_id, str(c.path)))
             return norm, None
 
@@ -297,10 +341,10 @@ class FFmpegTimelineBuilder:
         self,
         intervals: List[_Interval],
         settings: RenderSettings,
-        timeline_t0: Optional[float] = None
+        earliest_dt: Optional[datetime] = None
     ) -> List[_Segment]:
         """
-        Convert atomic intervals to renderable segments.
+        Convert atomic intervals to renderable segments with datetime-based gap calculation.
 
         Merges adjacent intervals with identical camera sets.
         Classifies as: GAP (no cameras), SINGLE (1 camera), OVERLAP (2+ cameras).
@@ -308,7 +352,7 @@ class FFmpegTimelineBuilder:
         Args:
             intervals: Atomic intervals with normalized times
             settings: Render settings
-            timeline_t0: Unix timestamp of earliest clip (for DVR time conversion in slates)
+            earliest_dt: Datetime object of earliest clip (NOT Unix timestamp!)
         """
         segments: List[_Segment] = []
 
@@ -333,14 +377,17 @@ class FFmpegTimelineBuilder:
             if not active:
                 # GAP - no cameras
                 if settings.slate_duration_seconds > 0:
-                    # Format slate text with DVR times if available
-                    if timeline_t0 is not None:
-                        # Convert normalized seconds back to Unix timestamps, then format as DVR time
-                        dvr_start = t0 + timeline_t0
-                        dvr_end = t1 + timeline_t0
-                        text = f"GAP: {self._fmt_dvr_time(dvr_start)} → {self._fmt_dvr_time(dvr_end)}  (Δ {self._fmt_dur(t1 - t0)})"
+                    # Format slate text with absolute times if available
+                    if earliest_dt is not None:
+                        # Calculate gap times by adding normalized seconds to earliest datetime
+                        # NO Unix timestamp conversion - direct datetime arithmetic!
+                        gap_start_dt = earliest_dt + timedelta(seconds=t0)
+                        gap_end_dt = earliest_dt + timedelta(seconds=t1)
+
+                        # Format as readable text
+                        text = f"GAP: {self._fmt_iso_time(gap_start_dt.isoformat())} → {self._fmt_iso_time(gap_end_dt.isoformat())}  (Δ {self._fmt_dur(t1 - t0)})"
                     else:
-                        # Fallback for relative timelines (no DVR time available)
+                        # Fallback for relative timelines (no absolute time available)
                         text = f"GAP: {self._fmt_hms(t0)} → {self._fmt_hms(t1)}  (Δ {self._fmt_dur(t1 - t0)})"
 
                     segments.append(_SegSlate(
@@ -632,15 +679,23 @@ class FFmpegTimelineBuilder:
         parts.append(f"{s}s")
         return " ".join(parts)
 
-    def _fmt_dvr_time(self, unix_timestamp: float) -> str:
+    def _fmt_iso_time(self, iso_string: str) -> str:
         """
-        Format Unix timestamp as readable DVR time.
+        Format ISO8601 string to readable slate text.
 
-        Returns format: "Mon 28 Jan 14:30:00" (day, date, month, time)
-        This makes it clear these are wall clock times, not timeline positions.
+        Input: "2025-05-21T19:35:00" or "2025-05-21T19:35:00.333333"
+        Output: "Tue 21 May 19:35:00"
+
+        NO Unix timestamp conversion, NO timezone issues!
+        Replaces _fmt_dvr_time() to eliminate Unix timestamp bugs.
         """
-        dt = datetime.fromtimestamp(unix_timestamp)
-        return dt.strftime("%a %d %b %H:%M:%S")
+        try:
+            dt = datetime.fromisoformat(iso_string)
+            # Format: "Tue 21 May 19:35:00" (day, date, month, time)
+            return dt.strftime("%a %d %b %H:%M:%S")
+        except Exception as e:
+            self.logger.warning(f"Error formatting ISO time '{iso_string}': {e}")
+            return iso_string  # Fallback to raw string
 
     def _escape_drawtext(self, s: str) -> str:
         """Escape text for FFmpeg drawtext filter."""
