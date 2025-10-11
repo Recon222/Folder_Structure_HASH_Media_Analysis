@@ -125,6 +125,13 @@ class MainWindow(QMainWindow):
         # Note: status_message will be connected after status_bar is created
         self.tabs.addTab(self.media_analysis_tab, "Media Analysis")
 
+        # Copy/Hash/Verify modular tab (NEW - replaces old Hashing and Copy & Verify tabs)
+        from copy_hash_verify import CopyHashVerifyMasterTab
+        self.copy_hash_verify_master_tab = CopyHashVerifyMasterTab()
+        self.copy_hash_verify_master_tab.log_message.connect(self.log)
+        # Note: status_message will be connected after status_bar is created
+        self.tabs.addTab(self.copy_hash_verify_master_tab, "🔢 Copy/Hash/Verify")
+
         # Vehicle Tracking tab
         from vehicle_tracking.ui.vehicle_tracking_tab import VehicleTrackingTab
         self.vehicle_tracking_tab = VehicleTrackingTab()
@@ -148,7 +155,10 @@ class MainWindow(QMainWindow):
         
         # Connect media analysis tab status messages
         self.media_analysis_tab.status_message.connect(self.status_bar.showMessage)
-        
+
+        # Connect copy/hash/verify tab status messages
+        self.copy_hash_verify_master_tab.status_message.connect(self.status_bar.showMessage)
+
         # Connect hashing tab status messages
         self.hashing_tab.status_message.connect(self.status_bar.showMessage)
         
@@ -507,7 +517,8 @@ class MainWindow(QMainWindow):
         app_components = {
             'main_window': self,
             'batch_tab': getattr(self, 'batch_tab', None),
-            'hashing_tab': getattr(self, 'hashing_tab', None)
+            'hashing_tab': getattr(self, 'hashing_tab', None),
+            'copy_hash_verify_master_tab': getattr(self, 'copy_hash_verify_master_tab', None)
         }
         
         # Perform complete shutdown sequence

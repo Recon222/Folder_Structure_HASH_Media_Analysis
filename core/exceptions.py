@@ -252,14 +252,41 @@ class ArchiveError(FSAError):
         return "Archive creation failed. Please check available disk space."
 
 
+class HashCalculationError(FSAError):
+    """Hash calculation errors (file reading, permission issues, etc.)"""
+
+    def __init__(self, message: str, file_path: Optional[str] = None,
+                 algorithm: Optional[str] = None, **kwargs):
+        """
+        Initialize hash calculation error
+
+        Args:
+            message: Technical error message
+            file_path: Path to file that couldn't be hashed
+            algorithm: Hash algorithm being used
+            **kwargs: Additional FSAError arguments
+        """
+        context = kwargs.get('context', {})
+        if file_path:
+            context['file_path'] = file_path
+        if algorithm:
+            context['algorithm'] = algorithm
+        kwargs['context'] = context
+
+        super().__init__(message, **kwargs)
+
+    def _generate_user_message(self) -> str:
+        return "Failed to calculate file hash. Check file access permissions."
+
+
 class HashVerificationError(FSAError):
-    """Hash calculation and verification errors"""
-    
-    def __init__(self, message: str, file_path: Optional[str] = None, 
+    """Hash verification and comparison errors"""
+
+    def __init__(self, message: str, file_path: Optional[str] = None,
                  expected_hash: Optional[str] = None, actual_hash: Optional[str] = None, **kwargs):
         """
         Initialize hash verification error
-        
+
         Args:
             message: Technical error message
             file_path: Path to file with hash mismatch
@@ -275,12 +302,12 @@ class HashVerificationError(FSAError):
         if actual_hash:
             context['actual_hash'] = actual_hash
         kwargs['context'] = context
-        
+
         # Remove severity from kwargs if present to avoid conflict
         kwargs.pop('severity', None)
-        
+
         super().__init__(message, severity=ErrorSeverity.CRITICAL, **kwargs)
-    
+
     def _generate_user_message(self) -> str:
         return "Hash verification failed. File integrity may be compromised."
 
