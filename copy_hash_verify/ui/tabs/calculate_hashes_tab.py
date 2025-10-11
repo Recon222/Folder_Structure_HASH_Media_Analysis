@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 from ..components.base_operation_tab import BaseOperationTab
 from ..components.operation_log_console import OperationLogConsole
 from ...core.unified_hash_calculator import UnifiedHashCalculator
+from ...core.workers.hash_worker import HashWorker
 from core.result_types import Result
 from core.logger import logger
 
@@ -391,7 +392,7 @@ class CalculateHashesTab(BaseOperationTab):
             return 'md5'
 
     def _start_calculation(self):
-        """Start hash calculation"""
+        """Start hash calculation in background thread"""
         if not self.selected_paths:
             self.error("No files selected")
             return
@@ -402,13 +403,6 @@ class CalculateHashesTab(BaseOperationTab):
         # Save settings
         self._save_settings()
 
-        # Create hash calculator
-        self.hash_calculator = UnifiedHashCalculator(
-            algorithm=algorithm,
-            progress_callback=self._on_progress,
-            cancelled_check=lambda: self.hash_calculator.cancelled if self.hash_calculator else False
-        )
-
         self.info(f"Starting hash calculation with {algorithm.upper()}")
         self.set_operation_active(True)
 
@@ -418,11 +412,14 @@ class CalculateHashesTab(BaseOperationTab):
         self.add_files_btn.setEnabled(False)
         self.add_folder_btn.setEnabled(False)
 
-        # Calculate hashes in background (simplified - would use QThread in production)
-        result = self.hash_calculator.hash_files(self.selected_paths)
-
-        # Handle result
-        self._on_calculation_complete(result)
+        # Create and start worker thread
+        self.current_worker = HashWorker(
+            paths=self.selected_paths,
+            algorithm=algorithm
+        )
+        self.current_worker.progress_update.connect(self._on_progress)
+        self.current_worker.result_ready.connect(self._on_calculation_complete)
+        self.current_worker.start()
 
     def _on_progress(self, percentage: int, message: str):
         """Handle progress update"""
@@ -465,9 +462,10 @@ class CalculateHashesTab(BaseOperationTab):
 
     def _cancel_operation(self):
         """Cancel current operation"""
-        if self.hash_calculator:
-            self.hash_calculator.cancel()
-            self.warning("Cancelling operation...")
+        if self.current_worker and self.current_worker.isRunning():
+            self.current_worker.cancel()
+            self.warning("Cancelling hash calculation...")
+            self.current_worker.wait(3000)  # Wait up to 3 seconds for clean shutdown
 
     def _export_csv(self):
         """Export results to CSV"""
@@ -500,8 +498,8 @@ class CalculateHashesTab(BaseOperationTab):
 
     def cleanup(self):
         """Clean up resources"""
-        if self.hash_calculator:
-            self.hash_calculator.cancel()
-        self.hash_calculator = None
+        if self.current_worker and self.current_worker.isRunning():
+            self.current_worker.cancel()
+            self.current_worker.wait(3000)
         self.current_worker = None
         self.last_results = None

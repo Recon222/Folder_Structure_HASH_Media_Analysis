@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 from ..components.base_operation_tab import BaseOperationTab
 from ..components.operation_log_console import OperationLogConsole
 from ...core.unified_hash_calculator import UnifiedHashCalculator
+from ...core.workers.verify_worker import VerifyWorker
 from core.result_types import Result
 from core.logger import logger
 
@@ -425,7 +426,7 @@ class VerifyHashesTab(BaseOperationTab):
             return 'md5'
 
     def _start_verification(self):
-        """Start hash verification"""
+        """Start hash verification in background thread"""
         if not self.source_paths or not self.target_paths:
             self.error("Both source and target files must be selected")
             return
@@ -436,13 +437,6 @@ class VerifyHashesTab(BaseOperationTab):
         # Save settings
         self._save_settings()
 
-        # Create hash calculator
-        self.hash_calculator = UnifiedHashCalculator(
-            algorithm=algorithm,
-            progress_callback=self._on_progress,
-            cancelled_check=lambda: self.hash_calculator.cancelled if self.hash_calculator else False
-        )
-
         self.info(f"Starting hash verification with {algorithm.upper()}")
         self.set_operation_active(True)
 
@@ -450,11 +444,15 @@ class VerifyHashesTab(BaseOperationTab):
         self.verify_btn.setEnabled(False)
         self.cancel_btn.setEnabled(True)
 
-        # Verify hashes
-        result = self.hash_calculator.verify_hashes(self.source_paths, self.target_paths)
-
-        # Handle result
-        self._on_verification_complete(result)
+        # Create and start worker thread
+        self.current_worker = VerifyWorker(
+            source_paths=self.source_paths,
+            target_paths=self.target_paths,
+            algorithm=algorithm
+        )
+        self.current_worker.progress_update.connect(self._on_progress)
+        self.current_worker.result_ready.connect(self._on_verification_complete)
+        self.current_worker.start()
 
     def _on_progress(self, percentage: int, message: str):
         """Handle progress update"""
@@ -496,9 +494,10 @@ class VerifyHashesTab(BaseOperationTab):
 
     def _cancel_operation(self):
         """Cancel operation"""
-        if self.hash_calculator:
-            self.hash_calculator.cancel()
-            self.warning("Cancelling verification...")
+        if self.current_worker and self.current_worker.isRunning():
+            self.current_worker.cancel()
+            self.warning("Cancelling hash verification...")
+            self.current_worker.wait(3000)  # Wait up to 3 seconds for clean shutdown
 
     def _export_csv(self):
         """Export verification results to CSV"""
@@ -538,8 +537,8 @@ class VerifyHashesTab(BaseOperationTab):
 
     def cleanup(self):
         """Clean up resources"""
-        if self.hash_calculator:
-            self.hash_calculator.cancel()
-        self.hash_calculator = None
+        if self.current_worker and self.current_worker.isRunning():
+            self.current_worker.cancel()
+            self.current_worker.wait(3000)
         self.current_worker = None
         self.last_results = None
