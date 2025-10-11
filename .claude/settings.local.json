@@ -23,7 +23,8 @@
       "Read(//mnt/c/Users/kriss/Desktop/Working_Apps_for_CFSA/**)",
       "Bash(.venvScriptspython.exe main.py)",
       "mcp__context7__resolve-library-id",
-      "WebSearch"
+      "WebSearch",
+      "Bash(git commit:*)"
     ],
     "deny": []
   }
