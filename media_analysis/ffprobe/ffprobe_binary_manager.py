@@ -44,10 +44,12 @@ class FFProbeBinaryManager:
             
             # Check bundled locations first
             potential_paths = [
-                app_root / "bin" / binary_name,           # Primary bundled location
-                app_root / binary_name,                   # Alternative location
-                Path("bin") / binary_name,                # Relative to working directory
-                Path(binary_name)                         # Working directory
+                app_root / "bin" / binary_name,                                   # Primary bundled location (root/bin)
+                app_root / "media_analysis" / "bin" / binary_name,                # Media analysis module location
+                app_root / "media_analysis" / "bin" / "ffprobe" / binary_name,    # Nested ffprobe folder
+                app_root / binary_name,                                           # Alternative location
+                Path("bin") / binary_name,                                        # Relative to working directory
+                Path(binary_name)                                                 # Working directory
             ]
             
             # Check bundled locations

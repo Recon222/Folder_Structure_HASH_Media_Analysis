@@ -56,23 +56,40 @@ class ExifToolBinaryManager:
     def locate_binary(self) -> Optional[Path]:
         """
         Find ExifTool binary in system
-        
+
         Returns:
             Path to ExifTool binary if found, None otherwise
         """
         system = platform.system()
         binary_names = self.BINARY_NAMES.get(system, ['exiftool'])
-        
-        # Check bundled location first (bin directory)
+
+        # Check bundled locations first (prioritize media_analysis module location)
         app_dir = Path(__file__).parent.parent.parent  # Go up to application root
-        bin_dir = app_dir / 'bin'
-        
-        for binary_name in binary_names:
-            bundled_path = bin_dir / binary_name
-            if self._validate_binary(bundled_path):
-                self.binary_path = bundled_path
-                logger.info(f"Found bundled ExifTool at: {bundled_path}")
-                return bundled_path
+
+        bundled_locations = [
+            app_dir / 'media_analysis' / 'bin',  # Media analysis module bin (NEW - PRIORITY)
+            app_dir / 'bin',                      # Application root bin
+        ]
+
+        for bin_dir in bundled_locations:
+            for binary_name in binary_names:
+                bundled_path = bin_dir / binary_name
+                if self._validate_binary(bundled_path):
+                    self.binary_path = bundled_path
+                    logger.info(f"Found bundled ExifTool at: {bundled_path}")
+
+                    # For Windows standalone .exe, verify exiftool_files directory exists
+                    if system == 'Windows' and binary_name == 'exiftool.exe':
+                        support_dir = bin_dir / 'exiftool_files'
+                        if support_dir.exists() and support_dir.is_dir():
+                            logger.info(f"Verified exiftool_files directory at: {support_dir}")
+                        else:
+                            logger.warning(
+                                f"exiftool.exe found but missing 'exiftool_files' directory at {support_dir}. "
+                                "ExifTool may not function correctly."
+                            )
+
+                    return bundled_path
         
         # Check system-specific paths
         system_paths = self.SYSTEM_PATHS.get(system, [])

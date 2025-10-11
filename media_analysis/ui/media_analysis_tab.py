@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QGroupBox, QCheckBox, QFileDialog, QProgressBar, QSplitter,
     QComboBox, QSpinBox, QDoubleSpinBox, QMessageBox, QScrollArea,
-    QGridLayout, QTabWidget, QTreeWidget, QTreeWidgetItem, QSizePolicy
+    QGridLayout, QTabWidget, QTreeWidget, QTreeWidgetItem, QSizePolicy, QTextEdit
 )
 from PySide6.QtGui import QFont
 
@@ -39,7 +39,6 @@ from core.exceptions import UIError, ErrorSeverity
 from core.error_handler import handle_error
 
 # UI components
-from ui.components import LogConsole
 from ui.dialogs.success_dialog import SuccessDialog
 from .components.geo import GeoVisualizationWidget
 
@@ -147,7 +146,7 @@ class MediaAnalysisTab(QWidget):
 
         # File count label
         self.file_count_label = QLabel("No files selected")
-        self.file_count_label.setStyleSheet("color: #6c757d;")
+        self.file_count_label.setObjectName("mutedText")
         layout.addWidget(self.file_count_label)
 
         # Statistics section (hidden initially, shown after processing)
@@ -223,7 +222,7 @@ class MediaAnalysisTab(QWidget):
         self.progress_label = QLabel("")
         self.progress_label.setVisible(False)
         self.progress_label.setAlignment(Qt.AlignCenter)
-        self.progress_label.setStyleSheet("color: #6c757d; font-size: 10px;")
+        self.progress_label.setObjectName("mutedText")
         main_layout.addWidget(self.progress_label)
 
         # Action buttons container (changes based on active tab)
@@ -656,19 +655,88 @@ class MediaAnalysisTab(QWidget):
         self._update_stats_display()
 
     def _create_console_section(self) -> QGroupBox:
-        """Create console output section"""
-        console_group = QGroupBox("📋 Analysis Output")
-        console_layout = QVBoxLayout(console_group)
+        """Create console log display with professional color-coded output"""
+        group = QGroupBox("📋 Analysis Console")
+        layout = QVBoxLayout(group)
 
-        self.console = LogConsole()
-        console_layout.addWidget(self.console)
+        # Console controls
+        controls_layout = QHBoxLayout()
+        controls_layout.addStretch()
 
-        return console_group
+        self.clear_console_btn = QPushButton("Clear")
+        self.clear_console_btn.clicked.connect(self._clear_console)
+        controls_layout.addWidget(self.clear_console_btn)
+
+        self.export_log_btn = QPushButton("Export Log")
+        self.export_log_btn.clicked.connect(self._export_log)
+        controls_layout.addWidget(self.export_log_btn)
+
+        layout.addLayout(controls_layout)
+
+        # Console text widget with monospace font
+        self.console = QTextEdit()
+        self.console.setReadOnly(True)
+        self.console.setMinimumHeight(150)
+        self.console.setMaximumHeight(200)
+        self.console.setFont(QFont("Consolas", 9))
+        layout.addWidget(self.console)
+
+        # Initial message
+        self._log("INFO", "Media Analysis ready. Select files to begin.")
+
+        return group
 
     def _connect_signals(self):
         """Connect internal signals"""
-        # Log message signal to console
-        self.log_message.connect(self.console.log)
+        pass  # Logging now handled directly via _log() method
+
+    def _log(self, level: str, message: str):
+        """Log message to console with color-coded formatting"""
+        timestamp = datetime.now().strftime("%H:%M:%S")
+
+        # Color palette for different log levels
+        colors = {
+            "INFO": "#4B9CD3",      # Carolina Blue
+            "SUCCESS": "#52c41a",   # Green
+            "WARNING": "#faad14",   # Orange/Yellow
+            "ERROR": "#ff4d4f"      # Red
+        }
+
+        color = colors.get(level, "#e8e8e8")
+
+        # HTML formatting with spans for color
+        formatted = f'<span style="color: #6b6b6b;">{timestamp}</span> <span style="color: {color}; font-weight: bold;">[{level}]</span> {message}'
+
+        self.console.append(formatted)
+
+        # Also emit to main window
+        self.log_message.emit(f"[MediaAnalysis] {message}")
+
+    def _clear_console(self):
+        """Clear console log"""
+        self.console.clear()
+        self._log("INFO", "Console cleared")
+
+    def _export_log(self):
+        """Export console log to file"""
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Console Log",
+            "",
+            "Text Files (*.txt);;HTML Files (*.html);;All Files (*.*)"
+        )
+
+        if file_path:
+            try:
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    if file_path.endswith('.html'):
+                        f.write(self.console.toHtml())
+                    else:
+                        f.write(self.console.toPlainText())
+
+                self._log("SUCCESS", f"Log exported to: {Path(file_path).name}")
+            except Exception as e:
+                self._log("ERROR", f"Failed to export log: {str(e)}")
 
     def _check_ffprobe_status(self):
         """Check FFprobe availability and log status"""
@@ -676,10 +744,11 @@ class MediaAnalysisTab(QWidget):
 
         if status.get('available'):
             version = status.get('version', 'Unknown version')
-            self.log_message.emit(f"FFprobe ready: {version}")
+            self._log("INFO", f"FFprobe ready: {version}")
         else:
-            self.log_message.emit(
-                "WARNING: FFprobe not found. Please download FFmpeg from "
+            self._log(
+                "WARNING",
+                "FFprobe not found. Please download FFmpeg from "
                 "https://ffmpeg.org/download.html and place ffprobe.exe in the 'bin' folder."
             )
 
@@ -697,8 +766,8 @@ class MediaAnalysisTab(QWidget):
                 path = Path(file_path)
                 if path not in self.selected_paths:
                     self.selected_paths.append(path)
-                    self._add_file_to_tree(path)
 
+            self._rebuild_file_tree()
             self._update_file_count()
 
     def _add_folder(self):
@@ -713,43 +782,83 @@ class MediaAnalysisTab(QWidget):
             path = Path(folder_path)
             if path not in self.selected_paths:
                 self.selected_paths.append(path)
-                self._add_folder_to_tree(path)
 
+            self._rebuild_file_tree()
             self._update_file_count()
 
-    def _add_file_to_tree(self, file_path: Path):
-        """Add a file to the tree widget"""
-        parent_name = file_path.parent.name
+    def _rebuild_file_tree(self):
+        """Rebuild file tree from selected_paths with hierarchical folder structure"""
+        self.file_tree.clear()
 
-        # Find or create parent folder item
-        parent_item = self._find_or_create_parent(parent_name)
+        if not self.selected_paths:
+            return
 
-        # Add file as child
-        file_item = QTreeWidgetItem(parent_item)
-        file_item.setText(0, f"📄 {file_path.name}")
-        file_item.setData(0, Qt.UserRole, str(file_path))
+        # Find common root path across ALL files
+        if len(self.selected_paths) == 1:
+            common_root = self.selected_paths[0].parent if self.selected_paths[0].is_file() else self.selected_paths[0]
+        else:
+            # Find common ancestor (sophisticated algorithm)
+            all_parts = [list(p.parents)[::-1] for p in self.selected_paths]
+            common_root = None
+            for parts in zip(*all_parts):
+                if len(set(parts)) == 1:
+                    common_root = parts[0]
+                else:
+                    break
 
-        parent_item.setExpanded(True)
+        if common_root is None:
+            common_root = Path("/")
 
-    def _add_folder_to_tree(self, folder_path: Path):
-        """Add a folder to the tree widget"""
-        folder_item = QTreeWidgetItem(self.file_tree)
-        folder_item.setText(0, f"📂 {folder_path.name}")
-        folder_item.setData(0, Qt.UserRole, str(folder_path))
-        folder_item.setExpanded(True)
+        # Build folder hierarchy
+        folder_items = {}  # Path -> QTreeWidgetItem
 
-    def _find_or_create_parent(self, parent_name: str) -> QTreeWidgetItem:
-        """Find or create parent folder item in tree"""
-        # Search for existing parent
-        for i in range(self.file_tree.topLevelItemCount()):
-            item = self.file_tree.topLevelItem(i)
-            if item.text(0) == f"📂 {parent_name}":
-                return item
+        for item_path in sorted(self.selected_paths):
+            # Handle both files and folders
+            if item_path.is_file():
+                # Get relative path from common root
+                try:
+                    rel_path = item_path.relative_to(common_root)
+                except ValueError:
+                    rel_path = item_path
 
-        # Create new parent
-        parent_item = QTreeWidgetItem(self.file_tree)
-        parent_item.setText(0, f"📂 {parent_name}")
-        return parent_item
+                # Create folder items for ALL parent directories
+                current_parent = None
+                for i, part in enumerate(rel_path.parts[:-1]):
+                    partial_path = common_root / Path(*rel_path.parts[:i+1])
+
+                    if partial_path not in folder_items:
+                        # Create folder item
+                        folder_item = QTreeWidgetItem()
+                        folder_item.setText(0, f"📁 {part}")
+                        folder_item.setData(0, Qt.UserRole, str(partial_path))
+
+                        if current_parent is None:
+                            self.file_tree.addTopLevelItem(folder_item)
+                        else:
+                            current_parent.addChild(folder_item)
+
+                        folder_items[partial_path] = folder_item
+
+                    current_parent = folder_items[partial_path]
+
+                # Add file item
+                file_item = QTreeWidgetItem()
+                file_item.setText(0, f"📄 {item_path.name}")
+                file_item.setData(0, Qt.UserRole, str(item_path))
+
+                if current_parent is None:
+                    self.file_tree.addTopLevelItem(file_item)
+                else:
+                    current_parent.addChild(file_item)
+            else:
+                # Handle folders
+                folder_item = QTreeWidgetItem()
+                folder_item.setText(0, f"📁 {item_path.name}")
+                folder_item.setData(0, Qt.UserRole, str(item_path))
+                self.file_tree.addTopLevelItem(folder_item)
+
+        # Expand all folders by default
+        self.file_tree.expandAll()
 
     def _clear_files(self):
         """Clear all selected files"""
@@ -943,7 +1052,7 @@ class MediaAnalysisTab(QWidget):
         self._set_operation_active(True, "ffprobe")
 
         # Log start
-        self.log_message.emit(f"Starting FFprobe analysis of {len(self.selected_paths)} items...")
+        self._log("INFO", f"Starting FFprobe analysis of {len(self.selected_paths)} items...")
 
         # Start workflow through controller
         result = self.controller.start_analysis_workflow(
@@ -964,7 +1073,7 @@ class MediaAnalysisTab(QWidget):
         else:
             # Failed to start
             self._set_operation_active(False, "ffprobe")
-            self.log_message.emit(f"Error: {result.error.user_message}")
+            self._log("ERROR", result.error.user_message)
 
             QMessageBox.warning(
                 self,
@@ -984,7 +1093,7 @@ class MediaAnalysisTab(QWidget):
         self._set_operation_active(True, "exiftool")
 
         # Log start
-        self.log_message.emit(f"Starting ExifTool analysis of {len(self.selected_paths)} items...")
+        self._log("INFO", f"Starting ExifTool analysis of {len(self.selected_paths)} items...")
 
         # Start ExifTool workflow through controller
         result = self.controller.start_exiftool_workflow(
@@ -1005,7 +1114,7 @@ class MediaAnalysisTab(QWidget):
         else:
             # Failed to start
             self._set_operation_active(False, "exiftool")
-            self.log_message.emit(f"Error: {result.error.user_message}")
+            self._log("ERROR", result.error.user_message)
 
             QMessageBox.warning(
                 self,
@@ -1018,9 +1127,9 @@ class MediaAnalysisTab(QWidget):
         self.progress_bar.setValue(percentage)
         self.progress_label.setText(message)
 
-        # Log significant progress
+        # Log significant progress milestones
         if percentage % 10 == 0 or percentage == 100:
-            self.log_message.emit(message)
+            self._log("INFO", message)
 
     def _on_analysis_complete(self, result):
         """Handle FFprobe analysis completion"""
@@ -1033,7 +1142,8 @@ class MediaAnalysisTab(QWidget):
             self._update_ffprobe_stats(self.last_results)
 
             # Log completion
-            self.log_message.emit(
+            self._log(
+                "SUCCESS",
                 f"FFprobe analysis complete: {self.last_results.successful} media files found, "
                 f"{self.last_results.skipped} non-media files skipped"
             )
@@ -1050,7 +1160,7 @@ class MediaAnalysisTab(QWidget):
 
         else:
             # Analysis failed
-            self.log_message.emit(f"FFprobe analysis failed: {result.error.user_message}")
+            self._log("ERROR", f"FFprobe analysis failed: {result.error.user_message}")
 
             QMessageBox.warning(
                 self,
@@ -1069,7 +1179,8 @@ class MediaAnalysisTab(QWidget):
             self._update_exiftool_stats(self.last_exiftool_results)
 
             # Log completion
-            self.log_message.emit(
+            self._log(
+                "SUCCESS",
                 f"ExifTool analysis complete: {self.last_exiftool_results.successful} files processed, "
                 f"{self.last_exiftool_results.failed} failed"
             )
@@ -1096,7 +1207,7 @@ class MediaAnalysisTab(QWidget):
 
         else:
             # Analysis failed
-            self.log_message.emit(f"ExifTool analysis failed: {result.error.user_message}")
+            self._log("ERROR", f"ExifTool analysis failed: {result.error.user_message}")
 
             QMessageBox.warning(
                 self,
@@ -1184,7 +1295,7 @@ class MediaAnalysisTab(QWidget):
             )
 
             if result.success:
-                self.log_message.emit(f"Report saved: {file_path}")
+                self._log("SUCCESS", f"Report saved: {file_path}")
 
                 # Update operation data with report path
                 op_data = self._build_operation_data(self.last_results)
@@ -1194,7 +1305,7 @@ class MediaAnalysisTab(QWidget):
                 success_message = self.success_builder.build_media_analysis_success_message(op_data)
                 SuccessDialog.show_success_message(success_message, self)
             else:
-                self.log_message.emit(f"Report generation failed: {result.error.user_message}")
+                self._log("ERROR", f"Report generation failed: {result.error.user_message}")
                 QMessageBox.warning(
                     self,
                     "Report Error",
@@ -1223,7 +1334,7 @@ class MediaAnalysisTab(QWidget):
             )
 
             if result.success:
-                self.log_message.emit(f"CSV exported: {file_path}")
+                self._log("SUCCESS", f"CSV exported: {file_path}")
 
                 # Show success message
                 export_message = self.success_builder.build_csv_export_success(
@@ -1233,7 +1344,7 @@ class MediaAnalysisTab(QWidget):
                 )
                 SuccessDialog.show_success_message(export_message, self)
             else:
-                self.log_message.emit(f"CSV export failed: {result.error.user_message}")
+                self._log("ERROR", f"CSV export failed: {result.error.user_message}")
                 QMessageBox.warning(
                     self,
                     "Export Error",
@@ -1262,7 +1373,7 @@ class MediaAnalysisTab(QWidget):
             )
 
             if result.success:
-                self.log_message.emit(f"ExifTool CSV exported: {file_path}")
+                self._log("SUCCESS", f"ExifTool CSV exported: {file_path}")
 
                 # Show success message
                 export_message = self.success_builder.build_csv_export_success(
@@ -1272,7 +1383,7 @@ class MediaAnalysisTab(QWidget):
                 )
                 SuccessDialog.show_success_message(export_message, self)
             else:
-                self.log_message.emit(f"CSV export failed: {result.error.user_message}")
+                self._log("ERROR", f"CSV export failed: {result.error.user_message}")
                 QMessageBox.warning(
                     self,
                     "Export Error",
@@ -1302,7 +1413,7 @@ class MediaAnalysisTab(QWidget):
             )
 
             if result.success:
-                self.log_message.emit(f"KML exported: {file_path}")
+                self._log("SUCCESS", f"KML exported: {file_path}")
 
                 # Show success message
                 device_count = len(self.last_exiftool_results.device_map) if self.last_exiftool_results.device_map else None
@@ -1313,7 +1424,7 @@ class MediaAnalysisTab(QWidget):
                 )
                 SuccessDialog.show_success_message(export_message, self)
             else:
-                self.log_message.emit(f"KML export failed: {result.error.user_message}")
+                self._log("ERROR", f"KML export failed: {result.error.user_message}")
                 QMessageBox.warning(
                     self,
                     "Export Error",
@@ -1351,7 +1462,7 @@ class MediaAnalysisTab(QWidget):
 
         # Connect signals for file selection
         map_widget.file_selected.connect(
-            lambda path: self.log_message.emit(f"Selected: {path}")
+            lambda path: self._log("INFO", f"Selected: {path}")
         )
 
         layout.addWidget(map_widget)
@@ -1362,7 +1473,7 @@ class MediaAnalysisTab(QWidget):
     def _cancel_operation(self):
         """Cancel current operation"""
         if self.current_worker and self.current_worker.isRunning():
-            self.log_message.emit("Cancelling operation...")
+            self._log("WARNING", "Cancelling operation...")
             self.current_worker.cancel()
 
             # Update UI state
