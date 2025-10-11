@@ -8,6 +8,16 @@ Folder Structure Utility - A PySide6 application for professional file organizat
 
 ## Recent Updates
 
+### Copy/Hash/Verify Module - Phase 2 Worker Thread Integration (NEW)
+- **Background threading complete** - All three operation tabs now use QThread-based workers for non-blocking UI
+- **HashWorker** - Background hash calculation with UnifiedHashCalculator integration
+- **VerifyWorker** - Bidirectional hash verification in background thread
+- **CopyVerifyWorker** - File copy with integrated hash verification and pause/resume support
+- **Professional CSV reports** - Integrated HashReportGenerator for forensic-grade CSV exports
+- **Thread-safe cancellation** - Graceful shutdown with 3-second timeout on all operations
+- **Real-time progress** - Live progress updates during long-running operations
+- **Result-based architecture** - Type-safe error handling with Result objects throughout
+
 ### ExifTool Integration with Geolocation Visualization (ENHANCED)
 - **Complete forensic metadata extraction** using ExifTool for GPS, device ID, and temporal analysis
 - **Interactive map visualization** with QWebEngineView and Leaflet for location data
