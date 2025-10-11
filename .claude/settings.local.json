@@ -25,7 +25,8 @@
       "mcp__context7__resolve-library-id",
       "WebSearch",
       "Bash(git commit:*)",
-      "Bash(.venv/Scripts/python.exe:*)"
+      "Bash(.venv/Scripts/python.exe:*)",
+      "Bash(git add:*)"
     ],
     "deny": []
   }

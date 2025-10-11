@@ -18,7 +18,7 @@ from datetime import datetime
 from PySide6.QtCore import Qt, Signal, QSettings
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QGroupBox,
-    QCheckBox, QComboBox, QSpinBox, QScrollArea, QTreeWidget,
+    QCheckBox, QRadioButton, QButtonGroup, QComboBox, QSpinBox, QScrollArea, QTreeWidget,
     QTreeWidgetItem, QSizePolicy, QFileDialog, QMessageBox
 )
 
@@ -133,20 +133,23 @@ class CalculateHashesTab(BaseOperationTab):
         algo_group = QGroupBox("Hash Algorithm")
         algo_layout = QVBoxLayout(algo_group)
 
-        self.sha256_radio = QCheckBox("SHA-256 (Recommended)")
+        self.algo_button_group = QButtonGroup()
+
+        self.sha256_radio = QRadioButton("SHA-256 (Recommended)")
         self.sha256_radio.setChecked(True)
+        self.algo_button_group.addButton(self.sha256_radio, 0)
         algo_layout.addWidget(self.sha256_radio)
 
-        self.sha1_radio = QCheckBox("SHA-1")
+        self.sha1_radio = QRadioButton("SHA-1")
+        self.algo_button_group.addButton(self.sha1_radio, 1)
         algo_layout.addWidget(self.sha1_radio)
 
-        self.md5_radio = QCheckBox("MD5 (Legacy)")
+        self.md5_radio = QRadioButton("MD5 (Legacy)")
+        self.algo_button_group.addButton(self.md5_radio, 2)
         algo_layout.addWidget(self.md5_radio)
 
-        # Make radio buttons mutually exclusive
-        self.sha256_radio.toggled.connect(lambda checked: self._on_algorithm_changed('sha256', checked))
-        self.sha1_radio.toggled.connect(lambda checked: self._on_algorithm_changed('sha1', checked))
-        self.md5_radio.toggled.connect(lambda checked: self._on_algorithm_changed('md5', checked))
+        # Connect algorithm change signal
+        self.algo_button_group.buttonClicked.connect(self._on_algorithm_changed)
 
         settings_layout.addWidget(algo_group)
 
@@ -294,18 +297,10 @@ class CalculateHashesTab(BaseOperationTab):
 
         settings.endGroup()
 
-    def _on_algorithm_changed(self, algorithm: str, checked: bool):
+    def _on_algorithm_changed(self, button):
         """Handle algorithm radio button change"""
-        if checked:
-            # Uncheck others
-            if algorithm != 'sha256':
-                self.sha256_radio.setChecked(False)
-            if algorithm != 'sha1':
-                self.sha1_radio.setChecked(False)
-            if algorithm != 'md5':
-                self.md5_radio.setChecked(False)
-
-            self.info(f"Hash algorithm set to {algorithm.upper()}")
+        algorithm = self._get_selected_algorithm()
+        self.info(f"Hash algorithm set to {algorithm.upper()}")
 
     def _add_files(self):
         """Add files to hash"""
