@@ -28,6 +28,7 @@ from ...core.unified_hash_calculator import UnifiedHashCalculator
 from ...core.workers.hash_worker import HashWorker
 from core.result_types import Result
 from core.logger import logger
+from core.hash_reports import HashReportGenerator
 
 
 class CalculateHashesTab(BaseOperationTab):
@@ -468,7 +469,7 @@ class CalculateHashesTab(BaseOperationTab):
             self.current_worker.wait(3000)  # Wait up to 3 seconds for clean shutdown
 
     def _export_csv(self):
-        """Export results to CSV"""
+        """Export results to CSV using professional HashReportGenerator"""
         if not self.last_results:
             self.error("No results to export")
             return
@@ -485,13 +486,25 @@ class CalculateHashesTab(BaseOperationTab):
 
         if filename:
             try:
-                # Write CSV (simplified - would use proper CSV writer)
-                with open(filename, 'w', encoding='utf-8') as f:
-                    f.write(f"File Path,{algorithm.upper()} Hash,File Size (bytes),Duration (s)\n")
-                    for path, hash_result in self.last_results.items():
-                        f.write(f"{path},{hash_result.hash_value},{hash_result.file_size},{hash_result.duration:.3f}\n")
+                # Convert dict to list of HashResult objects
+                hash_results_list = list(self.last_results.values())
 
-                self.success(f"CSV report exported to: {filename}")
+                # Use professional report generator
+                report_gen = HashReportGenerator()
+                include_metadata = self.include_metadata_check.isChecked()
+
+                success = report_gen.generate_single_hash_csv(
+                    results=hash_results_list,
+                    output_path=Path(filename),
+                    algorithm=algorithm,
+                    include_metadata=include_metadata
+                )
+
+                if success:
+                    self.success(f"CSV report exported: {Path(filename).name}")
+                    self.info(f"Report location: {filename}")
+                else:
+                    self.error("Failed to generate CSV report")
 
             except Exception as e:
                 self.error(f"Failed to export CSV: {e}")

@@ -27,6 +27,7 @@ from ...core.unified_hash_calculator import UnifiedHashCalculator
 from ...core.workers.verify_worker import VerifyWorker
 from core.result_types import Result
 from core.logger import logger
+from core.hash_reports import HashReportGenerator
 
 
 class VerifyHashesTab(BaseOperationTab):
@@ -500,7 +501,7 @@ class VerifyHashesTab(BaseOperationTab):
             self.current_worker.wait(3000)  # Wait up to 3 seconds for clean shutdown
 
     def _export_csv(self):
-        """Export verification results to CSV"""
+        """Export verification results to CSV using professional HashReportGenerator"""
         if not self.last_results:
             self.error("No results to export")
             return
@@ -517,20 +518,24 @@ class VerifyHashesTab(BaseOperationTab):
 
         if filename:
             try:
-                # Write CSV
-                with open(filename, 'w', encoding='utf-8') as f:
-                    f.write(f"Source File,Target File,Match,{algorithm.upper()} Source,{algorithm.upper()} Target,Notes\n")
-                    for path, ver_result in self.last_results.items():
-                        source_name = ver_result.source_result.relative_path.name
-                        target_name = ver_result.target_result.relative_path.name if ver_result.target_result else "N/A"
-                        match = "MATCH" if ver_result.match else "MISMATCH"
-                        source_hash = ver_result.source_result.hash_value
-                        target_hash = ver_result.target_result.hash_value if ver_result.target_result else "N/A"
-                        notes = ver_result.notes
+                # Convert dict to list of VerificationResult objects
+                verification_results_list = list(self.last_results.values())
 
-                        f.write(f"{source_name},{target_name},{match},{source_hash},{target_hash},{notes}\n")
+                # Use professional report generator
+                report_gen = HashReportGenerator()
 
-                self.success(f"Verification report exported to: {filename}")
+                success = report_gen.generate_verification_csv(
+                    verification_results=verification_results_list,
+                    output_path=Path(filename),
+                    algorithm=algorithm,
+                    include_metadata=True
+                )
+
+                if success:
+                    self.success(f"Verification report exported: {Path(filename).name}")
+                    self.info(f"Report location: {filename}")
+                else:
+                    self.error("Failed to generate verification report")
 
             except Exception as e:
                 self.error(f"Failed to export CSV: {e}")
