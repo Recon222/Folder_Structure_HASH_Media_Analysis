@@ -1005,16 +1005,51 @@ class UnifiedHashCalculator:
             logger.info("Falling back to sequential verification")
             return self._verify_hashes_sequential(source_paths, target_paths)
 
+    def _find_common_root(self, paths: List[str]) -> Path:
+        """
+        Find the deepest common directory among a list of file paths
+
+        For example:
+        - Input: ["C:/Test 1/Folder/File1.txt", "C:/Test 1/Folder/File2.txt"]
+        - Output: Path("C:/Test 1/Folder")
+
+        Args:
+            paths: List of file path strings
+
+        Returns:
+            Common root directory as Path object
+        """
+        if not paths:
+            return Path(".")
+
+        path_objs = [Path(p).parent for p in paths]
+
+        # Start with first path's parent directory
+        common = path_objs[0]
+
+        # Find common ancestor by checking if all paths are relative to it
+        while common != common.parent:  # Not at filesystem root
+            try:
+                if all(p.is_relative_to(common) for p in path_objs):
+                    return common
+            except (ValueError, AttributeError):
+                # is_relative_to not available or paths don't match
+                pass
+            common = common.parent
+
+        return common
+
     def _compare_hashes(
         self,
         source_hashes: Dict[str, HashResult],
         target_hashes: Dict[str, HashResult]
     ) -> Dict[str, VerificationResult]:
         """
-        Compare source and target hash results (bidirectional)
+        Compare source and target hash results by relative path structure
 
         Extracted from verify_hashes() for reuse in parallel implementation.
-        Matches files by filename and compares hash values.
+        Matches files by their relative path from common root (not just filename).
+        This ensures files with duplicate names are matched correctly by structure.
         Also detects files that exist in target but not in source.
 
         Args:
@@ -1025,30 +1060,39 @@ class UnifiedHashCalculator:
             Dict mapping file paths to VerificationResult objects
         """
         verification_results = {}
-        matched_target_names = set()
 
-        # First pass: Check all source files
+        # Find common roots for relative path calculation
+        source_root = self._find_common_root(list(source_hashes.keys()))
+        target_root = self._find_common_root(list(target_hashes.keys()))
+
+        logger.debug(f"Source common root: {source_root}")
+        logger.debug(f"Target common root: {target_root}")
+
+        # Build target lookup by relative path (not just filename)
+        target_by_relpath = {}
+        for target_path, target_hr in target_hashes.items():
+            try:
+                rel_path = Path(target_path).relative_to(target_root)
+                target_by_relpath[str(rel_path)] = (target_path, target_hr)
+            except ValueError:
+                # Path not relative to common root - use as-is
+                target_by_relpath[Path(target_path).name] = (target_path, target_hr)
+
+        matched_relpaths = set()
+
+        # First pass: Match source files by relative path
         for source_path, source_hash_result in source_hashes.items():
-            source_name = Path(source_path).name
+            try:
+                source_rel = str(Path(source_path).relative_to(source_root))
+            except ValueError:
+                # Path not relative to common root - use filename
+                source_rel = Path(source_path).name
 
-            # Find matching target by filename
-            target_hash_result = None
-            for target_path, target_hr in target_hashes.items():
-                if Path(target_path).name == source_name:
-                    target_hash_result = target_hr
-                    matched_target_names.add(source_name)
-                    break
+            if source_rel in target_by_relpath:
+                # Found matching file with same relative path
+                target_path, target_hash_result = target_by_relpath[source_rel]
+                matched_relpaths.add(source_rel)
 
-            if target_hash_result is None:
-                # Missing from target
-                verification_results[source_path] = VerificationResult(
-                    source_result=source_hash_result,
-                    target_result=None,
-                    match=False,
-                    comparison_type='missing_target',
-                    notes=f"File exists in source but not in target: {source_name}"
-                )
-            else:
                 # Compare hashes
                 match = source_hash_result.hash_value == target_hash_result.hash_value
                 verification_results[source_path] = VerificationResult(
@@ -1058,19 +1102,25 @@ class UnifiedHashCalculator:
                     comparison_type='exact_match' if match else 'hash_mismatch',
                     notes="" if match else f"Hash mismatch: {source_hash_result.hash_value[:8]}... != {target_hash_result.hash_value[:8]}..."
                 )
+            else:
+                # Missing from target
+                verification_results[source_path] = VerificationResult(
+                    source_result=source_hash_result,
+                    target_result=None,
+                    match=False,
+                    comparison_type='missing_target',
+                    notes=f"File with relative path '{source_rel}' not found in target"
+                )
 
-        # Second pass: Check for files in target that don't exist in source
-        for target_path, target_hash_result in target_hashes.items():
-            target_name = Path(target_path).name
-
-            if target_name not in matched_target_names:
-                # Missing from source
+        # Second pass: Find files in target missing from source
+        for rel_path, (target_path, target_hash_result) in target_by_relpath.items():
+            if rel_path not in matched_relpaths:
                 verification_results[target_path] = VerificationResult(
                     source_result=None,
                     target_result=target_hash_result,
                     match=False,
                     comparison_type='missing_source',
-                    notes=f"File exists in target but not in source: {target_name}"
+                    notes=f"File with relative path '{rel_path}' not found in source"
                 )
 
         return verification_results
