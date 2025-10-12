@@ -186,16 +186,6 @@ class CalculateHashesTab(BaseOperationTab):
         perf_group = QGroupBox("Performance Settings")
         perf_layout = QVBoxLayout(perf_group)
 
-        # Buffer size (read-only display - always adaptive)
-        buffer_layout = QHBoxLayout()
-        buffer_layout.addWidget(QLabel("Buffer Size:"))
-        self.buffer_label = QLabel("Auto (Adaptive)")
-        self.buffer_label.setObjectName("mutedText")
-        self.buffer_label.setToolTip("Automatically adjusts buffer size based on file size (256KB-10MB)")
-        buffer_layout.addWidget(self.buffer_label)
-        buffer_layout.addStretch()
-        perf_layout.addLayout(buffer_layout)
-
         # Enable parallel processing
         self.enable_parallel_check = QCheckBox("Enable parallel processing (storage-aware)")
         self.enable_parallel_check.setChecked(True)
@@ -331,6 +321,9 @@ class CalculateHashesTab(BaseOperationTab):
         enabled = state == Qt.Checked
         if enabled:
             self.info("Parallel processing enabled (storage-aware optimization)")
+            # Trigger storage detection if files are selected
+            if self.selected_paths:
+                self._update_storage_detection()
         else:
             self.info("Parallel processing disabled (sequential mode)")
             self.storage_info_label.setText("Storage: Detection disabled")
@@ -413,6 +406,71 @@ class CalculateHashesTab(BaseOperationTab):
         # Update buttons
         self.clear_btn.setEnabled(has_files)
         self.calculate_btn.setEnabled(has_files and not self.operation_active)
+
+        # Update storage detection info when parallel processing is enabled
+        if has_files and self.enable_parallel_check.isChecked():
+            self._update_storage_detection()
+        elif not self.enable_parallel_check.isChecked():
+            self.storage_info_label.setText("Storage: Detection disabled")
+        else:
+            self.storage_info_label.setText("Storage: Not detected yet")
+
+    def _update_storage_detection(self):
+        """Detect and display storage information for selected files"""
+        if not self.selected_paths:
+            self.storage_info_label.setText("Storage: Not detected yet")
+            return
+
+        try:
+            from ...core.storage_detector import StorageDetector
+
+            # Use first path for detection (all paths typically on same drive)
+            first_path = self.selected_paths[0]
+
+            # Detect storage
+            detector = StorageDetector()
+            info = detector.analyze_path(first_path)
+
+            # Format display text
+            drive_type_display = {
+                'nvme': 'NVMe SSD',
+                'ssd': 'SATA SSD',
+                'external_ssd': 'External SSD',
+                'hdd': 'HDD',
+                'external_hdd': 'External HDD',
+                'unknown': 'Unknown'
+            }.get(info.drive_type.value, info.drive_type.value.upper())
+
+            confidence_pct = int(info.confidence * 100)
+
+            # Color based on confidence
+            if info.confidence >= 0.8:
+                color = "#28a745"  # Green for high confidence
+            elif info.confidence >= 0.6:
+                color = "#ffc107"  # Yellow for moderate confidence
+            else:
+                color = "#6c757d"  # Gray for low confidence
+
+            display_text = (
+                f'<span style="color: {color};">'
+                f'{drive_type_display} on {info.drive_letter} | '
+                f'{info.recommended_threads} threads '
+                f'({confidence_pct}% confidence)'
+                f'</span>'
+            )
+
+            self.storage_info_label.setText(display_text)
+            self.storage_info_label.setToolTip(
+                f"Drive Type: {drive_type_display}\n"
+                f"Bus Type: {info.bus_type.name}\n"
+                f"Recommended Threads: {info.recommended_threads}\n"
+                f"Detection Method: {info.detection_method}\n"
+                f"Confidence: {confidence_pct}%"
+            )
+
+        except Exception as e:
+            logger.debug(f"Failed to detect storage: {e}")
+            self.storage_info_label.setText("Storage: Detection failed")
 
     def _get_selected_algorithm(self) -> str:
         """Get currently selected algorithm"""
