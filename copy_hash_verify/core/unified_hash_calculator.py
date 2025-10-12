@@ -435,7 +435,7 @@ class UnifiedHashCalculator:
             )
             return Result.error(error)
 
-        return Result.success(results)
+        return Result.success(results, metrics=self.metrics)
 
     def _parallel_hash_files(self, files: List[Path], max_workers: int,
                             storage_info: 'StorageInfo') -> Result[Dict[str, HashResult]]:
@@ -583,7 +583,7 @@ class UnifiedHashCalculator:
                 )
                 return Result.error(error)
 
-            return Result.success(results)
+            return Result.success(results, metrics=self.metrics)
 
         except Exception as e:
             logger.error(f"Parallel hash operation failed: {e}", exc_info=True)

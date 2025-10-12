@@ -543,10 +543,16 @@ class CalculateHashesTab(BaseOperationTab):
             self.last_results = result.value
             hash_count = len(result.value)
 
-            # Update statistics
-            total_size = sum(hr.file_size for hr in result.value.values())
-            total_duration = sum(hr.duration for hr in result.value.values())
-            avg_speed = (total_size / (1024 * 1024)) / total_duration if total_duration > 0 else 0
+            # Update statistics using metrics from Result (wall-clock time, not summed durations)
+            metrics = result.metadata.get('metrics')
+            if metrics:
+                # Use accurate wall-clock metrics from calculator
+                total_size = metrics.processed_bytes
+                avg_speed = metrics.average_speed_mbps
+            else:
+                # Fallback for backward compatibility (should not happen with new code)
+                total_size = sum(hr.file_size for hr in result.value.values())
+                avg_speed = 0
 
             self.update_stats(
                 total=hash_count,
