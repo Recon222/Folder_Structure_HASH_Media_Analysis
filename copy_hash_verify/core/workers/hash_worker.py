@@ -29,42 +29,54 @@ class HashWorker(QThread):
     result_ready = Signal(Result)
     progress_update = Signal(int, str)
 
-    def __init__(self, paths: List[Path], algorithm: str = 'sha256', parent=None):
+    def __init__(self, paths: List[Path], algorithm: str = 'sha256',
+                 enable_parallel: bool = True, max_workers_override: int = None,
+                 parent=None):
         """
         Initialize hash worker
 
         Args:
             paths: List of file/folder paths to hash
             algorithm: Hash algorithm ('sha256', 'sha1', 'md5')
+            enable_parallel: Enable parallel processing when beneficial (default: True)
+            max_workers_override: Override thread count (None = auto-detect)
             parent: Parent QObject
         """
         super().__init__(parent)
 
         self.paths = paths
         self.algorithm = algorithm
+        self.enable_parallel = enable_parallel
+        self.max_workers_override = max_workers_override
         self.calculator = None
         self._is_cancelled = False
 
     def run(self):
         """Execute hash calculation in background thread"""
         try:
-            logger.info(f"HashWorker starting: {len(self.paths)} paths with {self.algorithm}")
+            logger.info(f"HashWorker starting: {len(self.paths)} paths with {self.algorithm}, "
+                       f"parallel={self.enable_parallel}")
 
-            # Create calculator with progress callback
+            # Create calculator with progress callback and parallel processing config
             self.calculator = UnifiedHashCalculator(
                 algorithm=self.algorithm,
                 progress_callback=self._on_progress,
-                cancelled_check=self._check_cancelled
+                cancelled_check=self._check_cancelled,
+                enable_parallel=self.enable_parallel,
+                max_workers_override=self.max_workers_override
             )
 
-            # Calculate hashes
+            # Calculate hashes (automatically uses parallel processing when beneficial)
             result = self.calculator.hash_files(self.paths)
 
             # Emit result
             self.result_ready.emit(result)
 
             if result.success:
-                logger.info(f"HashWorker completed: {len(result.value)} files hashed")
+                files_hashed = len(result.value)
+                duration = self.calculator.metrics.duration
+                speed = self.calculator.metrics.average_speed_mbps
+                logger.info(f"HashWorker completed: {files_hashed} files hashed in {duration:.1f}s ({speed:.1f} MB/s)")
             else:
                 logger.warning(f"HashWorker completed with error: {result.error}")
 

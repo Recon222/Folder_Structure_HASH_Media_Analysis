@@ -8,9 +8,17 @@ Combines:
 - 2-read optimization for copy+hash workflows
 - Bidirectional verification from HashOperations
 - Parallel hashing support (hashwise library)
+- Storage-aware adaptive parallelism (NEW)
+- Memory-safe chunked processing (NEW)
 - Result-based error handling
 
 This is the single hash engine used by all copy_hash_verify operations.
+
+NEW in Parallel Processing Update:
+- StorageDetector integration for optimal threading
+- ThreadPoolExecutor with bounded memory management
+- Throttled progress reporting from multiple workers
+- Conservative fallback to sequential processing
 """
 
 import hashlib
@@ -21,11 +29,26 @@ from typing import List, Dict, Tuple, Callable, Optional
 from dataclasses import dataclass, field
 from datetime import datetime
 from threading import Event
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 
 from core.logger import logger
 from core.result_types import Result
 from core.exceptions import HashCalculationError, HashVerificationError
+
+# NEW: Import storage detection and progress throttling
+try:
+    from .storage_detector import StorageDetector, StorageInfo, DriveType
+    STORAGE_DETECTION_AVAILABLE = True
+except ImportError:
+    logger.warning("StorageDetector not available, parallel optimization disabled")
+    STORAGE_DETECTION_AVAILABLE = False
+
+try:
+    from .throttled_progress import ThrottledProgressReporter, ProgressRateCalculator
+    THROTTLED_PROGRESS_AVAILABLE = True
+except ImportError:
+    logger.warning("ThrottledProgressReporter not available, using direct callbacks")
+    THROTTLED_PROGRESS_AVAILABLE = False
 
 # Try to import hashwise for accelerated parallel hashing
 try:
@@ -138,7 +161,9 @@ class UnifiedHashCalculator:
         algorithm: str = 'sha256',
         progress_callback: Optional[Callable[[int, str], None]] = None,
         cancelled_check: Optional[Callable[[], bool]] = None,
-        pause_check: Optional[Callable[[], None]] = None
+        pause_check: Optional[Callable[[], None]] = None,
+        enable_parallel: bool = True,
+        max_workers_override: Optional[int] = None
     ):
         """
         Initialize the unified hash calculator
@@ -148,6 +173,8 @@ class UnifiedHashCalculator:
             progress_callback: Function that receives (progress_pct, status_message)
             cancelled_check: Function that returns True if operation should be cancelled
             pause_check: Function that checks and waits if operation should be paused
+            enable_parallel: Enable parallel processing when beneficial (default: True)
+            max_workers_override: Override thread count (None = auto-detect)
         """
         if algorithm not in self.SUPPORTED_ALGORITHMS:
             raise ValueError(f"Unsupported algorithm: {algorithm}. Supported: {self.SUPPORTED_ALGORITHMS}")
@@ -159,6 +186,13 @@ class UnifiedHashCalculator:
         self.cancelled = False
         self.cancel_event = Event()
         self.metrics = HashOperationMetrics()
+
+        # NEW: Parallel processing configuration
+        self.enable_parallel = enable_parallel and STORAGE_DETECTION_AVAILABLE
+        self.max_workers_override = max_workers_override
+        self.storage_detector = StorageDetector() if STORAGE_DETECTION_AVAILABLE else None
+
+        logger.debug(f"UnifiedHashCalculator initialized: algorithm={algorithm}, parallel={self.enable_parallel}")
 
     def _get_adaptive_buffer_size(self, file_size: int) -> int:
         """
@@ -289,6 +323,9 @@ class UnifiedHashCalculator:
         """
         Calculate hashes for multiple files/folders
 
+        Automatically uses parallel processing when beneficial based on storage type.
+        Falls back to sequential processing for HDDs or when parallel is disabled.
+
         Args:
             paths: List of file and/or folder paths
 
@@ -312,6 +349,45 @@ class UnifiedHashCalculator:
             total_bytes=sum(f.stat().st_size for f in files if f.exists())
         )
 
+        # NEW: Storage-aware processing decision
+        if self.enable_parallel and self.storage_detector and len(files) > 1:
+            # Analyze storage for first file (representative sample)
+            storage_info = self.storage_detector.analyze_path(files[0])
+
+            # Determine optimal thread count
+            if self.max_workers_override:
+                recommended_threads = self.max_workers_override
+                logger.info(f"Using manual thread override: {recommended_threads} threads")
+            else:
+                recommended_threads = storage_info.recommended_threads
+                logger.info(f"Storage detected: {storage_info}")
+
+            # Use parallel processing if beneficial
+            if recommended_threads > 1:
+                logger.info(f"Using parallel processing with {recommended_threads} threads")
+                return self._parallel_hash_files(files, recommended_threads, storage_info)
+            else:
+                logger.info(f"Using sequential processing (storage: {storage_info.drive_type.value})")
+
+        # Sequential processing (original implementation)
+        return self._sequential_hash_files(files)
+
+    def _sequential_hash_files(self, files: List[Path]) -> Result[Dict[str, HashResult]]:
+        """
+        Sequential hash calculation (original implementation)
+
+        Used for:
+        - HDDs (parallel processing hurts performance)
+        - Single file operations
+        - When parallel processing is disabled
+        - Fallback when parallel processing fails
+
+        Args:
+            files: List of files to hash
+
+        Returns:
+            Result[Dict] mapping file paths to HashResult objects
+        """
         results = {}
         failed_files = []
 
@@ -360,6 +436,187 @@ class UnifiedHashCalculator:
             return Result.error(error)
 
         return Result.success(results)
+
+    def _parallel_hash_files(self, files: List[Path], max_workers: int,
+                            storage_info: 'StorageInfo') -> Result[Dict[str, HashResult]]:
+        """
+        Memory-safe parallel hash calculation using ThreadPoolExecutor
+
+        Uses chunked submission to prevent memory explosion on large file lists.
+        Implements throttled progress reporting to prevent UI flooding.
+
+        Args:
+            files: List of files to hash
+            max_workers: Number of parallel worker threads
+            storage_info: Storage characteristics (for logging)
+
+        Returns:
+            Result[Dict] mapping file paths to HashResult objects
+        """
+        results = {}
+        failed_files = []
+        processed_count = 0
+        total_files = len(files)
+
+        # Chunk size: 3x workers to keep threads busy without memory issues
+        chunk_size = min(max_workers * 3, 100)
+
+        # Create throttled progress reporter (10 updates/sec max)
+        if THROTTLED_PROGRESS_AVAILABLE and self.progress_callback:
+            progress_reporter = ThrottledProgressReporter(
+                callback=self.progress_callback,
+                update_interval=0.1
+            )
+        else:
+            progress_reporter = None
+
+        logger.info(f"Starting parallel hash operation: {total_files} files, "
+                   f"{max_workers} workers, chunk_size={chunk_size}")
+
+        try:
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # Process files in memory-safe chunks
+                for chunk_idx, chunk in enumerate(self._chunk_files(files, chunk_size)):
+                    # Check cancellation before starting chunk
+                    if self.cancelled or (self.cancelled_check and self.cancelled_check()):
+                        logger.info("Parallel hashing cancelled by user")
+                        error = HashCalculationError(
+                            "Hash operation cancelled by user",
+                            user_message="Operation cancelled."
+                        )
+                        return Result.error(error)
+
+                    # Submit chunk (bounded queue size)
+                    chunk_futures = {
+                        executor.submit(self.calculate_hash, file_path, file_path): file_path
+                        for file_path in chunk
+                    }
+
+                    logger.debug(f"Processing chunk {chunk_idx + 1}: {len(chunk_futures)} files")
+
+                    # Process results as they complete
+                    for future in as_completed(chunk_futures):
+                        # Check cancellation during processing
+                        if self.cancelled or (self.cancelled_check and self.cancelled_check()):
+                            logger.info("Cancelling remaining futures")
+                            # Cancel remaining futures
+                            for f in chunk_futures:
+                                if not f.done():
+                                    f.cancel()
+                            error = HashCalculationError(
+                                "Hash operation cancelled by user",
+                                user_message="Operation cancelled."
+                            )
+                            return Result.error(error)
+
+                        file_path = chunk_futures[future]
+
+                        try:
+                            # Timeout prevents hanging on problematic files (5 minutes)
+                            hash_result = future.result(timeout=300)
+
+                            if hash_result.success:
+                                results[str(file_path)] = hash_result.value
+                                self.metrics.processed_bytes += hash_result.value.file_size
+                            else:
+                                failed_files.append((file_path, hash_result.error))
+                                self.metrics.failed_files += 1
+                                logger.warning(f"Hash failed for {file_path}: {hash_result.error}")
+
+                        except TimeoutError:
+                            error = HashCalculationError(
+                                f"Hash calculation timed out: {file_path}",
+                                user_message="File took too long to hash (>5 minutes)",
+                                file_path=str(file_path)
+                            )
+                            failed_files.append((file_path, error))
+                            self.metrics.failed_files += 1
+                            logger.error(f"Timeout hashing {file_path}")
+
+                        except Exception as e:
+                            error = HashCalculationError(
+                                f"Unexpected error hashing {file_path}: {e}",
+                                user_message="An error occurred during hash calculation",
+                                file_path=str(file_path)
+                            )
+                            failed_files.append((file_path, error))
+                            self.metrics.failed_files += 1
+                            logger.error(f"Exception hashing {file_path}: {e}", exc_info=True)
+
+                        # Update progress (throttled)
+                        processed_count += 1
+                        self.metrics.processed_files = processed_count
+                        progress_pct = int((processed_count / total_files) * 100)
+
+                        if progress_reporter:
+                            progress_reporter.report_progress(
+                                progress_pct,
+                                f"Hashed {processed_count}/{total_files} files"
+                            )
+                        elif self.progress_callback:
+                            # Direct callback if throttled reporter unavailable
+                            self.progress_callback(progress_pct, f"Hashed {processed_count}/{total_files} files")
+
+            # Finalize metrics
+            self.metrics.end_time = time.time()
+            self.metrics.processed_files = processed_count - len(failed_files)
+
+            # Flush any pending progress updates
+            if progress_reporter:
+                progress_reporter.flush_pending()
+
+            # Report completion
+            duration = self.metrics.duration
+            speed = self.metrics.average_speed_mbps
+            logger.info(f"Parallel hashing complete: {self.metrics.processed_files} files, "
+                       f"{duration:.1f}s, {speed:.1f} MB/s")
+
+            if self.progress_callback:
+                self.progress_callback(100, f"Hashing complete: {self.metrics.processed_files} files")
+
+            # Check if we had any failures
+            if failed_files and len(failed_files) == len(files):
+                # All files failed
+                error = HashCalculationError(
+                    "All hash operations failed",
+                    user_message="Failed to hash any files. Please check file permissions."
+                )
+                return Result.error(error)
+
+            return Result.success(results)
+
+        except Exception as e:
+            logger.error(f"Parallel hash operation failed: {e}", exc_info=True)
+            error = HashCalculationError(
+                f"Parallel hashing failed: {e}",
+                user_message="An error occurred during parallel hash calculation. Falling back to sequential."
+            )
+            # Fallback to sequential on any threading error
+            logger.info("Falling back to sequential hashing after parallel failure")
+            return self._sequential_hash_files(files)
+
+    def _chunk_files(self, files: List[Path], chunk_size: int) -> List[List[Path]]:
+        """
+        Split file list into chunks for bounded memory management
+
+        Args:
+            files: List of files to chunk
+            chunk_size: Maximum files per chunk
+
+        Yields:
+            Chunks of files
+        """
+        for i in range(0, len(files), chunk_size):
+            yield files[i:i + chunk_size]
+
+    def _is_cancelled(self) -> bool:
+        """
+        Check if operation should be cancelled
+
+        Returns:
+            True if cancelled, False otherwise
+        """
+        return self.cancelled or (self.cancelled_check and self.cancelled_check())
 
     def verify_hashes(
         self,

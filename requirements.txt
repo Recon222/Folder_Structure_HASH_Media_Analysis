@@ -22,3 +22,5 @@ hashwise>=0.1.0
 pyproj>=3.6.0
 
 # Python version requirement: Python 3.7 or higher is recommended
+# WMI for Windows storage detection (parallel hash optimization)
+wmi>=1.5.1; platform_system=='Windows'
