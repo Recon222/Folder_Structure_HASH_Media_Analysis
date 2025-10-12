@@ -329,33 +329,53 @@ class StorageDetector:
 
             logger.debug(f"Performance test: Write={write_speed_mbps:.1f} MB/s, Read={read_speed_mbps:.1f} MB/s")
 
-            # Classify based on read speed
+            # IMPROVED: Check BOTH read AND write speeds to avoid misclassification
             is_removable = self._is_removable_drive(drive_letter)
 
-            if read_speed_mbps > 200:
-                # Very fast - likely NVMe SSD
+            # Critical insight: HDDs have fast cached reads but SLOW writes
+            # SSDs have fast reads AND fast writes
+            # If write speed is slow but read is fast → likely HDD with cache
+
+            # Check for HDD pattern: Slow write speed (< 50 MB/s) regardless of read
+            if write_speed_mbps < 50:
+                # Slow write = HDD (even if read is fast due to cache)
+                drive_type = DriveType.EXTERNAL_HDD if is_removable else DriveType.HDD
+                bus_type = BusType.USB if is_removable else BusType.SATA
+                is_ssd = False
+                confidence = 0.8  # High confidence - write speed is reliable indicator
+                logger.info(f"HDD detected: Slow write speed ({write_speed_mbps:.1f} MB/s) indicates HDD")
+
+            # Fast write AND fast read = SSD
+            elif write_speed_mbps > 100 and read_speed_mbps > 200:
+                # Very fast write + read - likely NVMe SSD
                 drive_type = DriveType.EXTERNAL_SSD if is_removable else DriveType.NVME
                 bus_type = BusType.USB if is_removable else BusType.NVME
                 is_ssd = True
-                confidence = 0.75
-            elif read_speed_mbps > 100:
-                # Fast - likely SATA SSD
+                confidence = 0.8
+            elif write_speed_mbps > 50 and read_speed_mbps > 100:
+                # Fast write + read - likely SATA SSD
                 drive_type = DriveType.EXTERNAL_SSD if is_removable else DriveType.SSD
                 bus_type = BusType.USB if is_removable else BusType.SATA
                 is_ssd = True
-                confidence = 0.7
+                confidence = 0.75
+
+            # Slow read (regardless of write) = HDD
             elif read_speed_mbps < 50:
-                # Slow - likely HDD
+                # Slow read - likely HDD
                 drive_type = DriveType.EXTERNAL_HDD if is_removable else DriveType.HDD
                 bus_type = BusType.USB if is_removable else BusType.SATA
                 is_ssd = False
                 confidence = 0.7
+
             else:
-                # Uncertain - could be older SSD or fast HDD
-                drive_type = DriveType.UNKNOWN
+                # Uncertain - could be older SSD or unusual configuration
+                # Default to HDD for safety (avoid over-parallelizing unknown devices)
+                drive_type = DriveType.EXTERNAL_HDD if is_removable else DriveType.HDD
                 bus_type = BusType.UNKNOWN
-                is_ssd = None
+                is_ssd = False
                 confidence = 0.4
+                logger.warning(f"Uncertain storage type (W={write_speed_mbps:.1f}, R={read_speed_mbps:.1f}), "
+                             f"defaulting to HDD for safety")
 
             threads = self.THREAD_RECOMMENDATIONS[drive_type]
             perf_class = self.PERFORMANCE_CLASS[drive_type]
