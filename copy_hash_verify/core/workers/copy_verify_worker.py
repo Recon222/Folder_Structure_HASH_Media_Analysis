@@ -66,18 +66,48 @@ class CopyVerifyWorker(QThread):
                 pause_check=self._check_paused
             )
 
-            # Discover all files to copy
-            all_files = []
-            for path in self.source_paths:
-                if path.is_file():
-                    all_files.append(path)
-                elif path.is_dir():
-                    # Recursively discover files in directory
-                    for file_path in path.rglob('*'):
-                        if file_path.is_file():
-                            all_files.append(file_path)
+            # Discover all files to copy with structure information
+            # Build list of (type, path, relative_path) tuples for structure preservation
+            all_items = []
 
-            if not all_files:
+            for source_path in self.source_paths:
+                if source_path.is_file():
+                    # Single file
+                    if self.preserve_structure:
+                        # Preserve the filename within its parent context
+                        relative_path = source_path.name
+                    else:
+                        # Flat copy - no relative path
+                        relative_path = None
+
+                    all_items.append(('file', source_path, relative_path))
+
+                elif source_path.is_dir():
+                    # Folder - discover all files within
+                    if self.preserve_structure:
+                        # Calculate relative paths from the source folder's parent
+                        # This preserves the source folder name and its structure
+                        base_path = source_path.parent
+                    else:
+                        # Flat copy - no relative paths
+                        base_path = None
+
+                    for file_path in source_path.rglob('*'):
+                        if file_path.is_file():
+                            if self.preserve_structure and base_path:
+                                # Calculate relative path from base
+                                try:
+                                    relative_path = file_path.relative_to(base_path)
+                                except ValueError:
+                                    # Fallback to just filename if relative_to fails
+                                    relative_path = file_path.name
+                            else:
+                                # Flat copy
+                                relative_path = None
+
+                            all_items.append(('file', file_path, relative_path))
+
+            if not all_items:
                 from core.exceptions import FileOperationError
                 error = FileOperationError(
                     "No files found to copy",
@@ -86,11 +116,15 @@ class CopyVerifyWorker(QThread):
                 self.result_ready.emit(Result.error(error))
                 return
 
-            logger.info(f"CopyVerifyWorker discovered {len(all_files)} files")
+            logger.info(
+                f"CopyVerifyWorker discovered {len(all_items)} files, "
+                f"preserve_structure={self.preserve_structure}"
+            )
 
-            # Copy files with hash verification (always SHA-256 for now)
-            result = self.file_ops.copy_files(
-                all_files,
+            # Copy files with structure preservation using internal method
+            # This method supports (type, path, relative_path) tuples
+            result = self.file_ops._copy_files_internal(
+                all_items,
                 self.destination,
                 calculate_hash=True  # Always calculate hashes for verification
             )
