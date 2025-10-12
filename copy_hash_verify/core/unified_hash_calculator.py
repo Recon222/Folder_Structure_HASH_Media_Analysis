@@ -85,10 +85,10 @@ class HashResult:
 @dataclass
 class VerificationResult:
     """Result of comparing two hash results"""
-    source_result: HashResult
+    source_result: Optional[HashResult]
     target_result: Optional[HashResult]
     match: bool
-    comparison_type: str  # 'exact_match', 'name_match', 'missing_target', 'error'
+    comparison_type: str  # 'exact_match', 'hash_mismatch', 'missing_target', 'missing_source'
     notes: str = ""
 
     @property
@@ -134,6 +134,204 @@ class HashOperationMetrics:
         if self.duration > 0 and self.processed_bytes > 0:
             return (self.processed_bytes / (1024 * 1024)) / self.duration
         return 0.0
+
+
+class _VerificationProgressAggregator:
+    """
+    Thread-safe progress aggregation for dual-source verification
+
+    Properly weights progress based on file counts (not simple averaging).
+    Prevents race conditions during parallel hash operations.
+    """
+    def __init__(self, source_file_count: int, target_file_count: int,
+                 progress_callback: Optional[Callable[[int, str], None]]):
+        """
+        Initialize progress aggregator
+
+        Args:
+            source_file_count: Number of files in source
+            target_file_count: Number of files in target
+            progress_callback: Function that receives (percentage, message)
+        """
+        from threading import Lock
+
+        self.source_file_count = source_file_count
+        self.target_file_count = target_file_count
+        self.total_files = source_file_count + target_file_count
+        self.progress_callback = progress_callback
+
+        self._lock = Lock()
+        self._source_pct = 0
+        self._target_pct = 0
+        self._source_msg = "Waiting..."
+        self._target_msg = "Waiting..."
+
+    def update_source_progress(self, percentage: int, message: str):
+        """
+        Update source progress (thread-safe)
+
+        Args:
+            percentage: Progress percentage (0-100)
+            message: Status message
+        """
+        with self._lock:
+            self._source_pct = percentage
+            self._source_msg = message
+            self._emit_combined_progress()
+
+    def update_target_progress(self, percentage: int, message: str):
+        """
+        Update target progress (thread-safe)
+
+        Args:
+            percentage: Progress percentage (0-100)
+            message: Status message
+        """
+        with self._lock:
+            self._target_pct = percentage
+            self._target_msg = message
+            self._emit_combined_progress()
+
+    def _emit_combined_progress(self):
+        """Calculate and emit weighted progress"""
+        if not self.progress_callback or self.total_files == 0:
+            return
+
+        # Weight by file count (not simple average)
+        source_weight = self.source_file_count / self.total_files
+        target_weight = self.target_file_count / self.total_files
+
+        overall_pct = int(
+            (self._source_pct * source_weight) +
+            (self._target_pct * target_weight)
+        )
+
+        combined_msg = f"Source: {self._source_pct}% ({self._source_msg}) | Target: {self._target_pct}% ({self._target_msg})"
+
+        self.progress_callback(overall_pct, combined_msg)
+
+
+class _VerificationCoordinator:
+    """
+    Simple thread coordinator for parallel hash verification
+
+    Simpler than ThreadPoolExecutor - just manages two threads for source/target.
+    Handles error propagation and thread lifecycle explicitly.
+    Storage detection is performed once before creating coordinator to avoid redundancy.
+    """
+    def __init__(self, algorithm: str, source_paths: List[Path], target_paths: List[Path],
+                 source_threads: int, target_threads: int,
+                 progress_aggregator: _VerificationProgressAggregator,
+                 cancelled_check: Optional[Callable[[], bool]],
+                 enable_parallel: bool = True):
+        """
+        Initialize verification coordinator
+
+        Args:
+            algorithm: Hash algorithm to use
+            source_paths: Source file paths
+            target_paths: Target file paths
+            source_threads: Optimal threads for source storage
+            target_threads: Optimal threads for target storage
+            progress_aggregator: Progress aggregation handler
+            cancelled_check: Cancellation check function
+            enable_parallel: Enable parallel processing (overrides threads to force optimization)
+        """
+        from threading import Thread
+
+        self.algorithm = algorithm
+        self.source_paths = source_paths
+        self.target_paths = target_paths
+        self.source_threads = source_threads
+        self.target_threads = target_threads
+        self.progress_aggregator = progress_aggregator
+        self.cancelled_check = cancelled_check
+        self.enable_parallel = enable_parallel
+
+        # Results
+        self.source_result = None
+        self.target_result = None
+        self.source_exception = None
+        self.target_exception = None
+
+    def _hash_source(self):
+        """Hash source files (runs in separate thread)"""
+        try:
+            logger.info(f"Source hashing started: {len(self.source_paths)} files, {self.source_threads} threads")
+
+            # Create calculator for source with progress routing
+            # IMPORTANT: max_workers_override forces use of pre-detected optimal threads
+            # and skips redundant storage detection
+            source_calculator = UnifiedHashCalculator(
+                algorithm=self.algorithm,
+                progress_callback=lambda pct, msg: self.progress_aggregator.update_source_progress(pct, msg),
+                cancelled_check=self.cancelled_check,
+                enable_parallel=self.enable_parallel,
+                max_workers_override=self.source_threads  # Pre-detected optimal threads
+            )
+
+            self.source_result = source_calculator.hash_files(self.source_paths)
+            logger.info(f"Source hashing completed: {self.source_result.success}")
+
+        except Exception as e:
+            logger.error(f"Source hashing exception: {e}", exc_info=True)
+            self.source_exception = e
+
+    def _hash_target(self):
+        """Hash target files (runs in separate thread)"""
+        try:
+            logger.info(f"Target hashing started: {len(self.target_paths)} files, {self.target_threads} threads")
+
+            # Create calculator for target with progress routing
+            # IMPORTANT: max_workers_override forces use of pre-detected optimal threads
+            # and skips redundant storage detection
+            target_calculator = UnifiedHashCalculator(
+                algorithm=self.algorithm,
+                progress_callback=lambda pct, msg: self.progress_aggregator.update_target_progress(pct, msg),
+                cancelled_check=self.cancelled_check,
+                enable_parallel=self.enable_parallel,
+                max_workers_override=self.target_threads  # Pre-detected optimal threads
+            )
+
+            self.target_result = target_calculator.hash_files(self.target_paths)
+            logger.info(f"Target hashing completed: {self.target_result.success}")
+
+        except Exception as e:
+            logger.error(f"Target hashing exception: {e}", exc_info=True)
+            self.target_exception = e
+
+    def run_parallel(self) -> Tuple[Result, Result]:
+        """
+        Run parallel hashing for both source and target
+
+        Returns:
+            Tuple of (source_result, target_result)
+
+        Raises:
+            Exception: If either thread encounters an unhandled exception
+        """
+        from threading import Thread
+
+        # Create threads
+        source_thread = Thread(target=self._hash_source, name="SourceHashThread")
+        target_thread = Thread(target=self._hash_target, name="TargetHashThread")
+
+        # Start both threads
+        source_thread.start()
+        target_thread.start()
+
+        # Wait for both to complete
+        source_thread.join()
+        target_thread.join()
+
+        # Check for exceptions
+        if self.source_exception:
+            raise self.source_exception
+        if self.target_exception:
+            raise self.target_exception
+
+        # Return results
+        return self.source_result, self.target_result
 
 
 class UnifiedHashCalculator:
@@ -350,24 +548,29 @@ class UnifiedHashCalculator:
         )
 
         # NEW: Storage-aware processing decision
-        if self.enable_parallel and self.storage_detector and len(files) > 1:
-            # Analyze storage for first file (representative sample)
-            storage_info = self.storage_detector.analyze_path(files[0])
-
+        if self.enable_parallel and len(files) > 1:
             # Determine optimal thread count
             if self.max_workers_override:
+                # Thread count pre-determined - skip redundant storage detection
                 recommended_threads = self.max_workers_override
-                logger.info(f"Using manual thread override: {recommended_threads} threads")
-            else:
+                storage_info = None  # Avoid redundant detection
+                logger.info(f"Using manual thread override: {recommended_threads} threads (skipping storage detection)")
+            elif self.storage_detector:
+                # Perform storage detection only when needed
+                storage_info = self.storage_detector.analyze_path(files[0])
                 recommended_threads = storage_info.recommended_threads
                 logger.info(f"Storage detected: {storage_info}")
+            else:
+                # No storage detector available, use sequential
+                logger.debug("Storage detector unavailable, using sequential processing")
+                return self._sequential_hash_files(files)
 
             # Use parallel processing if beneficial
             if recommended_threads > 1:
                 logger.info(f"Using parallel processing with {recommended_threads} threads")
                 return self._parallel_hash_files(files, recommended_threads, storage_info)
             else:
-                logger.info(f"Using sequential processing (storage: {storage_info.drive_type.value})")
+                logger.info(f"Using sequential processing (storage: {storage_info.drive_type.value if storage_info else 'unknown'})")
 
         # Sequential processing (original implementation)
         return self._sequential_hash_files(files)
@@ -438,7 +641,7 @@ class UnifiedHashCalculator:
         return Result.success(results, metrics=self.metrics)
 
     def _parallel_hash_files(self, files: List[Path], max_workers: int,
-                            storage_info: 'StorageInfo') -> Result[Dict[str, HashResult]]:
+                            storage_info: Optional['StorageInfo']) -> Result[Dict[str, HashResult]]:
         """
         Memory-safe parallel hash calculation using ThreadPoolExecutor
 
@@ -448,7 +651,7 @@ class UnifiedHashCalculator:
         Args:
             files: List of files to hash
             max_workers: Number of parallel worker threads
-            storage_info: Storage characteristics (for logging)
+            storage_info: Storage characteristics (for logging), None if skipped
 
         Returns:
             Result[Dict] mapping file paths to HashResult objects
@@ -626,6 +829,9 @@ class UnifiedHashCalculator:
         """
         Bidirectional hash verification between source and target
 
+        Automatically uses parallel processing when beneficial based on storage type.
+        Falls back to sequential for safety if parallel processing fails.
+
         Args:
             source_paths: List of source file/folder paths
             target_paths: List of target file/folder paths
@@ -633,7 +839,35 @@ class UnifiedHashCalculator:
         Returns:
             Result[Dict] mapping file paths to VerificationResult objects
         """
-        # Hash both source and target
+        # Try parallel verification first if enabled
+        if self.enable_parallel and self.storage_detector:
+            try:
+                return self.verify_hashes_parallel(source_paths, target_paths)
+            except Exception as e:
+                logger.warning(f"Parallel verification failed: {e}, falling back to sequential")
+
+        # Sequential implementation (safety net) - call extracted method
+        return self._verify_hashes_sequential(source_paths, target_paths)
+
+    def _verify_hashes_sequential(
+        self,
+        source_paths: List[Path],
+        target_paths: List[Path]
+    ) -> Result[Dict[str, VerificationResult]]:
+        """
+        Sequential bidirectional hash verification
+
+        Used as fallback when parallel processing fails or is disabled.
+        Hashes source and target one after the other.
+
+        Args:
+            source_paths: List of source file/folder paths
+            target_paths: List of target file/folder paths
+
+        Returns:
+            Result[Dict] mapping file paths to VerificationResult objects
+        """
+        # Hash both source and target sequentially
         source_result = self.hash_files(source_paths)
         if not source_result.success:
             return Result.error(source_result.error)
@@ -642,13 +876,158 @@ class UnifiedHashCalculator:
         if not target_result.success:
             return Result.error(target_result.error)
 
-        source_hashes = source_result.value
-        target_hashes = target_result.value
+        # Compare hashes using extracted helper
+        verification_results = self._compare_hashes(
+            source_result.value,
+            target_result.value
+        )
 
-        # Compare hashes
+        # Verification complete - mismatches and missing files are RESULTS, not errors
+        # Return success with all verification results for UI to display
+        return Result.success(verification_results)
+
+    def verify_hashes_parallel(
+        self,
+        source_paths: List[Path],
+        target_paths: List[Path]
+    ) -> Result[Dict[str, VerificationResult]]:
+        """
+        Parallel bidirectional hash verification with independent storage optimization
+
+        Hashes source and target simultaneously, each with optimal thread allocation
+        based on detected storage type. Provides massive speedup for symmetric scenarios
+        (both NVMe/SSD) and efficient resource utilization for asymmetric scenarios.
+
+        Args:
+            source_paths: List of source file/folder paths
+            target_paths: List of target file/folder paths
+
+        Returns:
+            Result[Dict] mapping file paths to VerificationResult objects with
+            comprehensive metadata including storage detection and performance metrics
+        """
+        try:
+            # Step 1: Discover files from both sources
+            source_files = self.discover_files(source_paths)
+            target_files = self.discover_files(target_paths)
+
+            if not source_files:
+                error = HashCalculationError(
+                    "No source files found to verify",
+                    user_message="No valid files found in the source paths."
+                )
+                return Result.error(error)
+
+            if not target_files:
+                error = HashCalculationError(
+                    "No target files found to verify",
+                    user_message="No valid files found in the target paths."
+                )
+                return Result.error(error)
+
+            # Step 2: Independent storage detection
+            if not self.storage_detector:
+                logger.warning("StorageDetector unavailable, falling back to sequential")
+                return self.verify_hashes(source_paths, target_paths)
+
+            source_storage = self.storage_detector.analyze_path(source_files[0])
+            target_storage = self.storage_detector.analyze_path(target_files[0])
+
+            logger.info(f"Parallel verification starting:")
+            logger.info(f"  Source: {source_storage.drive_type.value} on {source_storage.drive_letter} "
+                       f"({source_storage.recommended_threads} threads, {source_storage.confidence:.0%} confidence)")
+            logger.info(f"  Target: {target_storage.drive_type.value} on {target_storage.drive_letter} "
+                       f"({target_storage.recommended_threads} threads, {target_storage.confidence:.0%} confidence)")
+
+            # Step 3: Calculate optimal thread allocation
+            source_threads = self.max_workers_override or source_storage.recommended_threads
+            target_threads = self.max_workers_override or target_storage.recommended_threads
+
+            # Step 4: Create progress aggregator
+            progress_aggregator = _VerificationProgressAggregator(
+                source_file_count=len(source_files),
+                target_file_count=len(target_files),
+                progress_callback=self.progress_callback
+            )
+
+            # Step 5: Create coordinator and run parallel hashing
+            coordinator = _VerificationCoordinator(
+                algorithm=self.algorithm,
+                source_paths=source_paths,
+                target_paths=target_paths,
+                source_threads=source_threads,
+                target_threads=target_threads,
+                progress_aggregator=progress_aggregator,
+                cancelled_check=self.cancelled_check,
+                enable_parallel=self.enable_parallel  # Pass parallel flag to prevent nested detection
+            )
+
+            source_result, target_result = coordinator.run_parallel()
+
+            # Step 6: Error handling
+            if not source_result.success:
+                return Result.error(source_result.error)
+            if not target_result.success:
+                return Result.error(target_result.error)
+
+            # Step 7: Compare hashes
+            verification_results = self._compare_hashes(
+                source_result.value,
+                target_result.value
+            )
+
+            # Step 8: Build comprehensive metadata
+            combined_metrics = self._build_combined_metrics(
+                source_result=source_result,
+                target_result=target_result,
+                source_storage=source_storage,
+                target_storage=target_storage,
+                source_threads=source_threads,
+                target_threads=target_threads,
+                verification_results=verification_results
+            )
+
+            # Step 9: Log completion with performance metrics
+            duration = combined_metrics['total_duration']
+            speed = combined_metrics['effective_speed_mbps']
+            source_speed = combined_metrics['source_speed_mbps']
+            target_speed = combined_metrics['target_speed_mbps']
+
+            logger.info(f"Parallel verification complete: {duration:.1f}s")
+            logger.info(f"  Source: {source_speed:.1f} MB/s | Target: {target_speed:.1f} MB/s | Combined: {speed:.1f} MB/s")
+
+            # Step 10: Return success with verification results (mismatches are results, not errors)
+            # The UI will handle displaying matched/mismatched/missing files
+            return Result.success(verification_results, **combined_metrics)
+
+        except Exception as e:
+            logger.error(f"Parallel verification crashed: {e}", exc_info=True)
+            logger.info("Falling back to sequential verification")
+            return self._verify_hashes_sequential(source_paths, target_paths)
+
+    def _compare_hashes(
+        self,
+        source_hashes: Dict[str, HashResult],
+        target_hashes: Dict[str, HashResult]
+    ) -> Dict[str, VerificationResult]:
+        """
+        Compare source and target hash results (bidirectional)
+
+        Extracted from verify_hashes() for reuse in parallel implementation.
+        Matches files by filename and compares hash values.
+        Also detects files that exist in target but not in source.
+
+        Args:
+            source_hashes: Dict mapping source file paths to HashResult objects
+            target_hashes: Dict mapping target file paths to HashResult objects
+
+        Returns:
+            Dict mapping file paths to VerificationResult objects
+        """
         verification_results = {}
-        mismatches = 0
+        matched_target_names = set()
 
+        # First pass: Check all source files
         for source_path, source_hash_result in source_hashes.items():
             source_name = Path(source_path).name
 
@@ -657,18 +1036,18 @@ class UnifiedHashCalculator:
             for target_path, target_hr in target_hashes.items():
                 if Path(target_path).name == source_name:
                     target_hash_result = target_hr
+                    matched_target_names.add(source_name)
                     break
 
             if target_hash_result is None:
-                # Missing target
+                # Missing from target
                 verification_results[source_path] = VerificationResult(
                     source_result=source_hash_result,
                     target_result=None,
                     match=False,
                     comparison_type='missing_target',
-                    notes=f"No matching target file found for {source_name}"
+                    notes=f"File exists in source but not in target: {source_name}"
                 )
-                mismatches += 1
             else:
                 # Compare hashes
                 match = source_hash_result.hash_value == target_hash_result.hash_value
@@ -676,21 +1055,108 @@ class UnifiedHashCalculator:
                     source_result=source_hash_result,
                     target_result=target_hash_result,
                     match=match,
-                    comparison_type='exact_match' if match else 'name_match',
+                    comparison_type='exact_match' if match else 'hash_mismatch',
                     notes="" if match else f"Hash mismatch: {source_hash_result.hash_value[:8]}... != {target_hash_result.hash_value[:8]}..."
                 )
-                if not match:
-                    mismatches += 1
 
-        # Check for mismatches
-        if mismatches > 0:
-            error = HashVerificationError(
-                f"Hash verification failed: {mismatches} mismatches found",
-                user_message=f"Hash verification failed for {mismatches} file(s). The files may be corrupted or different."
-            )
-            return Result.error(error, metadata=verification_results)
+        # Second pass: Check for files in target that don't exist in source
+        for target_path, target_hash_result in target_hashes.items():
+            target_name = Path(target_path).name
 
-        return Result.success(verification_results)
+            if target_name not in matched_target_names:
+                # Missing from source
+                verification_results[target_path] = VerificationResult(
+                    source_result=None,
+                    target_result=target_hash_result,
+                    match=False,
+                    comparison_type='missing_source',
+                    notes=f"File exists in target but not in source: {target_name}"
+                )
+
+        return verification_results
+
+    def _build_combined_metrics(
+        self,
+        source_result: Result,
+        target_result: Result,
+        source_storage: 'StorageInfo',
+        target_storage: 'StorageInfo',
+        source_threads: int,
+        target_threads: int,
+        verification_results: Dict[str, VerificationResult]
+    ) -> dict:
+        """
+        Build comprehensive combined metrics for UI and reporting
+
+        Args:
+            source_result: Result object from source hashing
+            target_result: Result object from target hashing
+            source_storage: Storage information for source
+            target_storage: Storage information for target
+            source_threads: Thread count used for source
+            target_threads: Thread count used for target
+            verification_results: Comparison results
+
+        Returns:
+            Dict with comprehensive metadata for UI display and reporting
+        """
+        source_metrics = source_result.metadata.get('metrics') if source_result.metadata else None
+        target_metrics = target_result.metadata.get('metrics') if target_result.metadata else None
+
+        # Calculate wall-clock duration (max of both since parallel)
+        total_duration = max(
+            source_metrics.duration if source_metrics else 0,
+            target_metrics.duration if target_metrics else 0
+        )
+
+        # Calculate effective throughput (total bytes / wall-clock time)
+        total_bytes = (
+            (source_metrics.processed_bytes if source_metrics else 0) +
+            (target_metrics.processed_bytes if target_metrics else 0)
+        )
+        effective_speed_mbps = (
+            (total_bytes / (1024 * 1024)) / total_duration
+            if total_duration > 0 else 0
+        )
+
+        # Calculate individual drive speeds
+        source_speed_mbps = source_metrics.average_speed_mbps if source_metrics else 0
+        target_speed_mbps = target_metrics.average_speed_mbps if target_metrics else 0
+
+        return {
+            # Source details
+            'source_metrics': source_metrics,
+            'source_storage': {
+                'drive_type': source_storage.drive_type.value,
+                'bus_type': source_storage.bus_type.value,
+                'drive_letter': source_storage.drive_letter,
+                'recommended_threads': source_storage.recommended_threads,
+                'confidence': source_storage.confidence
+            },
+            'source_threads_used': source_threads,
+            'source_speed_mbps': source_speed_mbps,
+
+            # Target details
+            'target_metrics': target_metrics,
+            'target_storage': {
+                'drive_type': target_storage.drive_type.value,
+                'bus_type': target_storage.bus_type.value,
+                'drive_letter': target_storage.drive_letter,
+                'recommended_threads': target_storage.recommended_threads,
+                'confidence': target_storage.confidence
+            },
+            'target_threads_used': target_threads,
+            'target_speed_mbps': target_speed_mbps,
+
+            # Combined metrics
+            'total_duration': total_duration,
+            'total_bytes_processed': total_bytes,
+            'effective_speed_mbps': effective_speed_mbps,
+            'execution_mode': 'parallel',
+
+            # Verification results
+            'verification_results': verification_results,
+        }
 
     def cancel(self):
         """Cancel the current operation"""

@@ -25,6 +25,7 @@ from ..components.base_operation_tab import BaseOperationTab
 from ..components.operation_log_console import OperationLogConsole
 from ...core.unified_hash_calculator import UnifiedHashCalculator
 from ...core.workers.verify_worker import VerifyWorker
+from ...core.storage_detector import StorageDetector
 from core.result_types import Result
 from core.logger import logger
 from core.hash_reports import HashReportGenerator
@@ -49,6 +50,8 @@ class VerifyHashesTab(BaseOperationTab):
         self.current_worker = None
         self.last_results = None
         self.hash_calculator = None
+        self.storage_detector = StorageDetector()
+        self._storage_cache = {}  # Cache storage detection results by drive letter
 
         self._create_ui()
         self._connect_signals()
@@ -248,6 +251,41 @@ class VerifyHashesTab(BaseOperationTab):
         report_layout.addWidget(self.include_missing_check)
 
         settings_layout.addWidget(report_group)
+
+        # Performance Information (NEW)
+        perf_group = QGroupBox("Performance Information")
+        perf_layout = QVBoxLayout(perf_group)
+
+        # Source storage detection
+        source_storage_layout = QHBoxLayout()
+        source_storage_layout.addWidget(QLabel("Source Storage:"))
+        self.source_storage_label = QLabel("Not detected")
+        self.source_storage_label.setObjectName("mutedText")
+        self.source_storage_label.setToolTip("Detected storage type and recommended thread count")
+        source_storage_layout.addWidget(self.source_storage_label)
+        source_storage_layout.addStretch()
+        perf_layout.addLayout(source_storage_layout)
+
+        # Target storage detection
+        target_storage_layout = QHBoxLayout()
+        target_storage_layout.addWidget(QLabel("Target Storage:"))
+        self.target_storage_label = QLabel("Not detected")
+        self.target_storage_label.setObjectName("mutedText")
+        self.target_storage_label.setToolTip("Detected storage type and recommended thread count")
+        target_storage_layout.addWidget(self.target_storage_label)
+        target_storage_layout.addStretch()
+        perf_layout.addLayout(target_storage_layout)
+
+        # Parallel processing info (read-only)
+        self.parallel_info_label = QLabel("Parallel processing: Enabled (auto-detect)")
+        self.parallel_info_label.setObjectName("mutedText")
+        self.parallel_info_label.setToolTip(
+            "Both sources will be hashed simultaneously with optimal thread allocation.\n"
+            "NVMe drives: 16+ threads | SATA SSD: 8 threads | External SSD: 4 threads | HDD: 1 thread"
+        )
+        perf_layout.addWidget(self.parallel_info_label)
+
+        settings_layout.addWidget(perf_group)
         settings_layout.addStretch()
 
         scroll_area.setWidget(settings_container)
@@ -417,6 +455,113 @@ class VerifyHashesTab(BaseOperationTab):
         self.target_clear_btn.setEnabled(has_target)
         self.verify_btn.setEnabled(has_source and has_target and not self.operation_active)
 
+        # Update storage detection
+        if has_source:
+            self._update_source_storage_detection()
+        else:
+            self.source_storage_label.setText("Not detected")
+
+        if has_target:
+            self._update_target_storage_detection()
+        else:
+            self.target_storage_label.setText("Not detected")
+
+    def _update_source_storage_detection(self):
+        """Update source storage detection display (with caching to prevent redundant detection)"""
+        try:
+            # Use first path for detection (representative sample)
+            if not self.source_paths:
+                return
+
+            first_path = self.source_paths[0]
+
+            # Extract drive letter for caching
+            drive_letter = str(first_path.drive) if hasattr(first_path, 'drive') and first_path.drive else str(first_path.resolve().drive)
+
+            # Check cache first - avoid redundant detection
+            if drive_letter in self._storage_cache:
+                storage_info = self._storage_cache[drive_letter]
+            else:
+                # Cache miss - perform detection
+                storage_info = self.storage_detector.analyze_path(first_path)
+                self._storage_cache[drive_letter] = storage_info
+
+            # Format display with color coding
+            display_text = f"{storage_info.drive_type.value} on {storage_info.drive_letter} | {storage_info.recommended_threads} threads"
+
+            # Color code by confidence
+            if storage_info.confidence > 0.8:
+                color = "#28a745"  # Green
+            elif storage_info.confidence > 0.6:
+                color = "#ffc107"  # Yellow
+            else:
+                color = "#6c757d"  # Gray
+
+            self.source_storage_label.setText(display_text)
+            self.source_storage_label.setStyleSheet(f"color: {color};")
+
+            # Update tooltip with technical details
+            tooltip = (
+                f"Drive Type: {storage_info.drive_type.value}\n"
+                f"Bus Type: {storage_info.bus_type.value}\n"
+                f"Recommended Threads: {storage_info.recommended_threads}\n"
+                f"Detection Method: {storage_info.detection_method}\n"
+                f"Confidence: {storage_info.confidence:.0%}"
+            )
+            self.source_storage_label.setToolTip(tooltip)
+
+        except Exception as e:
+            self.source_storage_label.setText(f"Detection failed: {str(e)[:30]}")
+            self.source_storage_label.setStyleSheet("color: #dc3545;")  # Red
+
+    def _update_target_storage_detection(self):
+        """Update target storage detection display (with caching to prevent redundant detection)"""
+        try:
+            # Use first path for detection (representative sample)
+            if not self.target_paths:
+                return
+
+            first_path = self.target_paths[0]
+
+            # Extract drive letter for caching
+            drive_letter = str(first_path.drive) if hasattr(first_path, 'drive') and first_path.drive else str(first_path.resolve().drive)
+
+            # Check cache first - avoid redundant detection
+            if drive_letter in self._storage_cache:
+                storage_info = self._storage_cache[drive_letter]
+            else:
+                # Cache miss - perform detection
+                storage_info = self.storage_detector.analyze_path(first_path)
+                self._storage_cache[drive_letter] = storage_info
+
+            # Format display with color coding
+            display_text = f"{storage_info.drive_type.value} on {storage_info.drive_letter} | {storage_info.recommended_threads} threads"
+
+            # Color code by confidence
+            if storage_info.confidence > 0.8:
+                color = "#28a745"  # Green
+            elif storage_info.confidence > 0.6:
+                color = "#ffc107"  # Yellow
+            else:
+                color = "#6c757d"  # Gray
+
+            self.target_storage_label.setText(display_text)
+            self.target_storage_label.setStyleSheet(f"color: {color};")
+
+            # Update tooltip with technical details
+            tooltip = (
+                f"Drive Type: {storage_info.drive_type.value}\n"
+                f"Bus Type: {storage_info.bus_type.value}\n"
+                f"Recommended Threads: {storage_info.recommended_threads}\n"
+                f"Detection Method: {storage_info.detection_method}\n"
+                f"Confidence: {storage_info.confidence:.0%}"
+            )
+            self.target_storage_label.setToolTip(tooltip)
+
+        except Exception as e:
+            self.target_storage_label.setText(f"Detection failed: {str(e)[:30]}")
+            self.target_storage_label.setStyleSheet("color: #dc3545;")  # Red
+
     def _get_selected_algorithm(self) -> str:
         """Get selected algorithm"""
         if self.sha256_radio.isChecked():
@@ -470,21 +615,86 @@ class VerifyHashesTab(BaseOperationTab):
         if result.success:
             self.last_results = result.value
             total = len(result.value)
-            matches = sum(1 for vr in result.value.values() if vr.match)
-            mismatches = total - matches
 
-            # Update statistics
+            # NEW: Count all four categories
+            matches = sum(1 for vr in result.value.values() if vr.match)
+            mismatches = sum(1 for vr in result.value.values() if vr.comparison_type == 'hash_mismatch')
+            missing_target = sum(1 for vr in result.value.values() if vr.comparison_type == 'missing_target')
+            missing_source = sum(1 for vr in result.value.values() if vr.comparison_type == 'missing_source')
+
+            # Extract metrics from Result metadata (NEW: parallel verification includes metrics)
+            combined_speed = 0
+            source_speed = 0
+            target_speed = 0
+
+            if result.metadata:
+                # Get individual drive speeds
+                source_speed = result.metadata.get('source_speed_mbps', 0)
+                target_speed = result.metadata.get('target_speed_mbps', 0)
+                combined_speed = result.metadata.get('effective_speed_mbps', 0)
+
+                # Fallback calculation if parallel metadata not available
+                if combined_speed == 0 and 'source_metrics' in result.metadata and 'target_metrics' in result.metadata:
+                    source_metrics = result.metadata.get('source_metrics')
+                    target_metrics = result.metadata.get('target_metrics')
+
+                    if source_metrics and target_metrics:
+                        source_speed = source_metrics.average_speed_mbps if source_metrics else 0
+                        target_speed = target_metrics.average_speed_mbps if target_metrics else 0
+
+                        total_bytes = (
+                            (source_metrics.processed_bytes if source_metrics else 0) +
+                            (target_metrics.processed_bytes if target_metrics else 0)
+                        )
+                        total_duration = max(
+                            source_metrics.duration if source_metrics else 0,
+                            target_metrics.duration if target_metrics else 0
+                        )
+                        if total_duration > 0:
+                            combined_speed = (total_bytes / (1024 * 1024)) / total_duration
+
+            # Update statistics with proper null safety
             self.update_stats(
                 total=total,
                 success=matches,
-                failed=mismatches,
-                speed=0  # No speed for verification
+                failed=mismatches + missing_target + missing_source,  # All non-matches are "failures"
+                speed=combined_speed
             )
 
+            # NEW: Detailed summary with all four categories
+            self.success("=" * 60)
+            self.success("VERIFICATION COMPLETE")
+            self.success("=" * 60)
+            self.success(f"Matched:              {matches:>4}")
             if mismatches > 0:
-                self.warning(f"Verification complete: {matches} matched, {mismatches} mismatched")
+                self.warning(f"Mismatched:           {mismatches:>4}  (Hash differs)")
             else:
-                self.success(f"Verification complete: All {matches} files matched!")
+                self.success(f"Mismatched:           {mismatches:>4}")
+
+            if missing_target > 0:
+                self.warning(f"Missing from Target:  {missing_target:>4}  (In source only)")
+            else:
+                self.success(f"Missing from Target:  {missing_target:>4}")
+
+            if missing_source > 0:
+                self.warning(f"Missing from Source:  {missing_source:>4}  (In target only)")
+            else:
+                self.success(f"Missing from Source:  {missing_source:>4}")
+
+            self.success(f"{'─' * 60}")
+            self.success(f"Total Files:          {total:>4}")
+
+            # Performance metrics
+            if source_speed > 0 or target_speed > 0:
+                self.success(f"\nPERFORMANCE:")
+                if source_speed > 0:
+                    self.info(f"  Source Hashing Speed: {source_speed:>8.1f} MB/s")
+                if target_speed > 0:
+                    self.info(f"  Target Hashing Speed: {target_speed:>8.1f} MB/s")
+                if combined_speed > 0:
+                    self.info(f"  Combined Throughput:  {combined_speed:>8.1f} MB/s")
+
+            self.success("=" * 60)
 
             # Offer to export CSV
             if self.generate_csv_check.isChecked():
