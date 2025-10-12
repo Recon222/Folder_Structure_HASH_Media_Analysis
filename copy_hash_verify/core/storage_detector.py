@@ -526,14 +526,34 @@ class StorageDetector:
             StorageInfo with moderate confidence (0.7) if successful
         """
         try:
-            # Check if we can write test file
+            # ALWAYS use temp directory to avoid OneDrive/cloud sync/permissions issues
+            # while keeping the test on the same physical drive
             test_dir = path if path.is_dir() else path.parent
 
-            # Use temp directory if we can't write to target
-            if not os.access(test_dir, os.W_OK):
-                import tempfile
-                test_dir = Path(tempfile.gettempdir())
-                logger.debug(f"Cannot write to {path}, using temp dir for test")
+            import tempfile
+
+            # Try to use temp on SAME DRIVE as target path to ensure accurate testing
+            if self.is_windows and drive_letter:
+                # Windows: Try {DriveLetter}:\Temp\ first (avoids OneDrive, stays on same drive)
+                drive_root = drive_letter.rstrip('\\') + '\\'
+                drive_temp = Path(drive_root) / "Temp"
+
+                try:
+                    drive_temp.mkdir(parents=True, exist_ok=True)
+                    if os.access(drive_temp, os.W_OK):
+                        test_dir = drive_temp
+                        logger.debug(f"Using drive-specific temp for performance test: {test_dir}")
+                    else:
+                        # Can't write to drive temp, use original path (same drive)
+                        logger.debug(f"Cannot write to {drive_temp}, using original path: {test_dir}")
+                except (OSError, PermissionError) as e:
+                    # Failed to create drive temp, use original path (same drive)
+                    logger.debug(f"Failed to create {drive_temp}: {e}, using original path: {test_dir}")
+            else:
+                # Non-Windows or no drive letter - keep original behavior
+                if not os.access(test_dir, os.W_OK):
+                    test_dir = Path(tempfile.gettempdir())
+                    logger.debug(f"Cannot write to {path}, using system temp: {test_dir}")
 
             # Small I/O test (10MB read)
             test_size = 10 * 1024 * 1024  # 10MB
