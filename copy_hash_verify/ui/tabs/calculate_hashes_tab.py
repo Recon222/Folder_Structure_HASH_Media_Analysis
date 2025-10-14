@@ -24,8 +24,8 @@ from PySide6.QtWidgets import (
 
 from ..components.base_operation_tab import BaseOperationTab
 from ..components.operation_log_console import OperationLogConsole
-from ...core.unified_hash_calculator import UnifiedHashCalculator
-from ...core.workers.hash_worker import HashWorker
+from ...controllers.hash_calculation_controller import HashCalculationController, HashCalculationSettings
+from ...services.success_message_builder import SuccessMessageBuilder
 from core.result_types import Result
 from core.logger import logger
 from core.hash_reports import HashReportGenerator
@@ -44,11 +44,14 @@ class CalculateHashesTab(BaseOperationTab):
         """
         super().__init__("Calculate Hashes", shared_logger, parent)
 
+        # Controller and services (SOA/DI pattern)
+        self.controller = HashCalculationController()
+        self.success_builder = SuccessMessageBuilder()
+
         # State
         self.selected_paths: List[Path] = []
         self.current_worker = None
         self.last_results = None
-        self.hash_calculator = None
 
         self._create_ui()
         self._connect_signals()
@@ -347,7 +350,7 @@ class CalculateHashesTab(BaseOperationTab):
             self._update_ui_state()
 
     def _add_folder(self):
-        """Add folder to hash"""
+        """Add folder to hash - expands to individual files for accurate counting"""
         folder_path = QFileDialog.getExistingDirectory(
             self,
             "Select Folder to Hash",
@@ -355,12 +358,21 @@ class CalculateHashesTab(BaseOperationTab):
         )
 
         if folder_path:
-            path = Path(folder_path)
-            if path not in self.selected_paths:
-                self.selected_paths.append(path)
+            folder = Path(folder_path)
+
+            # Recursively add all files from folder (not the folder itself)
+            added = 0
+            for file_path in folder.rglob('*'):
+                if file_path.is_file():
+                    if file_path not in self.selected_paths:
+                        self.selected_paths.append(file_path)
+                        added += 1
 
             self._rebuild_file_tree()
             self._update_ui_state()
+
+            if added > 0:
+                self.info(f"Added {added} file(s) from folder")
 
     def _clear_files(self):
         """Clear all files"""
@@ -373,24 +385,71 @@ class CalculateHashesTab(BaseOperationTab):
             self.stats_group.setVisible(False)
 
     def _rebuild_file_tree(self):
-        """Rebuild file tree from selected paths"""
+        """Rebuild file tree with hierarchical folder structure"""
         self.file_tree.clear()
 
         if not self.selected_paths:
             return
 
-        for path in sorted(self.selected_paths):
-            if path.is_file():
-                item = QTreeWidgetItem()
-                item.setText(0, f"📄 {path.name}")
-                item.setData(0, Qt.UserRole, str(path))
-                self.file_tree.addTopLevelItem(item)
-            else:
-                item = QTreeWidgetItem()
-                item.setText(0, f"📁 {path.name}")
-                item.setData(0, Qt.UserRole, str(path))
-                self.file_tree.addTopLevelItem(item)
+        # Find common root path
+        if len(self.selected_paths) == 1:
+            common_root = self.selected_paths[0].parent
+        else:
+            # Find common ancestor
+            all_parts = [list(f.parents)[::-1] for f in self.selected_paths]
+            common_root = None
+            for parts in zip(*all_parts):
+                if len(set(parts)) == 1:
+                    common_root = parts[0]
+                else:
+                    break
 
+        if common_root is None:
+            common_root = Path("/")
+
+        # Build folder hierarchy
+        folder_items = {}  # Path -> QTreeWidgetItem
+
+        for file_path in sorted(self.selected_paths):
+            # Get relative path from common root
+            try:
+                rel_path = file_path.relative_to(common_root)
+            except ValueError:
+                # File not under common root, use full path
+                rel_path = file_path
+
+            # Create folder items for all parent directories
+            current_parent = None
+            for i, part in enumerate(rel_path.parts[:-1]):
+                # Build path up to this level
+                partial_path = common_root / Path(*rel_path.parts[:i+1])
+
+                if partial_path not in folder_items:
+                    # Create folder item
+                    folder_item = QTreeWidgetItem()
+                    folder_item.setText(0, f"📁 {part}")
+                    folder_item.setData(0, Qt.UserRole, str(partial_path))
+
+                    if current_parent is None:
+                        self.file_tree.addTopLevelItem(folder_item)
+                    else:
+                        current_parent.addChild(folder_item)
+
+                    folder_items[partial_path] = folder_item
+
+                current_parent = folder_items[partial_path]
+
+            # Add file item
+            file_item = QTreeWidgetItem()
+            file_item.setText(0, f"📄 {file_path.name}")
+            file_item.setData(0, Qt.UserRole, str(file_path))
+
+            if current_parent is None:
+                self.file_tree.addTopLevelItem(file_item)
+            else:
+                current_parent.addChild(file_item)
+
+        # Expand all folders by default
         self.file_tree.expandAll()
 
     def _update_ui_state(self):
@@ -421,15 +480,24 @@ class CalculateHashesTab(BaseOperationTab):
             self.storage_info_label.setText("Storage: Not detected yet")
             return
 
-        try:
-            from ...core.storage_detector import StorageDetector
+        # Use first path for detection (all paths typically on same drive)
+        first_path = self.selected_paths[0]
 
-            # Use first path for detection (all paths typically on same drive)
-            first_path = self.selected_paths[0]
+        # Delegate to controller
+        result = self.controller.detect_storage(first_path)
 
-            # Detect storage
-            detector = StorageDetector()
-            info = detector.analyze_path(first_path)
+        if result.success:
+            info = result.value
+
+            # Calculate optimal threads using ThreadCalculator
+            from ...utils.thread_calculator import ThreadCalculator
+            calculator = ThreadCalculator()
+            threads = calculator.calculate_optimal_threads(
+                source_info=info,
+                dest_info=None,  # Hash operation, no destination
+                file_count=len(self.selected_paths),
+                operation_type="hash"
+            )
 
             # Format display text
             drive_type_display = {
@@ -454,7 +522,7 @@ class CalculateHashesTab(BaseOperationTab):
             display_text = (
                 f'<span style="color: {color};">'
                 f'{drive_type_display} on {info.drive_letter} | '
-                f'{info.recommended_threads} threads '
+                f'{threads} threads '
                 f'({confidence_pct}% confidence)'
                 f'</span>'
             )
@@ -463,14 +531,15 @@ class CalculateHashesTab(BaseOperationTab):
             self.storage_info_label.setToolTip(
                 f"Drive Type: {drive_type_display}\n"
                 f"Bus Type: {info.bus_type.name}\n"
-                f"Recommended Threads: {info.recommended_threads}\n"
+                f"Recommended Threads: {threads}\n"
+                f"File Count: {len(self.selected_paths)}\n"
                 f"Detection Method: {info.detection_method}\n"
                 f"Confidence: {confidence_pct}%"
             )
-
-        except Exception as e:
-            logger.debug(f"Failed to detect storage: {e}")
+        else:
+            # Storage detection failed, show error
             self.storage_info_label.setText("Storage: Detection failed")
+            logger.debug(f"Storage detection failed: {result.error.user_message}")
 
     def _get_selected_algorithm(self) -> str:
         """Get currently selected algorithm"""
@@ -497,6 +566,15 @@ class CalculateHashesTab(BaseOperationTab):
         # Save settings
         self._save_settings()
 
+        # Create settings object
+        settings = HashCalculationSettings(
+            algorithm=algorithm,
+            enable_parallel=enable_parallel,
+            max_workers_override=thread_override,
+            generate_csv=self.generate_csv_check.isChecked(),
+            include_metadata=self.include_metadata_check.isChecked()
+        )
+
         # Log configuration
         if enable_parallel:
             if thread_override:
@@ -514,16 +592,26 @@ class CalculateHashesTab(BaseOperationTab):
         self.add_files_btn.setEnabled(False)
         self.add_folder_btn.setEnabled(False)
 
-        # Create and start worker thread with parallel processing config
-        self.current_worker = HashWorker(
+        # Delegate to controller
+        result = self.controller.start_hash_calculation_workflow(
             paths=self.selected_paths,
-            algorithm=algorithm,
-            enable_parallel=enable_parallel,
-            max_workers_override=thread_override
+            settings=settings
         )
-        self.current_worker.progress_update.connect(self._on_progress)
-        self.current_worker.result_ready.connect(self._on_calculation_complete)
-        self.current_worker.start()
+
+        if result.success:
+            # Controller returns worker
+            self.current_worker = result.value
+            self.current_worker.progress_update.connect(self._on_progress)
+            self.current_worker.result_ready.connect(self._on_calculation_complete)
+            self.current_worker.start()
+        else:
+            # Workflow failed to start
+            self.set_operation_active(False)
+            self.error(f"Failed to start hash calculation: {result.error.user_message}")
+            self.calculate_btn.setEnabled(True)
+            self.cancel_btn.setEnabled(False)
+            self.add_files_btn.setEnabled(True)
+            self.add_folder_btn.setEnabled(True)
 
     def _on_progress(self, percentage: int, message: str):
         """Handle progress update"""
@@ -620,8 +708,7 @@ class CalculateHashesTab(BaseOperationTab):
 
     def cleanup(self):
         """Clean up resources"""
-        if self.current_worker and self.current_worker.isRunning():
-            self.current_worker.cancel()
-            self.current_worker.wait(3000)
+        if self.controller:
+            self.controller.cleanup()
         self.current_worker = None
         self.last_results = None
