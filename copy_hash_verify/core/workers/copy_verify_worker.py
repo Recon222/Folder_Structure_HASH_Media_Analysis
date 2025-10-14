@@ -8,12 +8,15 @@ BufferedFileOperations for optimal performance.
 
 from pathlib import Path
 from typing import List, Dict
+from threading import Lock
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from PySide6.QtCore import QThread, Signal
 
 from core.buffered_file_ops import BufferedFileOperations
 from core.result_types import Result, FileOperationResult
 from core.logger import logger
+from copy_hash_verify.core.storage_detector import StorageDetector, DriveType
 
 
 class CopyVerifyWorker(QThread):
@@ -121,13 +124,38 @@ class CopyVerifyWorker(QThread):
                 f"preserve_structure={self.preserve_structure}"
             )
 
-            # Copy files with structure preservation using internal method
-            # This method supports (type, path, relative_path) tuples
-            result = self.file_ops._copy_files_internal(
-                all_items,
-                self.destination,
-                calculate_hash=True  # Always calculate hashes for verification
+            # Detect storage characteristics and select optimal strategy
+            detector = StorageDetector()
+
+            # Use first source path for storage detection (representative sample)
+            source_for_detection = self.source_paths[0]
+            source_info = detector.analyze_path(source_for_detection)
+            dest_info = detector.analyze_path(self.destination)
+
+            logger.info(
+                f"Storage detection:\n"
+                f"  Source: {source_info.drive_type.value} on {source_info.drive_letter} "
+                f"({source_info.recommended_threads} threads recommended)\n"
+                f"  Destination: {dest_info.drive_type.value} on {dest_info.drive_letter} "
+                f"({dest_info.recommended_threads} threads recommended)"
             )
+
+            # Decision logic: Choose sequential or parallel copying
+            threads = self._select_thread_count(source_info, dest_info, len(all_items))
+
+            # Execute copy with selected strategy
+            if threads > 1 and len(all_items) > 1:
+                # Parallel copying for SSD/NVMe with multiple files
+                logger.info(f"Using parallel copy strategy with {threads} threads")
+                result = self._copy_files_parallel(all_items, threads)
+            else:
+                # Sequential copying (HDD, single file, or fallback)
+                logger.info("Using sequential copy strategy")
+                result = self.file_ops._copy_files_internal(
+                    all_items,
+                    self.destination,
+                    calculate_hash=True
+                )
 
             # Convert FileOperationResult to Result for unified interface
             if result.success:
@@ -151,6 +179,226 @@ class CopyVerifyWorker(QThread):
                 user_message="An unexpected error occurred during file copy operation."
             )
             self.result_ready.emit(Result.error(error))
+
+    def _select_thread_count(self, source_info, dest_info, file_count: int) -> int:
+        """
+        Select optimal thread count based on storage characteristics.
+
+        Args:
+            source_info: Source storage information
+            dest_info: Destination storage information
+            file_count: Number of files to copy
+
+        Returns:
+            Optimal thread count (1 for sequential, >1 for parallel)
+        """
+        # Rule 1: HDD detected -> Sequential (CRITICAL - parallelism degrades HDD performance)
+        if source_info.drive_type in (DriveType.HDD, DriveType.EXTERNAL_HDD):
+            logger.info("Source is HDD - using sequential to avoid seek penalty")
+            return 1
+
+        if dest_info.drive_type in (DriveType.HDD, DriveType.EXTERNAL_HDD):
+            logger.info("Destination is HDD - using sequential to avoid seek penalty")
+            return 1
+
+        # Rule 2: Single file -> Sequential (no parallelism benefit)
+        if file_count == 1:
+            logger.info("Single file - using sequential copy")
+            return 1
+
+        # Rule 3: Both SSD/NVMe -> Parallel with optimal thread count
+        if source_info.drive_type in (DriveType.SSD, DriveType.NVME, DriveType.EXTERNAL_SSD):
+            if dest_info.drive_type in (DriveType.SSD, DriveType.NVME, DriveType.EXTERNAL_SSD):
+                # Use minimum of source and dest recommendations
+                threads = min(source_info.recommended_threads, dest_info.recommended_threads)
+                # Cap at 16 threads for stability
+                threads = min(threads, 16)
+                # Minimum 2 for parallel strategy
+                threads = max(threads, 2)
+                logger.info(
+                    f"Both {source_info.drive_type.value} and {dest_info.drive_type.value} - "
+                    f"using {threads} threads"
+                )
+                return threads
+
+        # Rule 4: Unknown storage -> Sequential (safe fallback)
+        logger.info("Unknown or mixed storage - using sequential for safety")
+        return 1
+
+    def _copy_files_parallel(self, all_items: List, threads: int) -> FileOperationResult:
+        """
+        Copy files in parallel using ThreadPoolExecutor.
+
+        Args:
+            all_items: List of (type, source_path, relative_path) tuples
+            threads: Number of parallel worker threads
+
+        Returns:
+            FileOperationResult with aggregated results
+        """
+        import time
+
+        start_time = time.time()
+        total_files = len(all_items)
+        total_bytes = sum(item[1].stat().st_size for item in all_items if item[1].exists())
+
+        # Thread-safe progress tracking
+        completed_files = 0
+        completed_bytes = 0
+        progress_lock = Lock()
+        results_dict = {}
+
+        def update_progress(bytes_delta: int, file_completed: bool):
+            """Thread-safe progress update"""
+            nonlocal completed_files, completed_bytes
+
+            with progress_lock:
+                completed_bytes += bytes_delta
+                if file_completed:
+                    completed_files += 1
+
+                # Calculate progress percentage
+                if total_bytes > 0:
+                    percentage = int((completed_bytes / total_bytes) * 100)
+                else:
+                    percentage = int((completed_files / total_files) * 100)
+
+                # Emit progress update
+                self._on_progress(
+                    percentage,
+                    f"Copied {completed_files}/{total_files} files"
+                )
+
+        # Execute parallel copying
+        with ThreadPoolExecutor(max_workers=threads) as executor:
+            # Submit all copy tasks
+            futures = {}
+            for item_type, source_path, relative_path in all_items:
+                if self._is_cancelled:
+                    break
+
+                future = executor.submit(
+                    self._copy_single_file,
+                    source_path,
+                    relative_path,
+                    update_progress
+                )
+                futures[future] = (source_path, relative_path)
+
+            # Process completed tasks
+            for future in as_completed(futures):
+                if self._is_cancelled:
+                    logger.info("Parallel copy cancelled by user")
+                    break
+
+                source_path, relative_path = futures[future]
+
+                try:
+                    result = future.result()
+                    key = str(relative_path) if relative_path else source_path.name
+                    results_dict[key] = result
+
+                except Exception as e:
+                    logger.error(f"Failed to copy {source_path.name}: {e}")
+                    key = str(relative_path) if relative_path else source_path.name
+                    results_dict[key] = {'error': str(e), 'success': False}
+
+        # Calculate final metrics
+        duration = time.time() - start_time
+        speed_mbps = (completed_bytes / (1024 * 1024)) / duration if duration > 0 else 0
+
+        logger.info(
+            f"Parallel copy completed: {completed_files}/{total_files} files, "
+            f"{completed_bytes / (1024*1024):.1f} MB in {duration:.1f}s ({speed_mbps:.1f} MB/s)"
+        )
+
+        # Create FileOperationResult
+        from core.exceptions import FileOperationError
+
+        success = completed_files == total_files and not self._is_cancelled
+
+        if not success and self._is_cancelled:
+            error = FileOperationError(
+                "Copy operation cancelled by user",
+                user_message="Operation was cancelled."
+            )
+        elif not success:
+            error = FileOperationError(
+                f"Some files failed to copy: {completed_files}/{total_files} succeeded",
+                user_message=f"Only {completed_files} of {total_files} files were copied successfully."
+            )
+        else:
+            error = None
+
+        return FileOperationResult(
+            success=success,
+            files_processed=completed_files,
+            bytes_processed=completed_bytes,
+            results=results_dict,
+            error=error
+        )
+
+    def _copy_single_file(self, source_path: Path, relative_path, progress_callback) -> Dict:
+        """
+        Copy a single file (runs in worker thread).
+
+        Args:
+            source_path: Source file path
+            relative_path: Relative path for destination (or None for flat copy)
+            progress_callback: Callback to update progress (bytes_delta, file_completed)
+
+        Returns:
+            Dictionary with copy results
+        """
+        try:
+            # Calculate destination path
+            if relative_path:
+                dest_path = self.destination / relative_path
+            else:
+                dest_path = self.destination / source_path.name
+
+            # Create parent directory if needed
+            dest_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # Get file size for progress tracking
+            file_size = source_path.stat().st_size
+
+            # Create BufferedFileOperations for this thread
+            file_ops = BufferedFileOperations(
+                progress_callback=None,  # No per-file progress in parallel mode
+                cancelled_check=self._check_cancelled,
+                pause_check=None  # Pause not supported in parallel mode
+            )
+
+            # Copy file with hash verification
+            copy_result = file_ops.copy_file_buffered(
+                source_path,
+                dest_path,
+                calculate_hash=True
+            )
+
+            # Update progress
+            progress_callback(file_size, True)
+
+            if copy_result.success:
+                return copy_result.value
+            else:
+                logger.error(f"Copy failed for {source_path.name}: {copy_result.error}")
+                return {
+                    'error': str(copy_result.error),
+                    'success': False,
+                    'source_path': str(source_path),
+                    'dest_path': str(dest_path)
+                }
+
+        except Exception as e:
+            logger.error(f"Exception copying {source_path}: {e}", exc_info=True)
+            progress_callback(0, True)  # Mark file as attempted
+            return {
+                'error': str(e),
+                'success': False,
+                'source_path': str(source_path)
+            }
 
     def _on_progress(self, percentage: int, message: str):
         """
