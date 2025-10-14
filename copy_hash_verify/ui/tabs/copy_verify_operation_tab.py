@@ -25,7 +25,8 @@ from PySide6.QtWidgets import (
 from ..components.base_operation_tab import BaseOperationTab
 from ..components.operation_log_console import OperationLogConsole
 from ...core.unified_hash_calculator import UnifiedHashCalculator
-from ...core.workers.copy_verify_worker import CopyVerifyWorker
+from ...controllers import CopyHashVerifyController, CopyVerifySettings
+from ...services import SuccessMessageBuilder
 from core.result_types import Result
 from core.logger import logger
 from core.hash_operations import HashResult, VerificationResult
@@ -52,6 +53,10 @@ class CopyVerifyOperationTab(BaseOperationTab):
         self.last_results = None
         self.is_paused = False
         self.file_ops = None
+
+        # Controller and services (SOA/DI pattern)
+        self.controller = CopyHashVerifyController()
+        self.success_builder = SuccessMessageBuilder()
 
         self._create_ui()
         self._connect_signals()
@@ -412,7 +417,7 @@ class CopyVerifyOperationTab(BaseOperationTab):
             return 'md5'
 
     def _start_copy_operation(self):
-        """Start copy and verify operation in background thread"""
+        """Start copy and verify operation via controller (SOA pattern)"""
         if not self.source_paths:
             self.error("No files selected")
             return
@@ -442,39 +447,55 @@ class CopyVerifyOperationTab(BaseOperationTab):
         # Save settings
         self._save_settings()
 
-        # Get algorithm
-        algorithm = self._get_selected_algorithm()
-        preserve_structure = self.preserve_structure_check.isChecked()
+        # Build settings from UI
+        settings = CopyVerifySettings(
+            algorithm=self._get_selected_algorithm(),
+            preserve_structure=self.preserve_structure_check.isChecked(),
+            generate_csv=self.generate_csv_check.isChecked(),
+            calculate_hashes=self.verify_hashes_check.isChecked()
+        )
 
-        self.info(f"Starting copy operation with {algorithm.upper()} verification")
+        self.info(f"Starting copy operation with {settings.algorithm.upper()} verification")
         self.info(f"Destination: {self.destination_path}")
-        self.set_operation_active(True)
 
-        # Update UI
-        self.copy_btn.setEnabled(False)
-        self.pause_btn.setEnabled(True)
-        self.cancel_btn.setEnabled(True)
-        self.add_files_btn.setEnabled(False)
-        self.add_folder_btn.setEnabled(False)
-        self.browse_dest_btn.setEnabled(False)
-
-        # Create and start worker thread
-        self.current_worker = CopyVerifyWorker(
+        # DELEGATE TO CONTROLLER (not creating worker ourselves!)
+        result = self.controller.start_copy_verify_workflow(
             source_paths=self.source_paths,
             destination=self.destination_path,
-            algorithm=algorithm,
-            preserve_structure=preserve_structure
+            settings=settings
         )
-        self.current_worker.progress_update.connect(self._on_progress)
-        self.current_worker.result_ready.connect(self._on_copy_complete)
-        self.current_worker.start()
+
+        if result.success:
+            # Get worker from controller result
+            self.current_worker = result.value
+
+            # Connect signals
+            self.current_worker.result_ready.connect(self._on_copy_complete)
+            self.current_worker.progress_update.connect(self._on_progress)
+
+            # Start worker
+            self.current_worker.start()
+
+            # Update UI state
+            self.set_operation_active(True)
+            self.copy_btn.setEnabled(False)
+            self.pause_btn.setEnabled(True)
+            self.cancel_btn.setEnabled(True)
+            self.add_files_btn.setEnabled(False)
+            self.add_folder_btn.setEnabled(False)
+            self.browse_dest_btn.setEnabled(False)
+        else:
+            # Show validation error from controller
+            error_msg = result.error.user_message if result.error else "Unknown error"
+            self.error(error_msg)
+            logger.error(f"Failed to start copy workflow: {result.error}")
 
     def _on_progress(self, percentage: int, message: str):
         """Handle progress update"""
         self.update_progress(percentage, message)
 
     def _on_copy_complete(self, result: Result):
-        """Handle copy operation completion"""
+        """Handle copy operation completion with success message builder"""
         self.set_operation_active(False)
 
         # Update UI
@@ -488,26 +509,38 @@ class CopyVerifyOperationTab(BaseOperationTab):
         if result.success:
             # Result.value contains the hash results dict
             hash_results = result.value
-            total_files = len(hash_results)
 
-            # Calculate stats
-            total_size = sum(
-                hash_results[path].get('size', 0)
-                for path in hash_results
-                if isinstance(hash_results[path], dict)
-            )
+            # Extract operation metadata
+            perf_stats = hash_results.get('_performance_stats', {})
+            total_files = perf_stats.get('files_copied', len(hash_results) - 1)  # -1 for _performance_stats key
+            total_size = perf_stats.get('total_bytes', 0)
+            duration = perf_stats.get('total_time', 0)
+            avg_speed = perf_stats.get('avg_speed_mb_s', 0)
+            threads_used = perf_stats.get('threads_used', 1)
 
-            # Note: Worker doesn't track timing yet, use placeholder
-            speed = 150.0  # MB/s placeholder
-
+            # Update stats display
             self.update_stats(
                 total=total_files,
                 success=total_files,
                 failed=0,
-                speed=speed
+                speed=avg_speed
             )
 
-            self.success(f"Copy and verify complete: {total_files} files copied successfully!")
+            # Build success message via service
+            success_message = self.success_builder.build_copy_verify_message(
+                files_copied=total_files,
+                total_size_bytes=total_size,
+                duration_seconds=duration,
+                hashes_calculated=self.verify_hashes_check.isChecked(),
+                verification_passed=True,  # Worker validates hashes during copy
+                performance_stats={
+                    'avg_speed_mb_s': avg_speed,
+                    'threads_used': threads_used
+                }
+            )
+
+            # Log formatted success message
+            self.success(success_message)
 
             # Store results
             self.last_results = hash_results
@@ -739,9 +772,11 @@ class CopyVerifyOperationTab(BaseOperationTab):
             logger.error(f"CSV export error: {e}", exc_info=True)
 
     def cleanup(self):
-        """Clean up resources"""
-        if self.current_worker and self.current_worker.isRunning():
-            self.current_worker.cancel()
-            self.current_worker.wait(3000)
+        """Clean up resources via controller"""
+        # Delegate cleanup to controller (handles worker lifecycle)
+        if self.controller:
+            self.controller.cleanup()
+
+        # Clear local references
         self.current_worker = None
         self.last_results = None
