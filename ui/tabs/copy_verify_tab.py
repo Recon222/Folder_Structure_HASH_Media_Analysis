@@ -27,6 +27,8 @@ from core.settings_manager import settings
 from core.logger import logger
 from core.exceptions import UIError, ErrorSeverity
 from core.error_handler import handle_error
+from copy_hash_verify.core.storage_detector import StorageDetector
+from copy_hash_verify.utils.thread_calculator import ThreadCalculator
 # Resource management now handled by controller
 
 
@@ -53,9 +55,15 @@ class CopyVerifyTab(QWidget):
         self.last_results = None
         self.destination_path = None
         self.is_paused = False
-        
+
+        # Storage detection for UI display
+        self.storage_detector = StorageDetector()
+        self.thread_calculator = ThreadCalculator()
+        self.source_storage_info = None
+        self.dest_storage_info = None
+
         # Worker reference managed by controller
-        
+
         self._create_ui()
         self._connect_signals()
         
@@ -207,7 +215,17 @@ class CopyVerifyTab(QWidget):
         algo_label = QLabel(f"Hash Algorithm: {algorithm}")
         algo_label.setObjectName("mutedText")
         layout.addWidget(algo_label)
-        
+
+        # Storage detection display (read-only, informational)
+        layout.addSpacing(10)
+        self.storage_info_label = QLabel("Storage: Not detected yet")
+        self.storage_info_label.setObjectName("mutedText")
+        self.storage_info_label.setWordWrap(True)
+        self.storage_info_label.setToolTip(
+            "Displays detected storage types and calculated thread count"
+        )
+        layout.addWidget(self.storage_info_label)
+
         layout.addStretch()
         
         # Progress section
@@ -266,7 +284,46 @@ class CopyVerifyTab(QWidget):
         font.setBold(True)
         font.setPointSize(11)
         return font
-        
+
+    def _update_storage_display(self):
+        """Update storage detection display"""
+        # Get files and destination
+        files, folders = self.files_panel.get_all_items()
+        source_items = files + folders
+
+        if not source_items or not self.destination_path:
+            self.storage_info_label.setText("Storage: Not detected yet")
+            return
+
+        try:
+            # Detect storage types
+            self.source_storage_info = self.storage_detector.analyze_path(source_items[0])
+            self.dest_storage_info = self.storage_detector.analyze_path(self.destination_path)
+
+            # Calculate optimal threads (always auto)
+            optimal_threads = self.thread_calculator.calculate_optimal_threads(
+                source_info=self.source_storage_info,
+                dest_info=self.dest_storage_info,
+                file_count=len(source_items),
+                operation_type="copy"
+            )
+
+            # Build display text
+            storage_text = (
+                f"Storage:\n"
+                f"  Source: {self.source_storage_info.drive_type.value.upper()} "
+                f"({self.source_storage_info.drive_letter})\n"
+                f"  Dest: {self.dest_storage_info.drive_type.value.upper()} "
+                f"({self.dest_storage_info.drive_letter})\n"
+                f"  Threads: {optimal_threads} (auto)"
+            )
+
+            self.storage_info_label.setText(storage_text)
+
+        except Exception as e:
+            logger.debug(f"Storage detection failed: {e}")
+            self.storage_info_label.setText(f"Storage: Detection failed ({str(e)})")
+
     def _connect_signals(self):
         """Connect all signals"""
         # Files panel
@@ -330,7 +387,7 @@ class CopyVerifyTab(QWidget):
         """Update UI state based on current selections"""
         files, folders = self.files_panel.get_all_items()
         total_items = len(files) + len(folders)
-        
+
         # Update file count
         if total_items == 0:
             self.file_count_label.setText("No files selected")
@@ -338,14 +395,17 @@ class CopyVerifyTab(QWidget):
             self.file_count_label.setText(
                 f"{total_items} items selected ({len(files)} files, {len(folders)} folders)"
             )
-        
+
         # Enable copy button if we have files and destination
         has_files = total_items > 0
         has_destination = bool(self.dest_path_edit.text())
-        
+
         self.copy_btn.setEnabled(
             has_files and has_destination and not self.operation_active
         )
+
+        # Update storage detection display
+        self._update_storage_display()
         
     def _start_copy_operation(self):
         """Start the copy and verify operation using controller"""

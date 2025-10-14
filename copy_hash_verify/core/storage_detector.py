@@ -6,21 +6,21 @@ This module provides centralized storage type detection for optimal performance 
 across all copy_hash_verify operations. It uses a layered detection strategy with
 multiple fallback methods to ensure reliability across different Windows configurations.
 
-Detection Methods (in priority order):
-1. Windows Seek Penalty API (Most reliable, no admin required)
-2. Performance Heuristics (Fast fallback with actual I/O testing)
-3. WMI MSFT_PhysicalDisk (Backup for internal drives)
-4. Conservative Fallback (Always works, assumes slowest device)
+Detection Methods (NEW TIER ORDER - WMI now primary):
+0. Network Drive Early Detection (prevents WMI timeout on network shares)
+1. WMI MSFT_PhysicalDisk (Tier 0 - primary for all drives, most accurate)
+2. Windows Seek Penalty API (Tier 1 - fallback when WMI unavailable)
+3. Performance Heuristics (Tier 2 - fallback with actual I/O testing)
+4. Conservative Fallback (Tier 3 - always works, assumes slowest device)
 
 Usage:
     detector = StorageDetector()
     info = detector.analyze_path(Path("D:/evidence"))
 
-    # Use threading recommendation
-    if info.recommended_threads > 1:
-        use_parallel_processing(threads=info.recommended_threads)
-    else:
-        use_sequential_processing()
+    # Use ThreadCalculator for CPU-aware thread allocation
+    from copy_hash_verify.utils.thread_calculator import ThreadCalculator
+    calculator = ThreadCalculator()
+    threads = calculator.calculate_optimal_threads(source_info, dest_info, file_count)
 """
 
 import os
@@ -77,12 +77,14 @@ class StorageInfo:
     """
     Complete storage characteristics for a given path
 
+    NOTE: Thread count calculation is now handled by ThreadCalculator utility,
+    which provides CPU-aware dynamic thread allocation.
+
     Attributes:
         drive_type: Classification of storage device
         bus_type: Connection interface type
         is_ssd: True if SSD, False if HDD, None if unknown
         is_removable: True if external/removable drive
-        recommended_threads: Optimal thread count for I/O operations
         confidence: Detection confidence (0.0-1.0)
         detection_method: Which method successfully detected storage type
         drive_letter: Windows drive letter (e.g., "C:")
@@ -92,7 +94,6 @@ class StorageInfo:
     bus_type: BusType
     is_ssd: Optional[bool]
     is_removable: bool
-    recommended_threads: int
     confidence: float
     detection_method: str
     drive_letter: str
@@ -103,7 +104,7 @@ class StorageInfo:
         ssd_str = "SSD" if self.is_ssd else "HDD" if self.is_ssd is False else "Unknown"
         removable_str = " (External)" if self.is_removable else ""
         return (f"{ssd_str}{removable_str} on {self.drive_letter} "
-                f"[{self.bus_type.name}] -> {self.recommended_threads} threads "
+                f"[{self.bus_type.name}] perf_class={self.performance_class} "
                 f"(confidence: {self.confidence:.0%})")
 
 
@@ -160,11 +161,12 @@ class StorageDetector:
         """
         Analyze storage characteristics for a given path
 
-        Uses layered detection with multiple fallback methods:
-        1. Seek Penalty API (most reliable)
-        2. Performance Heuristics (fast fallback)
-        3. WMI (backup for internal drives)
-        4. Conservative Fallback (always works)
+        Uses layered detection with multiple fallback methods (NEW TIER ORDER):
+        0. Network Drive Early Detection (prevents WMI timeout)
+        1. WMI MSFT_PhysicalDisk (Tier 0 - now primary for all drives)
+        2. Seek Penalty API (Tier 1 - fallback when WMI unavailable)
+        3. Performance Heuristics (Tier 2 - fallback for API failures)
+        4. Conservative Fallback (Tier 3 - always works)
 
         Args:
             path: Path to analyze (file or directory)
@@ -182,49 +184,124 @@ class StorageDetector:
 
         logger.debug(f"Analyzing storage for path: {path} (drive: {drive_letter})")
 
-        # Method 1: Windows Seek Penalty API (Most Reliable for SSD/HDD distinction)
+        # Method 0: Early Network Drive Detection (prevents WMI timeout)
+        if self.is_windows:
+            network_result = self._detect_network_drive(drive_letter)
+            if network_result.drive_type == DriveType.NETWORK:
+                logger.info(f"Network drive detected early (WMI bypass): {network_result}")
+                return network_result
+
+        # Method 1: WMI (Tier 0 - Primary detection for all drives)
+        if self.is_windows and self.wmi_available:
+            wmi_result = self._detect_via_wmi(drive_letter)
+            if wmi_result.confidence >= 0.6:
+                logger.info(f"Storage detected via WMI (Tier 0): {wmi_result}")
+                return wmi_result
+
+        # Method 2: Windows Seek Penalty API (Tier 1 - Fallback when WMI unavailable)
         seek_penalty_result = None
         if self.is_windows:
             seek_penalty_result = self._detect_via_seek_penalty(drive_letter)
-            # If Seek Penalty detected NVMe with high confidence, use it immediately
-            if seek_penalty_result.confidence >= 0.8 and seek_penalty_result.drive_type == DriveType.NVME:
-                logger.info(f"Storage detected via Seek Penalty API: {seek_penalty_result}")
+            # If Seek Penalty detected with high confidence, use it
+            if seek_penalty_result.confidence >= 0.8:
+                logger.info(f"Storage detected via Seek Penalty API (Tier 1): {seek_penalty_result}")
                 return seek_penalty_result
 
-        # Method 2: Performance Heuristics (Detects NVMe vs SATA SSD distinction)
+        # Method 3: Performance Heuristics (Tier 2 - Fallback for API failures)
         perf_result = self._detect_via_performance_test(path, drive_letter)
-
-        # Smart decision logic: Performance heuristics can detect NVMe, Seek Penalty cannot always
         if perf_result.confidence >= 0.7:
-            # If performance test detects NVMe and Seek Penalty only detected generic SSD,
-            # trust performance test (it measured actual NVMe speeds)
-            if (perf_result.drive_type == DriveType.NVME and
-                seek_penalty_result and
-                seek_penalty_result.drive_type == DriveType.SSD):
-                logger.info(f"Storage detected via performance heuristics (NVMe override): {perf_result}")
-                return perf_result
+            logger.info(f"Storage detected via performance heuristics (Tier 2): {perf_result}")
+            return perf_result
 
-            # If Seek Penalty failed or returned low confidence, use performance test
-            if not seek_penalty_result or seek_penalty_result.confidence < 0.7:
-                logger.info(f"Storage detected via performance heuristics: {perf_result}")
-                return perf_result
-
-        # If we got here, Seek Penalty succeeded but wasn't NVMe, use it
-        if seek_penalty_result and seek_penalty_result.confidence >= 0.8:
-            logger.info(f"Storage detected via Seek Penalty API: {seek_penalty_result}")
+        # If Seek Penalty had some confidence (0.6-0.79), use it as last resort before fallback
+        if seek_penalty_result and seek_penalty_result.confidence >= 0.6:
+            logger.info(f"Storage detected via Seek Penalty API (low confidence): {seek_penalty_result}")
             return seek_penalty_result
 
-        # Method 3: WMI (Backup for internal drives only)
-        if self.is_windows and self.wmi_available:
-            if not self._is_removable_drive(drive_letter):
-                result = self._detect_via_wmi(drive_letter)
-                if result.confidence >= 0.6:
-                    logger.info(f"Storage detected via WMI: {result}")
-                    return result
-
-        # Method 4: Conservative Fallback (Always Works)
+        # Method 4: Conservative Fallback (Tier 3 - Always Works)
         logger.warning(f"All detection methods failed for {drive_letter}, using conservative fallback")
         return self._conservative_fallback(drive_letter, "all_methods_failed")
+
+    def _detect_network_drive(self, drive_letter: str) -> StorageInfo:
+        """
+        Method 0: Early network drive detection (prevents WMI timeout)
+
+        Uses Windows GetDriveType API to quickly identify network drives
+        BEFORE attempting WMI queries, which can timeout on network drives.
+
+        Returns:
+            StorageInfo with NETWORK drive type if detected, UNKNOWN otherwise
+        """
+        if not self.is_windows or not drive_letter:
+            return StorageInfo(
+                drive_type=DriveType.UNKNOWN,
+                bus_type=BusType.UNKNOWN,
+                is_ssd=None,
+                is_removable=False,
+                confidence=0.0,
+                detection_method="network_detect_not_windows",
+                drive_letter=drive_letter,
+                performance_class=1
+            )
+
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+            GetDriveTypeW = kernel32.GetDriveTypeW
+            GetDriveTypeW.argtypes = [wintypes.LPCWSTR]
+            GetDriveTypeW.restype = wintypes.UINT
+
+            DRIVE_UNKNOWN = 0
+            DRIVE_NO_ROOT_DIR = 1
+            DRIVE_REMOVABLE = 2
+            DRIVE_FIXED = 3
+            DRIVE_REMOTE = 4
+            DRIVE_CDROM = 5
+            DRIVE_RAMDISK = 6
+
+            drive_type_value = GetDriveTypeW(drive_letter)
+
+            # Network drive detected - return immediately to prevent WMI timeout
+            if drive_type_value == DRIVE_REMOTE:
+                logger.info(f"Network drive detected (DRIVE_REMOTE): {drive_letter}")
+                return StorageInfo(
+                    drive_type=DriveType.NETWORK,
+                    bus_type=BusType.UNKNOWN,
+                    is_ssd=None,
+                    is_removable=True,  # Network drives are "external"
+                    confidence=1.0,  # Certain - Windows API confirms network drive
+                    detection_method="network_drive_early",
+                    drive_letter=drive_letter,
+                    performance_class=self.PERFORMANCE_CLASS[DriveType.NETWORK]
+                )
+
+            # Not a network drive - return UNKNOWN to continue detection
+            logger.debug(f"Drive {drive_letter} is not network (type={drive_type_value}), continuing detection")
+            return StorageInfo(
+                drive_type=DriveType.UNKNOWN,
+                bus_type=BusType.UNKNOWN,
+                is_ssd=None,
+                is_removable=False,
+                confidence=0.0,
+                detection_method="network_detect_not_network",
+                drive_letter=drive_letter,
+                performance_class=1
+            )
+
+        except Exception as e:
+            logger.debug(f"Network drive detection failed: {e}")
+            return StorageInfo(
+                drive_type=DriveType.UNKNOWN,
+                bus_type=BusType.UNKNOWN,
+                is_ssd=None,
+                is_removable=False,
+                confidence=0.0,
+                detection_method="network_detect_error",
+                drive_letter=drive_letter,
+                performance_class=1
+            )
 
     def _get_drive_letter(self, path: Path) -> str:
         """Extract drive letter from path (Windows) or mount point (Unix)"""
@@ -257,7 +334,6 @@ class StorageDetector:
                 bus_type=BusType.UNKNOWN,
                 is_ssd=None,
                 is_removable=False,
-                recommended_threads=1,
                 confidence=0.0,
                 detection_method="seek_penalty_not_windows",
                 drive_letter=drive_letter,
@@ -355,7 +431,6 @@ class StorageDetector:
                     bus_type=BusType.UNKNOWN,
                     is_ssd=None,
                     is_removable=False,
-                    recommended_threads=1,
                     confidence=0.0,
                     detection_method="seek_penalty_handle_failed",
                     drive_letter=drive_letter,
@@ -391,7 +466,6 @@ class StorageDetector:
                         bus_type=BusType.UNKNOWN,
                         is_ssd=None,
                         is_removable=False,
-                        recommended_threads=1,
                         confidence=0.0,
                         detection_method="seek_penalty_ioctl_failed",
                         drive_letter=drive_letter,
@@ -478,7 +552,6 @@ class StorageDetector:
                     if bus_type == BusType.UNKNOWN:
                         bus_type = BusType.SATA  # Default HDD bus type
 
-                threads = self.THREAD_RECOMMENDATIONS[drive_type]
                 perf_class = self.PERFORMANCE_CLASS[drive_type]
 
                 return StorageInfo(
@@ -486,7 +559,6 @@ class StorageDetector:
                     bus_type=bus_type,
                     is_ssd=is_ssd,
                     is_removable=is_removable,
-                    recommended_threads=threads,
                     confidence=0.9,  # High confidence - most reliable method
                     detection_method="seek_penalty_api",
                     drive_letter=drive_letter,
@@ -503,7 +575,6 @@ class StorageDetector:
                 bus_type=BusType.UNKNOWN,
                 is_ssd=None,
                 is_removable=False,
-                recommended_threads=1,
                 confidence=0.0,
                 detection_method="seek_penalty_error",
                 drive_letter=drive_letter,
@@ -630,7 +701,6 @@ class StorageDetector:
                 logger.warning(f"Uncertain storage type (W={write_speed_mbps:.1f}, R={read_speed_mbps:.1f}), "
                              f"defaulting to HDD for safety")
 
-            threads = self.THREAD_RECOMMENDATIONS[drive_type]
             perf_class = self.PERFORMANCE_CLASS[drive_type]
 
             return StorageInfo(
@@ -638,7 +708,6 @@ class StorageDetector:
                 bus_type=bus_type,
                 is_ssd=is_ssd,
                 is_removable=is_removable,
-                recommended_threads=threads,
                 confidence=confidence,
                 detection_method="performance_heuristics",
                 drive_letter=drive_letter,
@@ -652,7 +721,6 @@ class StorageDetector:
                 bus_type=BusType.UNKNOWN,
                 is_ssd=None,
                 is_removable=False,
-                recommended_threads=1,
                 confidence=0.0,
                 detection_method="performance_test_error",
                 drive_letter=drive_letter,
@@ -679,7 +747,6 @@ class StorageDetector:
                 bus_type=BusType.UNKNOWN,
                 is_ssd=None,
                 is_removable=False,
-                recommended_threads=1,
                 confidence=0.0,
                 detection_method="wmi_not_available",
                 drive_letter=drive_letter,
@@ -708,7 +775,6 @@ class StorageDetector:
                     bus_type=BusType.UNKNOWN,
                     is_ssd=None,
                     is_removable=False,
-                    recommended_threads=1,
                     confidence=0.0,
                     detection_method="wmi_no_logical_disk",
                     drive_letter=drive_letter,
@@ -728,7 +794,6 @@ class StorageDetector:
                     bus_type=BusType.UNKNOWN,
                     is_ssd=None,
                     is_removable=False,
-                    recommended_threads=1,
                     confidence=0.0,
                     detection_method="wmi_no_partition",
                     drive_letter=drive_letter,
@@ -748,7 +813,6 @@ class StorageDetector:
                     bus_type=BusType.UNKNOWN,
                     is_ssd=None,
                     is_removable=False,
-                    recommended_threads=1,
                     confidence=0.0,
                     detection_method="wmi_no_disk_drive",
                     drive_letter=drive_letter,
@@ -767,7 +831,6 @@ class StorageDetector:
                     bus_type=BusType.UNKNOWN,
                     is_ssd=None,
                     is_removable=False,
-                    recommended_threads=1,
                     confidence=0.0,
                     detection_method="wmi_parse_error",
                     drive_letter=drive_letter,
@@ -789,7 +852,6 @@ class StorageDetector:
                     bus_type=BusType.UNKNOWN,
                     is_ssd=None,
                     is_removable=False,
-                    recommended_threads=1,
                     confidence=0.0,
                     detection_method="wmi_no_physical_disk",
                     drive_letter=drive_letter,
@@ -817,7 +879,6 @@ class StorageDetector:
                     bus_type=BusType.UNKNOWN,
                     is_ssd=None,
                     is_removable=False,
-                    recommended_threads=1,
                     confidence=0.0,
                     detection_method="wmi_unknown_media_type",
                     drive_letter=drive_letter,
@@ -857,7 +918,6 @@ class StorageDetector:
             else:
                 drive_type = DriveType.EXTERNAL_HDD if is_removable else DriveType.HDD
 
-            threads = self.THREAD_RECOMMENDATIONS[drive_type]
             perf_class = self.PERFORMANCE_CLASS[drive_type]
 
             return StorageInfo(
@@ -865,7 +925,6 @@ class StorageDetector:
                 bus_type=bus_type,
                 is_ssd=is_ssd,
                 is_removable=is_removable,
-                recommended_threads=threads,
                 confidence=0.7,  # Moderate confidence - works well for internal drives
                 detection_method="wmi",
                 drive_letter=drive_letter,
@@ -879,7 +938,6 @@ class StorageDetector:
                 bus_type=BusType.UNKNOWN,
                 is_ssd=None,
                 is_removable=False,
-                recommended_threads=1,
                 confidence=0.0,
                 detection_method="wmi_error",
                 drive_letter=drive_letter,
@@ -952,7 +1010,6 @@ class StorageDetector:
             bus_type=BusType.UNKNOWN,
             is_ssd=False,
             is_removable=True,
-            recommended_threads=1,
             confidence=0.0,
             detection_method=f"conservative_fallback_{reason}",
             drive_letter=drive_letter,

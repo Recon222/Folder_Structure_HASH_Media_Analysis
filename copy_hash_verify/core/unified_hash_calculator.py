@@ -35,13 +35,20 @@ from core.logger import logger
 from core.result_types import Result
 from core.exceptions import HashCalculationError, HashVerificationError
 
-# NEW: Import storage detection and progress throttling
+# NEW: Import storage detection, thread calculation, and progress throttling
 try:
     from .storage_detector import StorageDetector, StorageInfo, DriveType
     STORAGE_DETECTION_AVAILABLE = True
 except ImportError:
     logger.warning("StorageDetector not available, parallel optimization disabled")
     STORAGE_DETECTION_AVAILABLE = False
+
+try:
+    from copy_hash_verify.utils.thread_calculator import ThreadCalculator
+    THREAD_CALCULATOR_AVAILABLE = True
+except ImportError:
+    logger.warning("ThreadCalculator not available, using fallback thread calculation")
+    THREAD_CALCULATOR_AVAILABLE = False
 
 try:
     from .throttled_progress import ThrottledProgressReporter, ProgressRateCalculator
@@ -547,28 +554,35 @@ class UnifiedHashCalculator:
             total_bytes=sum(f.stat().st_size for f in files if f.exists())
         )
 
-        # NEW: Storage-aware processing decision
+        # NEW: Storage-aware processing decision with ThreadCalculator
         if self.enable_parallel and len(files) > 1:
             # Determine optimal thread count
             if self.max_workers_override:
                 # Thread count pre-determined - skip redundant storage detection
-                recommended_threads = self.max_workers_override
+                optimal_threads = self.max_workers_override
                 storage_info = None  # Avoid redundant detection
-                logger.info(f"Using manual thread override: {recommended_threads} threads (skipping storage detection)")
-            elif self.storage_detector:
-                # Perform storage detection only when needed
+                logger.info(f"Using manual thread override: {optimal_threads} threads (skipping storage detection)")
+            elif self.storage_detector and THREAD_CALCULATOR_AVAILABLE:
+                # Perform storage detection and use ThreadCalculator
                 storage_info = self.storage_detector.analyze_path(files[0])
-                recommended_threads = storage_info.recommended_threads
+                calculator = ThreadCalculator()
+                optimal_threads = calculator.calculate_optimal_threads(
+                    source_info=storage_info,
+                    dest_info=None,  # Hash-only operation
+                    file_count=len(files),
+                    operation_type="hash"
+                )
                 logger.info(f"Storage detected: {storage_info}")
+                logger.info(f"ThreadCalculator: {optimal_threads} threads optimal for hash operation")
             else:
-                # No storage detector available, use sequential
-                logger.debug("Storage detector unavailable, using sequential processing")
+                # No storage detector or thread calculator available, use sequential
+                logger.debug("Storage detector or ThreadCalculator unavailable, using sequential processing")
                 return self._sequential_hash_files(files)
 
             # Use parallel processing if beneficial
-            if recommended_threads > 1:
-                logger.info(f"Using parallel processing with {recommended_threads} threads")
-                return self._parallel_hash_files(files, recommended_threads, storage_info)
+            if optimal_threads > 1:
+                logger.info(f"Using parallel processing with {optimal_threads} threads")
+                return self._parallel_hash_files(files, optimal_threads, storage_info)
             else:
                 logger.info(f"Using sequential processing (storage: {storage_info.drive_type.value if storage_info else 'unknown'})")
 
@@ -933,15 +947,34 @@ class UnifiedHashCalculator:
             source_storage = self.storage_detector.analyze_path(source_files[0])
             target_storage = self.storage_detector.analyze_path(target_files[0])
 
+            # Step 3: Calculate optimal thread allocation using ThreadCalculator
+            if self.max_workers_override:
+                source_threads = self.max_workers_override
+                target_threads = self.max_workers_override
+            elif THREAD_CALCULATOR_AVAILABLE:
+                calculator = ThreadCalculator()
+                source_threads = calculator.calculate_optimal_threads(
+                    source_info=source_storage,
+                    dest_info=None,
+                    file_count=len(source_files),
+                    operation_type="hash"
+                )
+                target_threads = calculator.calculate_optimal_threads(
+                    source_info=target_storage,
+                    dest_info=None,
+                    file_count=len(target_files),
+                    operation_type="hash"
+                )
+            else:
+                # Fallback to 4 threads if ThreadCalculator unavailable
+                source_threads = 4
+                target_threads = 4
+
             logger.info(f"Parallel verification starting:")
             logger.info(f"  Source: {source_storage.drive_type.value} on {source_storage.drive_letter} "
-                       f"({source_storage.recommended_threads} threads, {source_storage.confidence:.0%} confidence)")
+                       f"({source_threads} threads, {source_storage.confidence:.0%} confidence)")
             logger.info(f"  Target: {target_storage.drive_type.value} on {target_storage.drive_letter} "
-                       f"({target_storage.recommended_threads} threads, {target_storage.confidence:.0%} confidence)")
-
-            # Step 3: Calculate optimal thread allocation
-            source_threads = self.max_workers_override or source_storage.recommended_threads
-            target_threads = self.max_workers_override or target_storage.recommended_threads
+                       f"({target_threads} threads, {target_storage.confidence:.0%} confidence)")
 
             # Step 4: Create progress aggregator
             progress_aggregator = _VerificationProgressAggregator(
@@ -1180,7 +1213,7 @@ class UnifiedHashCalculator:
                 'drive_type': source_storage.drive_type.value,
                 'bus_type': source_storage.bus_type.value,
                 'drive_letter': source_storage.drive_letter,
-                'recommended_threads': source_storage.recommended_threads,
+                'performance_class': source_storage.performance_class,
                 'confidence': source_storage.confidence
             },
             'source_threads_used': source_threads,
@@ -1192,7 +1225,7 @@ class UnifiedHashCalculator:
                 'drive_type': target_storage.drive_type.value,
                 'bus_type': target_storage.bus_type.value,
                 'drive_letter': target_storage.drive_letter,
-                'recommended_threads': target_storage.recommended_threads,
+                'performance_class': target_storage.performance_class,
                 'confidence': target_storage.confidence
             },
             'target_threads_used': target_threads,

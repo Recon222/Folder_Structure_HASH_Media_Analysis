@@ -1,0 +1,22 @@
+Baseline Performance Test Results
+Timestamp: 2025-10-14T05:03:05.152601
+
+================================================================================
+
+Drive: C:\
+  Type: ssd
+  Method: wmi
+  Performance Class: 4
+  Detection Time: 144.96 ms
+
+Drive: D:\
+  Type: ssd
+  Method: wmi
+  Performance Class: 4
+  Detection Time: 139.79 ms
+
+================================================================================
+Summary:
+  Total drives: 2
+  Total time: 284.74 ms
+  Average: 142.37 ms

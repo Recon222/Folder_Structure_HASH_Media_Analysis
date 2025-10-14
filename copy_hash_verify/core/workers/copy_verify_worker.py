@@ -10,14 +10,14 @@ from pathlib import Path
 from typing import List, Dict
 from threading import Lock
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import psutil
 
 from PySide6.QtCore import QThread, Signal
 
 from core.buffered_file_ops import BufferedFileOperations
 from core.result_types import Result, FileOperationResult
 from core.logger import logger
-from copy_hash_verify.core.storage_detector import StorageDetector, DriveType
+from copy_hash_verify.core.storage_detector import StorageDetector
+from copy_hash_verify.utils.thread_calculator import ThreadCalculator
 
 
 class CopyVerifyWorker(QThread):
@@ -136,13 +136,19 @@ class CopyVerifyWorker(QThread):
             logger.info(
                 f"Storage detection:\n"
                 f"  Source: {source_info.drive_type.value} on {source_info.drive_letter} "
-                f"({source_info.recommended_threads} threads recommended)\n"
+                f"(perf_class={source_info.performance_class})\n"
                 f"  Destination: {dest_info.drive_type.value} on {dest_info.drive_letter} "
-                f"({dest_info.recommended_threads} threads recommended)"
+                f"(perf_class={dest_info.performance_class})"
             )
 
-            # Decision logic: Choose sequential or parallel copying
-            threads = self._select_thread_count(source_info, dest_info, len(all_items))
+            # Use ThreadCalculator for CPU-aware thread calculation
+            calculator = ThreadCalculator()
+            threads = calculator.calculate_optimal_threads(
+                source_info=source_info,
+                dest_info=dest_info,
+                file_count=len(all_items),
+                operation_type="copy"
+            )
 
             # Execute copy with selected strategy
             if threads > 1 and len(all_items) > 1:
@@ -180,85 +186,6 @@ class CopyVerifyWorker(QThread):
                 user_message="An unexpected error occurred during file copy operation."
             )
             self.result_ready.emit(Result.error(error))
-
-    def _select_thread_count(self, source_info, dest_info, file_count: int) -> int:
-        """
-        Select optimal thread count based on storage characteristics and CPU cores.
-
-        Research-validated threading strategy:
-        - NVMe → NVMe: 2 threads per CPU core, cap at 64 (5-10x speedup)
-        - HDD → NVMe: 8-16 threads for OS queue optimization (1.2-1.5x speedup)
-        - SSD → NVMe: 32 threads (2-5x speedup)
-        - Any → HDD: 1 thread (HDD write bottleneck)
-
-        Args:
-            source_info: Source storage information
-            dest_info: Destination storage information
-            file_count: Number of files to copy
-
-        Returns:
-            Optimal thread count (1 for sequential, >1 for parallel)
-        """
-        # Get CPU core count for dynamic thread scaling
-        cpu_threads = psutil.cpu_count(logical=True) or 16
-
-        # Rule 1: HDD destination → Always sequential (write bottleneck, critical)
-        if dest_info.drive_type in (DriveType.HDD, DriveType.EXTERNAL_HDD):
-            logger.info("Destination is HDD - sequential to avoid write seek penalty")
-            return 1
-
-        # Rule 2: Single file → Sequential (no parallelism benefit)
-        if file_count == 1:
-            logger.info("Single file - sequential copy")
-            return 1
-
-        # Rule 3: HDD source → Fast destination (limited parallelism for queue optimization)
-        if source_info.drive_type in (DriveType.HDD, DriveType.EXTERNAL_HDD):
-            if dest_info.drive_type in (DriveType.SSD, DriveType.NVME, DriveType.EXTERNAL_SSD):
-                # Research: 8-16 threads help OS reorder HDD reads, NVMe handles writes easily
-                # Conservative 8 for large files (forensic workload), up to 16 for small files
-                threads = 8
-                logger.info(
-                    f"HDD source → {dest_info.drive_type.value} destination - "
-                    f"using {threads} threads for OS-level queue optimization (1.2-1.5x speedup)"
-                )
-                return threads
-            else:
-                # HDD → unknown destination, stay safe
-                logger.info("HDD source with unknown destination - sequential")
-                return 1
-
-        # Rule 4: NVMe → NVMe (maximum parallelism, research shows 64 threads optimal)
-        if source_info.drive_type == DriveType.NVME and dest_info.drive_type == DriveType.NVME:
-            # 2 threads per CPU core, cap at 64 (research-validated)
-            threads = min(cpu_threads * 2, 64)
-            threads = max(threads, 2)  # Minimum 2 for parallel
-            logger.info(
-                f"NVMe → NVMe - using {threads} threads "
-                f"({cpu_threads} CPU threads × 2, cap 64) for maximum parallelism (5-10x speedup)"
-            )
-            return threads
-
-        # Rule 5: SSD/NVMe → SSD/NVMe (high parallelism)
-        if source_info.drive_type in (DriveType.SSD, DriveType.NVME, DriveType.EXTERNAL_SSD):
-            if dest_info.drive_type in (DriveType.SSD, DriveType.NVME, DriveType.EXTERNAL_SSD):
-                # One or both is SSD (not both NVMe) - use 32 threads
-                if DriveType.NVME in (source_info.drive_type, dest_info.drive_type):
-                    # At least one NVMe - use 32 threads
-                    threads = 32
-                else:
-                    # SSD → SSD - conservative 16 threads
-                    threads = 16
-                threads = max(threads, 2)  # Minimum 2 for parallel
-                logger.info(
-                    f"{source_info.drive_type.value} → {dest_info.drive_type.value} - "
-                    f"using {threads} threads (2-5x speedup)"
-                )
-                return threads
-
-        # Rule 6: Unknown/unsupported combination → Sequential (safe fallback)
-        logger.info("Unknown or unsupported storage combination - sequential for safety")
-        return 1
 
     def _copy_files_parallel(self, all_items: List, threads: int) -> FileOperationResult:
         """
