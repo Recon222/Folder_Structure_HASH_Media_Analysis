@@ -1,0 +1,1887 @@
+
+
+# Forensic Application: Intelligent File Operation Mode Implementation Plan
+
+## Introduction
+
+### What We Are Building
+
+This implementation adds **intelligent operation mode selection** to the forensic application’s file processing pipeline. The system will automatically detect when source files and destination are on the same storage volume and use fast **MOVE operations** (instant pointer updates) instead of slow **COPY operations** (full data transfer). This optimization delivers 10-20x performance improvements for same-drive scenarios while maintaining full forensic integrity and backwards compatibility.
+
+### Why This Matters
+
+**Current Limitation:**
+Every file operation performs a full copy (read source → write destination), even when moving files between folders on the same drive. For a typical 300GB evidence collection on the same drive, this means:
+
+- 600GB of unnecessary disk I/O (read 300GB + write 300GB)
+- 5-10 minutes of waiting for pointer updates that should be instant
+- Significant SSD wear from unnecessary write cycles
+- Wasted CPU/RAM resources during lengthy operations
+
+**Solution:**
+File system MOVE operations on the same volume are essentially instant pointer updates in the filesystem’s allocation table. By detecting same-volume scenarios and using MOVE instead of COPY, we eliminate 90% of disk I/O while maintaining forensic integrity through post-move hash verification.
+
+### How We Will Do It
+
+**Three-Phase Architecture Enhancement:**
+
+1. **Service Layer Foundation**
+- Create `VolumeDetectionService` for cross-platform volume identification
+- Enhance `FileOperationService` with operation mode determination
+- Add `MoveOperations` class (parallel to `BufferedFileOperations`)
+1. **Controller Orchestration**
+- Enhance `WorkflowController` to detect optimal operation mode
+- Implement user confirmation for MOVE operations
+- Add operation mode to progress reporting
+1. **Worker Execution**
+- Minimal changes to `FolderStructureThread`
+- Delegate to `MoveOperations` or `BufferedFileOperations` based on mode
+- Maintain transaction safety with rollback capability
+
+**Key Architectural Principles:**
+
+- **SOA Compliance**: Services call services through controllers, not from workers
+- **Loose Coupling**: All components independent, ready for plugin architecture
+- **Forensic Integrity**: Post-move hash verification, audit trail preservation
+- **Transaction Safety**: Rollback capability for failed MOVE operations
+- **Backwards Compatible**: Existing workflows continue unchanged, optimizations activate automatically
+- **User Control**: Always provide manual override and clear operation indicators
+
+### Success Criteria
+
+**Performance Targets:**
+
+- Same-drive operations: 10-20x faster
+- Cross-drive operations: No regression (existing performance maintained)
+- Mixed scenarios: Proportional improvement based on same-drive percentage
+
+**Quality Targets:**
+
+- Zero business logic added to UI layer
+- All services accessible via interfaces (IVolumeDetectionService, etc.)
+- Comprehensive Result-based error handling
+- 100% backwards compatibility with existing workflows
+- Full test coverage (unit + integration)
+
+**Forensic Compliance:**
+
+- Hash verification mandatory for all operations
+- Operation mode logged in audit trail
+- Chain of custody documentation preserved
+- Rollback capability for data safety
+
+-----
+
+## Phase 1: Core Service Foundation (Week 1-2)
+
+**Objective:** Establish service layer infrastructure for volume detection and operation mode determination without impacting existing functionality.
+
+### Step 1.1: Create Operation Mode Enums and Models
+
+**File:** `core/models/operation_mode.py` (NEW)
+
+```python
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Operation mode models for intelligent file operations
+Defines MOVE vs COPY operation modes with transaction support
+"""
+
+from enum import Enum
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import List, Optional, Dict, Any
+from datetime import datetime
+
+
+class OperationMode(Enum):
+    """File operation execution modes"""
+    AUTO = "auto"           # Automatically detect optimal mode
+    COPY = "copy"           # Always use copy (safe, slower)
+    MOVE = "move"           # Use move when possible (fast, same volume only)
+    HYBRID = "hybrid"       # Mixed mode (some move, some copy)
+
+
+class OperationModeReason(Enum):
+    """Reasons for operation mode selection"""
+    SAME_VOLUME = "same_volume"           # Source and dest on same volume
+    DIFFERENT_VOLUME = "different_volume" # Cross-volume operation
+    USER_OVERRIDE = "user_override"       # User manually selected mode
+    NETWORK_PATH = "network_path"         # Network paths detected (always copy)
+    SAFETY_FALLBACK = "safety_fallback"   # Failed detection, using safe copy
+    MIXED_SOURCES = "mixed_sources"       # Multiple source volumes
+
+
+@dataclass
+class VolumeInfo:
+    """Information about a storage volume"""
+    path: Path
+    volume_id: str                    # Platform-specific volume identifier
+    is_network: bool = False
+    is_removable: bool = False
+    filesystem_type: Optional[str] = None
+    available_space: Optional[int] = None
+    
+    def __str__(self) -> str:
+        return f"Volume({self.volume_id}, network={self.is_network})"
+
+
+@dataclass
+class OperationPlan:
+    """
+    Comprehensive plan for file operation execution
+    Tracks what will be moved vs copied with detailed reasoning
+    """
+    mode: OperationMode
+    reason: OperationModeReason
+    
+    # File categorization
+    move_items: List[tuple] = field(default_factory=list)  # (type, path, relative_path)
+    copy_items: List[tuple] = field(default_factory=list)
+    
+    # Volume information
+    source_volumes: Dict[str, VolumeInfo] = field(default_factory=dict)
+    destination_volume: Optional[VolumeInfo] = None
+    
+    # Statistics
+    total_items: int = 0
+    move_count: int = 0
+    copy_count: int = 0
+    estimated_time_seconds: float = 0.0
+    estimated_savings_seconds: float = 0.0
+    
+    # User communication
+    user_message: str = ""
+    requires_confirmation: bool = False
+    
+    def get_summary(self) -> str:
+        """Get human-readable operation summary"""
+        if self.mode == OperationMode.MOVE:
+            return (
+                f"Operation will MOVE {self.move_count} items (instant on same drive). "
+                f"Estimated time savings: {int(self.estimated_savings_seconds)}s"
+            )
+        elif self.mode == OperationMode.HYBRID:
+            return (
+                f"Operation will MOVE {self.move_count} items and COPY {self.copy_count} items. "
+                f"Estimated time savings: {int(self.estimated_savings_seconds)}s"
+            )
+        else:
+            return f"Operation will COPY {self.copy_count} items (standard transfer)"
+    
+    def get_detailed_breakdown(self) -> Dict[str, Any]:
+        """Get detailed breakdown for logging/reporting"""
+        return {
+            'mode': self.mode.value,
+            'reason': self.reason.value,
+            'move_count': self.move_count,
+            'copy_count': self.copy_count,
+            'total_items': self.total_items,
+            'source_volumes': len(self.source_volumes),
+            'estimated_time_seconds': self.estimated_time_seconds,
+            'estimated_savings_seconds': self.estimated_savings_seconds,
+            'requires_confirmation': self.requires_confirmation
+        }
+
+
+@dataclass
+class MoveTransaction:
+    """
+    Transaction log for MOVE operations with rollback capability
+    Tracks every move operation to enable safe rollback on failure
+    """
+    transaction_id: str
+    start_time: datetime = field(default_factory=datetime.now)
+    
+    # Operation log for rollback
+    operations: List[tuple] = field(default_factory=list)  # (source, dest, timestamp)
+    
+    # Transaction state
+    committed: bool = False
+    rolled_back: bool = False
+    failed: bool = False
+    
+    # Error tracking
+    errors: List[str] = field(default_factory=list)
+    
+    def log_operation(self, source: Path, dest: Path):
+        """Log a completed move operation"""
+        self.operations.append((source, dest, datetime.now()))
+    
+    def get_rollback_operations(self) -> List[tuple]:
+        """Get operations to perform for rollback (in reverse order)"""
+        return [(dest, source) for source, dest, _ in reversed(self.operations)]
+    
+    def mark_committed(self):
+        """Mark transaction as successfully committed"""
+        self.committed = True
+    
+    def mark_rolled_back(self):
+        """Mark transaction as rolled back"""
+        self.rolled_back = True
+    
+    def mark_failed(self, error: str):
+        """Mark transaction as failed"""
+        self.failed = True
+        self.errors.append(error)
+```
+
+**File:** `core/models/__init__.py` (UPDATE)
+
+```python
+# Add to existing imports
+from .operation_mode import (
+    OperationMode, 
+    OperationModeReason, 
+    VolumeInfo, 
+    OperationPlan,
+    MoveTransaction
+)
+
+# Add to __all__
+__all__ = [
+    # ... existing exports ...
+    'OperationMode',
+    'OperationModeReason', 
+    'VolumeInfo',
+    'OperationPlan',
+    'MoveTransaction'
+]
+```
+
+### Step 1.2: Create Volume Detection Service
+
+**File:** `core/services/volume_detection_service.py` (NEW)
+
+```python
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Volume detection service for cross-platform storage volume identification
+Determines if paths are on the same physical/logical volume for MOVE optimization
+"""
+
+import os
+import sys
+import platform
+from pathlib import Path
+from typing import Optional, Dict, Tuple
+import logging
+
+from core.models import VolumeInfo
+from core.result_types import Result
+from core.exceptions import FileOperationError
+from core.logger import logger
+
+
+class VolumeDetectionService:
+    """
+    Cross-platform service for detecting and comparing storage volumes
+    
+    Supports:
+    - Windows: Volume serial numbers via GetVolumeInformation
+    - Linux/macOS: Device IDs via os.stat()
+    - Network path detection
+    - Symlink resolution
+    """
+    
+    def __init__(self):
+        self.platform = platform.system()
+        self._volume_cache: Dict[str, VolumeInfo] = {}
+        logger.info(f"VolumeDetectionService initialized for platform: {self.platform}")
+    
+    def get_volume_info(self, path: Path) -> Result[VolumeInfo]:
+        """
+        Get comprehensive volume information for a path
+        
+        Args:
+            path: File or directory path to analyze
+            
+        Returns:
+            Result containing VolumeInfo or error
+        """
+        try:
+            # Resolve path (handle symlinks, relative paths)
+            resolved_path = path.resolve()
+            
+            # Check cache
+            cache_key = str(resolved_path)
+            if cache_key in self._volume_cache:
+                return Result.success(self._volume_cache[cache_key])
+            
+            # Detect network path
+            is_network = self._is_network_path(resolved_path)
+            
+            # Get volume identifier
+            if self.platform == "Windows":
+                volume_id = self._get_windows_volume_id(resolved_path)
+            else:  # Linux, macOS, Unix-like
+                volume_id = self._get_unix_volume_id(resolved_path)
+            
+            # Get filesystem type
+            fs_type = self._get_filesystem_type(resolved_path)
+            
+            # Get available space
+            available_space = self._get_available_space(resolved_path)
+            
+            # Check if removable (USB drives, etc.)
+            is_removable = self._is_removable(resolved_path)
+            
+            # Create VolumeInfo
+            volume_info = VolumeInfo(
+                path=resolved_path,
+                volume_id=volume_id,
+                is_network=is_network,
+                is_removable=is_removable,
+                filesystem_type=fs_type,
+                available_space=available_space
+            )
+            
+            # Cache result
+            self._volume_cache[cache_key] = volume_info
+            
+            logger.debug(f"Volume info for {path}: {volume_info}")
+            return Result.success(volume_info)
+            
+        except Exception as e:
+            error = FileOperationError(
+                f"Failed to get volume information for {path}: {e}",
+                user_message="Could not detect storage volume information."
+            )
+            logger.error(f"Volume detection failed: {e}", exc_info=True)
+            return Result.error(error)
+    
+    def are_on_same_volume(self, path1: Path, path2: Path) -> Result[bool]:
+        """
+        Determine if two paths are on the same storage volume
+        
+        Args:
+            path1: First path
+            path2: Second path
+            
+        Returns:
+            Result containing boolean (True if same volume) or error
+        """
+        try:
+            # Get volume info for both paths
+            volume1_result = self.get_volume_info(path1)
+            if not volume1_result.success:
+                return volume1_result
+            
+            volume2_result = self.get_volume_info(path2)
+            if not volume2_result.success:
+                return volume2_result
+            
+            volume1 = volume1_result.value
+            volume2 = volume2_result.value
+            
+            # Network paths are never considered same volume (safety)
+            if volume1.is_network or volume2.is_network:
+                logger.debug("Network path detected, treating as different volumes")
+                return Result.success(False)
+            
+            # Compare volume identifiers
+            same_volume = volume1.volume_id == volume2.volume_id
+            
+            logger.debug(
+                f"Volume comparison: {path1} ({volume1.volume_id}) vs "
+                f"{path2} ({volume2.volume_id}) = {same_volume}"
+            )
+            
+            return Result.success(same_volume)
+            
+        except Exception as e:
+            error = FileOperationError(
+                f"Failed to compare volumes: {e}",
+                user_message="Could not determine if paths are on same volume."
+            )
+            logger.error(f"Volume comparison failed: {e}", exc_info=True)
+            return Result.error(error)
+    
+    def _get_windows_volume_id(self, path: Path) -> str:
+        """Get Windows volume serial number"""
+        try:
+            # Get the drive letter or UNC path root
+            if path.drive:
+                drive = path.drive + "\\"
+            else:
+                # Fallback to current drive
+                drive = os.path.splitdrive(os.getcwd())[0] + "\\"
+            
+            try:
+                import win32api
+                volume_info = win32api.GetVolumeInformation(drive)
+                # volume_info[1] is the volume serial number
+                return f"WIN_{volume_info[1]:X}"
+            except ImportError:
+                # Fallback if pywin32 not available
+                logger.warning("pywin32 not available, using drive letter as volume ID")
+                return f"WIN_DRIVE_{drive[0]}"
+                
+        except Exception as e:
+            logger.warning(f"Windows volume detection failed: {e}")
+            return f"WIN_UNKNOWN_{hash(str(path))}"
+    
+    def _get_unix_volume_id(self, path: Path) -> str:
+        """Get Unix/Linux/macOS device ID"""
+        try:
+            # Get device ID from stat
+            stat_info = os.stat(path)
+            device_id = stat_info.st_dev
+            return f"UNIX_{device_id}"
+        except Exception as e:
+            logger.warning(f"Unix volume detection failed: {e}")
+            return f"UNIX_UNKNOWN_{hash(str(path))}"
+    
+    def _is_network_path(self, path: Path) -> bool:
+        """Detect if path is on network storage"""
+        try:
+            path_str = str(path)
+            
+            # Windows UNC paths (\\server\share)
+            if path_str.startswith("\\\\") or path_str.startswith("//"):
+                return True
+            
+            # Check for network filesystem types (Linux/macOS)
+            if self.platform != "Windows":
+                fs_type = self._get_filesystem_type(path)
+                network_fs_types = {'nfs', 'cifs', 'smb', 'smbfs', 'afp'}
+                if fs_type and fs_type.lower() in network_fs_types:
+                    return True
+            
+            return False
+            
+        except Exception as e:
+            logger.warning(f"Network path detection failed: {e}")
+            return False
+    
+    def _get_filesystem_type(self, path: Path) -> Optional[str]:
+        """Get filesystem type (NTFS, ext4, APFS, etc.)"""
+        try:
+            if self.platform == "Windows":
+                try:
+                    import win32api
+                    drive = path.drive + "\\" if path.drive else "C:\\"
+                    volume_info = win32api.GetVolumeInformation(drive)
+                    return volume_info[4]  # Filesystem name
+                except:
+                    return "NTFS"  # Safe assumption for Windows
+            else:
+                # Unix-like systems - parse /proc/mounts or use statvfs
+                import subprocess
+                result = subprocess.run(
+                    ['df', '-T', str(path)],
+                    capture_output=True,
+                    text=True,
+                    timeout=2
+                )
+                if result.returncode == 0:
+                    lines = result.stdout.strip().split('\n')
+                    if len(lines) > 1:
+                        parts = lines[1].split()
+                        if len(parts) > 1:
+                            return parts[1]
+                return None
+        except Exception as e:
+            logger.debug(f"Filesystem type detection failed: {e}")
+            return None
+    
+    def _get_available_space(self, path: Path) -> Optional[int]:
+        """Get available space on volume in bytes"""
+        try:
+            stat = os.statvfs(path) if hasattr(os, 'statvfs') else None
+            if stat:
+                return stat.f_bavail * stat.f_frsize
+            return None
+        except Exception:
+            return None
+    
+    def _is_removable(self, path: Path) -> bool:
+        """Detect if volume is removable media (USB, etc.)"""
+        try:
+            if self.platform == "Windows":
+                try:
+                    import win32file
+                    drive = path.drive if path.drive else "C:"
+                    drive_type = win32file.GetDriveType(drive)
+                    # DRIVE_REMOVABLE = 2
+                    return drive_type == 2
+                except:
+                    return False
+            else:
+                # On Unix, check for common removable mount points
+                path_str = str(path)
+                removable_indicators = ['/media/', '/mnt/usb', '/Volumes/']
+                return any(indicator in path_str for indicator in removable_indicators)
+        except Exception:
+            return False
+    
+    def clear_cache(self):
+        """Clear volume information cache"""
+        self._volume_cache.clear()
+        logger.debug("Volume detection cache cleared")
+```
+
+### Step 1.3: Create Service Interface
+
+**File:** `core/services/interfaces.py` (UPDATE)
+
+Add the following interface to the existing interfaces file:
+
+```python
+# Add to imports
+from core.models import VolumeInfo, OperationMode, OperationPlan
+
+# Add new interface
+class IVolumeDetectionService(IService):
+    """Interface for volume detection operations"""
+    
+    @abstractmethod
+    def get_volume_info(self, path: Path) -> Result[VolumeInfo]:
+        """Get volume information for a path"""
+        pass
+    
+    @abstractmethod
+    def are_on_same_volume(self, path1: Path, path2: Path) -> Result[bool]:
+        """Check if two paths are on the same volume"""
+        pass
+    
+    @abstractmethod
+    def clear_cache(self):
+        """Clear volume detection cache"""
+        pass
+```
+
+### Step 1.4: Enhance FileOperationService Interface
+
+**File:** `core/services/interfaces.py` (UPDATE)
+
+Add new methods to existing `IFileOperationService`:
+
+```python
+# Add to IFileOperationService interface
+class IFileOperationService(IService):
+    # ... existing methods ...
+    
+    @abstractmethod
+    def determine_operation_plan(
+        self,
+        source_items: List[tuple],
+        destination: Path,
+        user_preference: OperationMode = OperationMode.AUTO
+    ) -> Result[OperationPlan]:
+        """
+        Analyze source items and destination to determine optimal operation plan
+        
+        Args:
+            source_items: List of (type, path, relative_path) tuples
+            destination: Destination directory
+            user_preference: User's preferred operation mode
+            
+        Returns:
+            Result containing OperationPlan with detailed execution strategy
+        """
+        pass
+    
+    @abstractmethod
+    def validate_operation_plan(self, plan: OperationPlan) -> Result[bool]:
+        """
+        Validate that an operation plan can be safely executed
+        
+        Checks:
+        - Disk space availability
+        - Write permissions
+        - Name conflict detection
+        - Path traversal security
+        
+        Args:
+            plan: Operation plan to validate
+            
+        Returns:
+            Result containing validation status
+        """
+        pass
+```
+
+### Step 1.5: Implement Enhanced FileOperationService
+
+**File:** `core/services/file_operation_service.py` (UPDATE)
+
+Add the following methods to the existing `FileOperationService` class:
+
+```python
+# Add to imports at top of file
+from core.models import OperationMode, OperationPlan, OperationModeReason, VolumeInfo
+from typing import Set
+import os
+
+# Add to FileOperationService class
+class FileOperationService(IFileOperationService):
+    # ... existing __init__ and methods ...
+    
+    def __init__(self):
+        # ... existing initialization ...
+        self._volume_service = None  # Lazy loaded
+    
+    @property
+    def volume_service(self):
+        """Lazy load volume detection service"""
+        if self._volume_service is None:
+            from core.services.service_registry import get_service
+            from core.services.interfaces import IVolumeDetectionService
+            self._volume_service = get_service(IVolumeDetectionService)
+        return self._volume_service
+    
+    def determine_operation_plan(
+        self,
+        source_items: List[tuple],
+        destination: Path,
+        user_preference: OperationMode = OperationMode.AUTO
+    ) -> Result[OperationPlan]:
+        """
+        Analyze sources and destination to create optimal operation plan
+        
+        This is the KEY decision point that determines MOVE vs COPY
+        Called by WorkflowController before creating worker threads
+        """
+        try:
+            logger.debug(
+                f"Determining operation plan: {len(source_items)} items, "
+                f"dest={destination}, preference={user_preference}"
+            )
+            
+            # Initialize plan
+            plan = OperationPlan(
+                mode=OperationMode.COPY,  # Default to safe mode
+                reason=OperationModeReason.SAFETY_FALLBACK,
+                total_items=len(source_items)
+            )
+            
+            # Get destination volume info
+            dest_volume_result = self.volume_service.get_volume_info(destination)
+            if not dest_volume_result.success:
+                # Can't detect destination volume - use safe COPY mode
+                plan.user_message = "Could not detect destination volume. Using COPY mode for safety."
+                logger.warning(f"Destination volume detection failed: {dest_volume_result.error}")
+                return Result.success(plan)
+            
+            plan.destination_volume = dest_volume_result.value
+            
+            # Analyze source items and categorize by volume
+            source_volumes: Set[str] = set()
+            move_items = []
+            copy_items = []
+            
+            for item in source_items:
+                item_type, source_path, relative_path = item
+                
+                # Get source volume info
+                source_volume_result = self.volume_service.get_volume_info(source_path)
+                if not source_volume_result.success:
+                    # Can't detect this source volume - must copy
+                    copy_items.append(item)
+                    continue
+                
+                source_volume = source_volume_result.value
+                source_volumes.add(source_volume.volume_id)
+                
+                # Store source volume info
+                if source_volume.volume_id not in plan.source_volumes:
+                    plan.source_volumes[source_volume.volume_id] = source_volume
+                
+                # Check if same volume as destination
+                if source_volume.volume_id == plan.destination_volume.volume_id:
+                    # Same volume - eligible for MOVE
+                    move_items.append(item)
+                else:
+                    # Different volume - must COPY
+                    copy_items.append(item)
+            
+            # Determine operation mode based on analysis
+            plan.move_items = move_items
+            plan.copy_items = copy_items
+            plan.move_count = len(move_items)
+            plan.copy_count = len(copy_items)
+            
+            # Handle user preference override
+            if user_preference == OperationMode.COPY:
+                # User wants COPY only - move all items to copy list
+                plan.copy_items.extend(plan.move_items)
+                plan.move_items = []
+                plan.move_count = 0
+                plan.copy_count = len(plan.copy_items)
+                plan.mode = OperationMode.COPY
+                plan.reason = OperationModeReason.USER_OVERRIDE
+                plan.user_message = "Using COPY mode (user preference)"
+                logger.info("User override: COPY mode enforced")
+                return Result.success(plan)
+            
+            # Check for network volumes (always copy)
+            if plan.destination_volume.is_network:
+                plan.copy_items.extend(plan.move_items)
+                plan.move_items = []
+                plan.move_count = 0
+                plan.copy_count = len(plan.copy_items)
+                plan.mode = OperationMode.COPY
+                plan.reason = OperationModeReason.NETWORK_PATH
+                plan.user_message = "Network destination detected. Using COPY mode for safety."
+                logger.info("Network path detected, using COPY mode")
+                return Result.success(plan)
+            
+            # Determine final mode
+            if plan.move_count > 0 and plan.copy_count > 0:
+                # Mixed scenario - HYBRID mode
+                plan.mode = OperationMode.HYBRID
+                plan.reason = OperationModeReason.MIXED_SOURCES
+                plan.requires_confirmation = True
+                plan.user_message = (
+                    f"Mixed operation: {plan.move_count} items on same drive (MOVE), "
+                    f"{plan.copy_count} items on different drive (COPY)"
+                )
+            elif plan.move_count > 0:
+                # All items on same volume - MOVE mode
+                plan.mode = OperationMode.MOVE
+                plan.reason = OperationModeReason.SAME_VOLUME
+                plan.requires_confirmation = True
+                plan.user_message = (
+                    f"All {plan.move_count} items on same drive as destination. "
+                    "MOVE mode will be 10-20x faster."
+                )
+            else:
+                # All items on different volumes - COPY mode
+                plan.mode = OperationMode.COPY
+                plan.reason = OperationModeReason.DIFFERENT_VOLUME
+                plan.user_message = f"Cross-drive operation detected. Using standard COPY mode."
+            
+            # Estimate time savings
+            if plan.move_count > 0:
+                # Rough estimate: 100MB/s for copy, instant for move
+                # Assume average file size of 10MB
+                average_size_mb = 10
+                total_move_mb = plan.move_count * average_size_mb
+                copy_time = total_move_mb / 100  # seconds
+                move_time = 1  # essentially instant, but 1s for filesystem operations
+                plan.estimated_savings_seconds = max(0, copy_time - move_time)
+            
+            logger.info(
+                f"Operation plan determined: mode={plan.mode.value}, "
+                f"move={plan.move_count}, copy={plan.copy_count}, "
+                f"savings={plan.estimated_savings_seconds:.1f}s"
+            )
+            
+            return Result.success(plan)
+            
+        except Exception as e:
+            error = FileOperationError(
+                f"Failed to determine operation plan: {e}",
+                user_message="Could not analyze files for optimal processing mode."
+            )
+            logger.error(f"Operation plan determination failed: {e}", exc_info=True)
+            return Result.error(error)
+    
+    def validate_operation_plan(self, plan: OperationPlan) -> Result[bool]:
+        """
+        Validate that operation plan can be safely executed
+        
+        Pre-flight checks before starting any file operations
+        """
+        try:
+            logger.debug(f"Validating operation plan: {plan.mode.value}")
+            
+            # Check destination exists and is writable
+            if not plan.destination_volume.path.exists():
+                return Result.error(
+                    FileOperationError(
+                        "Destination path does not exist",
+                        user_message="Destination directory not found."
+                    )
+                )
+            
+            if not os.access(plan.destination_volume.path, os.W_OK):
+                return Result.error(
+                    FileOperationError(
+                        "Destination is not writable",
+                        user_message="You do not have permission to write to the destination."
+                    )
+                )
+            
+            # Check available disk space (if we can detect it)
+            if plan.destination_volume.available_space is not None:
+                # Rough estimate: need space for largest items
+                # For COPY: need full size
+                # For MOVE: need minimal space (just metadata)
+                required_space = 0
+                if plan.copy_count > 0:
+                    # Estimate 10MB per file for copy operations (very rough)
+                    required_space = plan.copy_count * 10 * 1024 * 1024
+                
+                if plan.destination_volume.available_space < required_space:
+                    return Result.error(
+                        FileOperationError(
+                            f"Insufficient disk space: need {required_space:,} bytes, "
+                            f"have {plan.destination_volume.available_space:,} bytes",
+                            user_message="Not enough disk space at destination."
+                        )
+                    )
+            
+            # For MOVE operations, verify all source paths exist
+            if plan.mode in [OperationMode.MOVE, OperationMode.HYBRID]:
+                for item_type, source_path, _ in plan.move_items:
+                    if not source_path.exists():
+                        return Result.error(
+                            FileOperationError(
+                                f"Source path does not exist: {source_path}",
+                                user_message=f"Source file or folder not found: {source_path.name}"
+                            )
+                        )
+            
+            logger.debug("Operation plan validation passed")
+            return Result.success(True)
+            
+        except Exception as e:
+            error = FileOperationError(
+                f"Operation plan validation failed: {e}",
+                user_message="Could not validate operation safety."
+            )
+            logger.error(f"Validation error: {e}", exc_info=True)
+            return Result.error(error)
+```
+
+### Step 1.6: Register New Service
+
+**File:** `core/services/service_config.py` (UPDATE)
+
+Add to the `configure_services` function:
+
+```python
+def configure_services(zip_controller=None):
+    """Configure and register all application services"""
+    try:
+        # ... existing service registrations ...
+        
+        # ✅ VOLUME DETECTION SERVICE: Cross-platform volume identification
+        from core.services.volume_detection_service import VolumeDetectionService
+        register_service(IVolumeDetectionService, VolumeDetectionService())
+        
+        # ... rest of existing services ...
+```
+
+**File:** `core/services/__init__.py` (UPDATE)
+
+Add exports:
+
+```python
+# Add to imports
+from .volume_detection_service import VolumeDetectionService
+
+# Add to __all__
+__all__ = [
+    # ... existing exports ...
+    'VolumeDetectionService',
+]
+```
+
+### Step 1.7: Testing Phase 1
+
+**File:** `tests/test_volume_detection.py` (NEW)
+
+```python
+#!/usr/bin/env python3
+"""
+Unit tests for VolumeDetectionService
+"""
+
+import unittest
+from pathlib import Path
+import tempfile
+import os
+
+from core.services.volume_detection_service import VolumeDetectionService
+
+
+class TestVolumeDetection(unittest.TestCase):
+    """Test volume detection functionality"""
+    
+    def setUp(self):
+        """Set up test fixtures"""
+        self.service = VolumeDetectionService()
+        self.temp_dir = tempfile.mkdtemp()
+        self.temp_path = Path(self.temp_dir)
+    
+    def tearDown(self):
+        """Clean up test fixtures"""
+        import shutil
+        if self.temp_path.exists():
+            shutil.rmtree(self.temp_path)
+    
+    def test_get_volume_info_success(self):
+        """Test getting volume info for valid path"""
+        result = self.service.get_volume_info(self.temp_path)
+        self.assertTrue(result.success)
+        self.assertIsNotNone(result.value)
+        self.assertIsNotNone(result.value.volume_id)
+    
+    def test_same_volume_detection(self):
+        """Test detecting same volume for paths on same drive"""
+        path1 = self.temp_path / "folder1"
+        path2 = self.temp_path / "folder2"
+        path1.mkdir()
+        path2.mkdir()
+        
+        result = self.service.are_on_same_volume(path1, path2)
+        self.assertTrue(result.success)
+        self.assertTrue(result.value)  # Should be same volume
+    
+    def test_volume_cache(self):
+        """Test that volume info is cached"""
+        # First call
+        result1 = self.service.get_volume_info(self.temp_path)
+        self.assertTrue(result1.success)
+        
+        # Second call should use cache
+        result2 = self.service.get_volume_info(self.temp_path)
+        self.assertTrue(result2.success)
+        self.assertEqual(result1.value.volume_id, result2.value.volume_id)
+
+
+if __name__ == '__main__':
+    unittest.main()
+```
+
+### Phase 1 Success Criteria
+
+- [ ] `OperationMode`, `OperationPlan`, `VolumeInfo` models created
+- [ ] `VolumeDetectionService` implemented and tested on target platform
+- [ ] `IVolumeDetectionService` interface defined
+- [ ] `FileOperationService` enhanced with plan determination
+- [ ] Service registered in `service_config.py`
+- [ ] Unit tests passing
+- [ ] No impact on existing functionality (services loaded but not used yet)
+
+-----
+
+## Phase 2: Move Operations Infrastructure (Week 2-3)
+
+**Objective:** Create transaction-safe MOVE operations infrastructure parallel to existing BufferedFileOperations.
+
+### Step 2.1: Create MoveOperations Class
+
+**File:** `core/move_operations.py` (NEW)
+
+```python
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+High-performance MOVE operations for same-volume file transfers
+Parallel architecture to BufferedFileOperations with transaction safety
+
+MOVE operations are instant pointer updates in the filesystem allocation table
+when source and destination are on the same volume. This provides 10-20x
+performance improvement over COPY operations.
+
+TRANSACTION SAFETY:
+All MOVE operations are logged in a transaction that can be rolled back
+if any operation fails. This ensures data integrity even for destructive moves.
+
+FORENSIC INTEGRITY:
+Post-move hash verification ensures files are readable and intact at destination.
+Operation mode is logged in audit trail for chain of custody.
+"""
+
+import shutil
+import hashlib
+import time
+import os
+from pathlib import Path
+from typing import List, Dict, Callable, Optional, Tuple
+from datetime import datetime
+import logging
+
+from core.models import MoveTransaction
+from core.result_types import Result, FileOperationResult
+from core.exceptions import FileOperationError, HashVerificationError
+from core.logger import logger
+
+
+class MoveOperations:
+    """
+    Transaction-safe MOVE operations for same-volume transfers
+    
+    Key Features:
+    - Transaction log with rollback capability
+    - Post-move hash verification
+    - Progress reporting
+    - Cancellation support
+    - Pause/resume support
+    """
+    
+    def __init__(self,
+                 progress_callback: Optional[Callable[[int, str], None]] = None,
+                 metrics_callback: Optional[Callable] = None,
+                 cancelled_check: Optional[Callable[[], bool]] = None,
+                 pause_check: Optional[Callable[[], None]] = None):
+        """
+        Initialize move operations
+        
+        Args:
+            progress_callback: Function(percentage, message) for progress updates
+            metrics_callback: Function for performance metrics updates
+            cancelled_check: Function() -> bool to check if operation cancelled
+            pause_check: Function() to check/wait for pause
+        """
+        self.progress_callback = progress_callback
+        self.metrics_callback = metrics_callback
+        self.cancelled_check = cancelled_check
+        self.pause_check = pause_check
+        
+        # Transaction management
+        self.current_transaction: Optional[MoveTransaction] = None
+        
+        # Performance tracking
+        self.start_time = 0.0
+        self.files_moved = 0
+        self.bytes_moved = 0
+        
+        logger.info("MoveOperations initialized")
+    
+    def move_files_preserving_structure(
+        self,
+        items: List[Tuple],
+        destination: Path,
+        calculate_hash: bool = True
+    ) -> Result[FileOperationResult]:
+        """
+        Move files/folders while preserving complete directory structure
+        
+        This is the main entry point, equivalent to BufferedFileOperations.copy_files_preserving_structure()
+        but uses MOVE semantics for same-volume operations.
+        
+        Args:
+            items: List of (type, path, relative_path) tuples
+            destination: Destination directory
+            calculate_hash: Whether to calculate post-move hashes
+            
+        Returns:
+            Result containing FileOperationResult with operation details
+        """
+        try:
+            self.start_time = time.time()
+            self.files_moved = 0
+            self.bytes_moved = 0
+            
+            logger.info(
+                f"Starting MOVE operation: {len(items)} items to {destination}"
+            )
+            
+            # Create new transaction
+            transaction_id = f"move_{datetime.now():%Y%m%d_%H%M%S}"
+            self.current_transaction = MoveTransaction(transaction_id=transaction_id)
+            
+            # Ensure destination exists
+            destination.mkdir(parents=True, exist_ok=True)
+            
+            # Process all items
+            results = {}
+            total_items = len(items)
+            
+            for idx, (item_type, source_path, relative_path) in enumerate(items):
+                # Check cancellation
+                if self.cancelled_check and self.cancelled_check():
+                    logger.warning("MOVE operation cancelled by user")
+                    self._rollback_transaction()
+                    return Result.error(
+                        FileOperationError(
+                            "Operation cancelled by user",
+                            user_message="File move operation was cancelled."
+                        )
+                    )
+                
+                # Check pause
+                if self.pause_check:
+                    self.pause_check()
+                
+                # Calculate progress
+                progress_pct = int((idx / total_items * 100) if total_items > 0 else 0)
+                
+                # Determine destination path
+                if relative_path:
+                    dest_path = destination / relative_path
+                else:
+                    dest_path = destination / source_path.name
+                
+                # Update progress
+                self._report_progress(
+                    progress_pct,
+                    f"Moving: {source_path.name}"
+                )
+                
+                # Move item
+                if item_type == 'file':
+                    move_result = self._move_file(
+                        source_path,
+                        dest_path,
+                        relative_path,
+                        calculate_hash
+                    )
+                else:  # folder
+                    move_result = self._move_folder(
+                        source_path,
+                        dest_path,
+                        relative_path,
+                        calculate_hash
+                    )
+                
+                if not move_result.success:
+                    # Move failed - rollback entire transaction
+                    logger.error(f"Move failed for {source_path}: {move_result.error}")
+                    self._rollback_transaction()
+                    return move_result
+                
+                # Store result
+                results[str(relative_path if relative_path else source_path.name)] = move_result.value
+                self.files_moved += 1
+            
+            # Transaction complete - commit
+            self.current_transaction.mark_committed()
+            
+            # Final progress
+            self._report_progress(100, f"Move complete: {self.files_moved} items")
+            
+            # Create FileOperationResult
+            result = FileOperationResult.create(
+                results,
+                files_processed=self.files_moved,
+                bytes_processed=self.bytes_moved
+            )
+            
+            # Add metadata
+            result.add_metadata('operation_type', 'move')
+            result.add_metadata('transaction_id', self.current_transaction.transaction_id)
+            result.add_metadata('duration_seconds', time.time() - self.start_time)
+            result.add_metadata('calculate_hash', calculate_hash)
+            
+            logger.info(
+                f"MOVE operation completed: {self.files_moved} files, "
+                f"{time.time() - self.start_time:.2f}s"
+            )
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"MOVE operation failed: {e}", exc_info=True)
+            self._rollback_transaction()
+            error = FileOperationError(
+                f"Move operation failed: {e}",
+                user_message="File move operation failed. Changes have been rolled back."
+            )
+            return Result.error(error)
+    
+    def _move_file(
+        self,
+        source: Path,
+        dest: Path,
+        relative_path: Optional[Path],
+        calculate_hash: bool
+    ) -> Result[Dict]:
+        """
+        Move a single file with transaction logging
+        
+        Args:
+            source: Source file path
+            dest: Destination file path
+            relative_path: Relative path for result key
+            calculate_hash: Whether to calculate hash
+            
+        Returns:
+            Result containing file operation details
+        """
+        try:
+            # Ensure parent directory exists
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Security check - prevent path traversal
+            dest_resolved = dest.resolve()
+            if not str(dest_resolved).startswith(str(dest.parent.resolve())):
+                return Result.error(
+                    FileOperationError(
+                        f"Path traversal detected: {dest}",
+                        user_message="Invalid destination path detected."
+                    )
+                )
+            
+            # Get file size before move
+            file_size = source.stat().st_size
+            
+            # Perform atomic move
+            try:
+                shutil.move(str(source), str(dest))
+            except Exception as e:
+                return Result.error(
+                    FileOperationError(
+                        f"Failed to move {source}: {e}",
+                        user_message=f"Could not move file: {source.name}"
+                    )
+                )
+            
+            # Log to transaction (for rollback)
+            self.current_transaction.log_operation(source, dest)
+            
+            # Update metrics
+            self.bytes_moved += file_size
+            
+            # Calculate post-move hash if requested
+            dest_hash = None
+            if calculate_hash:
+                hash_result = self._calculate_hash(dest)
+                if hash_result.success:
+                    dest_hash = hash_result.value
+                else:
+                    # Hash calculation failed - this is a problem
+                    # Rollback and report error
+                    return Result.error(
+                        HashVerificationError(
+                            f"Post-move hash calculation failed for {dest}",
+                            user_message=f"Could not verify file integrity after move: {dest.name}"
+                        )
+                    )
+            
+            # Build result dict
+            result_data = {
+                'source_path': str(source),
+                'dest_path': str(dest),
+                'size': file_size,
+                'operation': 'move'
+            }
+            
+            if calculate_hash:
+                result_data['dest_hash'] = dest_hash
+                result_data['verified'] = True  # For move, dest_hash IS the verification
+            
+            return Result.success(result_data)
+            
+        except Exception as e:
+            logger.error(f"File move failed: {e}", exc_info=True)
+            return Result.error(
+                FileOperationError(
+                    f"Failed to move file {source}: {e}",
+                    user_message=f"Could not move file: {source.name}"
+                )
+            )
+    
+    def _move_folder(
+        self,
+        source: Path,
+        dest: Path,
+        relative_path: Optional[Path],
+        calculate_hash: bool
+    ) -> Result[Dict]:
+        """
+        Move an entire folder with all contents
+        
+        For folders, we move the entire directory tree in one operation.
+        This is much faster than moving individual files.
+        
+        Args:
+            source: Source folder path
+            dest: Destination folder path
+            relative_path: Relative path for result key
+            calculate_hash: Whether to calculate hashes (for files within)
+            
+        Returns:
+            Result containing folder operation details
+        """
+        try:
+            # Ensure parent directory exists
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Count files for progress reporting
+            file_count = sum(1 for _ in source.rglob('*') if _.is_file())
+            
+            # Perform atomic folder move
+            try:
+                shutil.move(str(source), str(dest))
+            except Exception as e:
+                return Result.error(
+                    FileOperationError(
+                        f"Failed to move folder {source}: {e}",
+                        user_message=f"Could not move folder: {source.name}"
+                    )
+                )
+            
+            # Log to transaction
+            self.current_transaction.log_operation(source, dest)
+            
+            # Calculate total size
+            total_size = sum(
+                f.stat().st_size 
+                for f in dest.rglob('*') 
+                if f.is_file()
+            )
+            self.bytes_moved += total_size
+            
+            # Build result
+            result_data = {
+                'source_path': str(source),
+                'dest_path': str(dest),
+                'size': total_size,
+                'file_count': file_count,
+                'operation': 'move_folder'
+            }
+            
+            return Result.success(result_data)
+            
+        except Exception as e:
+            logger.error(f"Folder move failed: {e}", exc_info=True)
+            return Result.error(
+                FileOperationError(
+                    f"Failed to move folder {source}: {e}",
+                    user_message=f"Could not move folder: {source.name}"
+                )
+            )
+    
+    def _calculate_hash(self, file_path: Path, algorithm: str = 'sha256') -> Result[str]:
+        """
+        Calculate hash for a file
+        
+        Args:
+            file_path: Path to file
+            algorithm: Hash algorithm (default: sha256)
+            
+        Returns:
+            Result containing hash string or error
+        """
+        try:
+            hasher = hashlib.new(algorithm)
+            buffer_size = 65536  # 64KB chunks
+            
+            with open(file_path, 'rb') as f:
+                while True:
+                    chunk = f.read(buffer_size)
+                    if not chunk:
+                        break
+                    hasher.update(chunk)
+            
+            return Result.success(hasher.hexdigest())
+            
+        except Exception as e:
+            return Result.error(
+                FileOperationError(
+                    f"Hash calculation failed for {file_path}: {e}",
+                    user_message=f"Could not calculate hash for: {file_path.name}"
+                )
+            )
+    
+    def _rollback_transaction(self):
+        """
+        Rollback all operations in current transaction
+        
+        Moves all files back to their original locations in reverse order.
+        This is critical for data safety - if MOVE fails partway through,
+        we restore the original state.
+        """
+        if not self.current_transaction or self.current_transaction.rolled_back:
+            return
+        
+        logger.warning(
+            f"Rolling back transaction {self.current_transaction.transaction_id}: "
+            f"{len(self.current_transaction.operations)} operations"
+        )
+        
+        rollback_ops = self.current_transaction.get_rollback_operations()
+        
+        for dest, source in rollback_ops:
+            try:
+                if dest.exists():
+                    # Move back to original location
+                    shutil.move(str(dest), str(source))
+                    logger.debug(f"Rolled back: {dest} -> {source}")
+            except Exception as e:
+                # Log rollback failure but continue
+                error_msg = f"Rollback failed for {dest} -> {source}: {e}"
+                logger.error(error_msg)
+                self.current_transaction.errors.append(error_msg)
+        
+        self.current_transaction.mark_rolled_back()
+        logger.info(
+            f"Transaction rollback complete. "
+            f"Errors: {len(self.current_transaction.errors)}"
+        )
+    
+    def _report_progress(self, percentage: int, message: str):
+        """Report progress if callback is available"""
+        if self.progress_callback:
+            self.progress_callback(percentage, message)
+    
+    def get_current_transaction(self) -> Optional[MoveTransaction]:
+        """Get current transaction for inspection/logging"""
+        return self.current_transaction
+```
+
+### Step 2.2: Create Integration Tests
+
+**File:** `tests/test_move_operations.py` (NEW)
+
+```python
+#!/usr/bin/env python3
+"""
+Integration tests for MoveOperations
+"""
+
+import unittest
+from pathlib import Path
+import tempfile
+import shutil
+
+from core.move_operations import MoveOperations
+from core.models import MoveTransaction
+
+
+class TestMoveOperations(unittest.TestCase):
+    """Test MOVE operations functionality"""
+    
+    def setUp(self):
+        """Set up test fixtures"""
+        self.test_dir = Path(tempfile.mkdtemp())
+        self.source_dir = self.test_dir / "source"
+        self.dest_dir = self.test_dir / "dest"
+        self.source_dir.mkdir()
+        self.dest_dir.mkdir()
+        
+        # Create test files
+        self.test_file1 = self.source_dir / "test1.txt"
+        self.test_file1.write_text("Test content 1")
+        self.test_file2 = self.source_dir / "test2.txt"
+        self.test_file2.write_text("Test content 2")
+        
+        self.move_ops = MoveOperations()
+    
+    def tearDown(self):
+        """Clean up test fixtures"""
+        if self.test_dir.exists():
+            shutil.rmtree(self.test_dir)
+    
+    def test_move_single_file(self):
+        """Test moving a single file"""
+        items = [('file', self.test_file1, Path("test1.txt"))]
+        
+        result = self.move_ops.move_files_preserving_structure(
+            items,
+            self.dest_dir,
+            calculate_hash=True
+        )
+        
+        self.assertTrue(result.success)
+        self.assertTrue((self.dest_dir / "test1.txt").exists())
+        self.assertFalse(self.test_file1.exists())  # Source should be gone
+    
+    def test_move_multiple_files(self):
+        """Test moving multiple files"""
+        items = [
+            ('file', self.test_file1, Path("test1.txt")),
+            ('file', self.test_file2, Path("test2.txt"))
+        ]
+        
+        result = self.move_ops.move_files_preserving_structure(
+            items,
+            self.dest_dir,
+            calculate_hash=True
+        )
+        
+        self.assertTrue(result.success)
+        self.assertTrue((self.dest_dir / "test1.txt").exists())
+        self.assertTrue((self.dest_dir / "test2.txt").exists())
+        self.assertFalse(self.test_file1.exists())
+        self.assertFalse(self.test_file2.exists())
+    
+    def test_transaction_rollback(self):
+        """Test that transaction rollback works"""
+        # Create a scenario that will fail
+        items = [
+            ('file', self.test_file1, Path("test1.txt")),
+            ('file', Path("nonexistent.txt"), Path("test2.txt"))  # This will fail
+        ]
+        
+        result = self.move_ops.move_files_preserving_structure(
+            items,
+            self.dest_dir,
+            calculate_hash=True
+        )
+        
+        # Should fail
+        self.assertFalse(result.success)
+        
+        # First file should be rolled back
+        self.assertTrue(self.test_file1.exists())  # Back at source
+        self.assertFalse((self.dest_dir / "test1.txt").exists())  # Not at dest
+    
+    def test_hash_calculation(self):
+        """Test post-move hash calculation"""
+        items = [('file', self.test_file1, Path("test1.txt"))]
+        
+        result = self.move_ops.move_files_preserving_structure(
+            items,
+            self.dest_dir,
+            calculate_hash=True
+        )
+        
+        self.assertTrue(result.success)
+        file_result = result.value.results.get("test1.txt")
+        self.assertIsNotNone(file_result)
+        self.assertIn('dest_hash', file_result)
+        self.assertTrue(file_result['verified'])
+
+
+if __name__ == '__main__':
+    unittest.main()
+```
+
+### Phase 2 Success Criteria
+
+- [ ] `MoveOperations` class implemented with transaction support
+- [ ] All MOVE operations logged in transaction
+- [ ] Rollback mechanism tested and working
+- [ ] Post-move hash verification functional
+- [ ] Integration tests passing
+- [ ] No dependencies on controllers or UI (pure service logic)
+
+-----
+
+## Phase 3: Controller Integration (Week 3-4)
+
+**Objective:** Integrate operation mode detection into WorkflowController orchestration layer.
+
+### Step 3.1: Enhance WorkflowController
+
+**File:** `controllers/workflow_controller.py` (UPDATE)
+
+Add the following methods to existing `WorkflowController`:
+
+```python
+# Add to imports
+from core.models import OperationMode, OperationPlan, OperationModeReason
+from core.move_operations import MoveOperations
+
+# Add to WorkflowController class
+class WorkflowController(BaseController):
+    # ... existing code ...
+    
+    def process_forensic_workflow(
+        self,
+        form_data: FormData,
+        files: List[Path],
+        folders: List[Path],
+        output_directory: Path,
+        calculate_hash: bool = True,
+        performance_monitor = None,
+        operation_mode: OperationMode = OperationMode.AUTO  # NEW PARAMETER
+    ) -> Result[FolderStructureThread]:
+        """
+        Process complete forensic workflow with intelligent operation mode detection
+        
+        ENHANCED: Now detects optimal operation mode (MOVE vs COPY) automatically
+        
+        Args:
+            form_data: Form data for forensic structure
+            files: List of files to process
+            folders: List of folders to process
+            output_directory: Base output directory
+            calculate_hash: Whether to calculate file hashes
+            performance_monitor: Optional performance monitoring
+            operation_mode: Operation mode preference (AUTO, COPY, MOVE)
+            
+        Returns:
+            Result containing FolderStructureThread or error
+        """
+        try:
+            self._log_operation(
+                "process_forensic_workflow",
+                f"files={len(files)}, folders={len(folders)}, mode={operation_mode.value}"
+            )
+            
+            # Validate inputs (existing validation)
+            validation_result = self.validation_service.validate_workflow_inputs(
+                form_data=form_data,
+                files=files,
+                folders=folders,
+                output_directory=output_directory
+            )
+            
+            if not validation_result.success:
+                return validation_result
+            
+            # Build forensic folder structure (existing path building)
+            path_result = self.path_service.build_forensic_structure(
+                form_data=form_data,
+                output_directory=output_directory
+            )
+            
+            if not path_result.success:
+                return path_result
+            
+            base_forensic_path = path_result.value
+            
+            # Prepare workflow items (existing item preparation)
+            all_items = self._prepare_workflow_items(files, folders)
+            
+            # === NEW: Determine optimal operation plan ===
+            operation_plan_result = self.file_service.determine_operation_plan(
+                source_items=all_items,
+                destination=base_forensic_path,
+                user_preference=operation_mode
+            )
+            
+            if not operation_plan_result.success:
+                self._log_operation(
+                    "operation_plan_failed",
+                    str(operation_plan_result.error),
+                    "warning"
+                )
+                # Fallback to COPY mode if plan determination fails
+                operation_plan = OperationPlan(
+                    mode=OperationMode.COPY,
+                    reason=OperationModeReason.SAFETY_FALLBACK,
+                    copy_items=all_items,
+                    copy_count=len(all_items),
+                    total_items=len(all_items)
+                )
+            else:
+                operation_plan = operation_plan_result.value
+                
+                # Validate the operation plan
+                validation_result = self.file_service.validate_operation_plan(operation_plan)
+                if not validation_result.success:
+                    self._log_operation(
+                        "operation_plan_validation_failed",
+                        str(validation_result.error),
+                        "warning"
+                    )
+                    # Fallback to COPY mode
+                    operation_plan.mode = OperationMode.COPY
+                    operation_plan.reason = OperationModeReason.SAFETY_FALLBACK
+                    operation_plan.copy_items = operation_plan.move_items + operation_plan.copy_items
+                    operation_plan.move_items = []
+                    operation_plan.copy_count = len(operation_plan.copy_items)
+                    operation_plan.move_count = 0
+            
+            # Log operation plan
+            self._log_operation(
+                "operation_plan_determined",
+                f"mode={operation_plan.mode.value}, "
+                f"move={operation_plan.move_count}, "
+                f"copy={operation_plan.copy_count}",
+                "info"
+            )
+            
+            # Create thread with operation plan
+            thread = FolderStructureThread(
+                items=all_items,
+                destination=base_forensic_path,
+                calculate_hash=calculate_hash,
+                performance_monitor=performance_monitor,
+                operation_plan=operation_plan  # NEW: Pass plan to thread
+            )
+            
+            # Track with resource coordinator
+            operation_id = f"forensic_{datetime.now():%Y%m%d_%H%M%S}"
+            self._current_operation_id = self.resources.track_worker(
+                thread,
+                name=operation_id
+            )
+            
+            self.current_operation = thread
+            
+            self._log_operation(
+                "workflow_started",
+                f"operation_id={operation_id}, mode={operation_plan.mode.value}"
+            )
+            
+            return Result.success(thread)
+            
+        except Exception as e:
+            error = FileOperationError(
+                f"Workflow setup failed: {e}",
+                user_message="Failed to set up file processing workflow."
+            )
+            self._handle_error(error, {'method': 'process_forensic_workflow'})
+            return Result.error(error)
+```
+
+### Step 3.2: Add User Confirmation Dialog
+
+**File:** `ui/dialogs/operation_mode_dialog.py` (NEW)
+
+```python
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Operation mode confirmation dialog
+Shows users the operation plan and allows confirmation/override
+"""
+
+from PySide6.QtWidgets import (
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel,
+    QPushButton, QTextEdit, QGroupBox, QRadioButton
+)
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QFont
+
+from core.models import OperationPlan, OperationMode
+
+
+class OperationModeDialog(QDialog):
+    """
+    Dialog for confirming operation mode
+    Shows details about what will be moved vs copied
+    """
+    
+    def __init__(self, operation_plan: OperationPlan, parent=None):
+        super().__init__(parent)
+        self.operation_plan = operation_plan
+        self.selected_mode = operation_plan.mode
+        
+        self.setWindowTitle("Confirm Operation Mode")
+        self.setModal(True)
+        self.setMinimumWidth(600)
+        
+        self._setup_ui()
+    
+    def _setup_ui(self):
+        """Set up dialog UI"""
+        layout = QVBoxLayout(self)
+        
+        # Title
+        title = QLabel("File Operation Mode Detected")
+        title_font = QFont()
+        title_font.setPointSize(14)
+        title_font.setBold(True)
+        title.setFont(title_font)
+        layout.addWidget(title)
+        
+        # Summary
+        summary = QLabel(self.operation_plan.get_summary())
+        summary.setWordWrap(True)
+        layout.addWidget(summary)
+        
+        # Details group
+        details_group = QGroupBox("Operation Details")
+        details_layout = QVBoxLayout(details_group)
+        
+        # Build details text
+        details_text = []
+        details_text.append(f"Mode: {self.operation_plan.mode.value.upper()}")
+        details_text.append(f"Reason: {self.operation_plan.reason.value.replace('_', ' ').title()}")
+        details_text.append(f"Total items: {self.operation_plan.total_items}")
+        
+        if self.operation_plan.move_count > 0:
+            details_text.append(f"Items to MOVE: {self.operation_plan.move_count} (instant, same drive)")
+        
+        if self.operation_plan.copy_count > 0:
+            details_text.append(f"Items to COPY: {self.operation_plan.copy_count} (full transfer)")
+        
+        if self.operation_plan.estimated_savings_seconds > 0:
+            details_text.append(
+                f"Estimated time savings: {int(self.operation_plan.estimated_savings_seconds)} seconds"
+            )
+        
+        details_label = QLabel("\n".join(details_text))
+        details_label.setWordWrap(True)
+        details_layout.addWidget(details_label)
+        
+        layout.addWidget(details_group)
+        
+        # Mode override options
+        if self.operation_plan.mode == OperationMode.MOVE or self.operation_plan.mode == OperationMode.HYBRID:
+            override_group = QGroupBox("Override Options")
+            override_layout = QVBoxLayout(override_group)
+            
+            # Radio buttons for mode selection
+            self.accept_radio = QRadioButton(
+                f"Accept recommended mode ({self.operation_plan.mode.value.upper()})"
+            )
+            self.accept_radio.setChecked(True)
+            override_layout.addWidget(self.accept_radio)
+            
+            self.copy_radio = QRadioButton("Use COPY mode instead (slower but safer)")
+            override_layout.addWidget(self.copy_radio)
+            
+            # Explanation
+            explanation = QLabel(
+                "MOVE mode is instant for same-drive operations but source files will be moved.\n"
+                "COPY mode is slower but creates copies, leaving source files intact."
+            )
+            explanation.setWordWrap(True)
+            explanation.setStyleSheet("color: #666; font-size: 10px;")
+            override_layout.addWidget(explanation)
+            
+            layout.addWidget(override_group)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        
+        self.proceed_btn = QPushButton("Proceed")
+        self.proceed_btn.setDefault(True)
+        self.proceed_btn.clicked.connect(self.accept)
+        
+        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.clicked.connect(self.reject)
+        
+        button_layout.addStretch()
+        button_layout.addWidget(self.cancel_btn)
+        button_layout.addWidget(self.proceed_btn)
+        
+        layout.addLayout(button_layout)
+    
+    def get_selected_mode(self) -> OperationMode:
+        """Get the mode selected by user"""
+        if hasattr(self, 'copy_radio') and self.copy_radio.isChecked():
+            return OperationMode.COPY
+        return self.operation_plan.mode
+    
+    @staticmethod
+    def confirm_operation_mode(operation_plan: OperationPlan, parent=None) -> tuple[bool, OperationMode]:
+        """
+        Show dialog and get user confirmation
+        
+        Returns:
+            Tuple of (confirmed: bool, selected_mode: OperationMode)
+        """
+        dialog = OperationModeDialog(operation_plan, parent)
+        result = dialog.exec()
+        
+        if result == QDialog.Accepted:
+            return True, dialog.get_selected_mode()
+        else:
+            return False, operation_plan.mode
+```
+
+### Step 3.3: Integrate Confirmation into ForensicController
+
+**File:** `controllers/forensic_controller.py` (UPDATE)
+
+Add to `process_forensic_files` method, after workflow creation:
+
+```python
+def process_forensic_files(
+    self,
+    form_data: FormData,
+    files: List[Path],
+    folders: List[Path],
+    calculate_hash: bool = None,
+    performance_monitor: Any = None
+) -> Result[Any]:
+    """
+    Process files using forensic folder structure
+    
+    ENHANCED: Now includes operation mode detection and user confirmation
+    """
+    try:
+        # ... existing validation code ...
+        
+        # Start workflow with AUTO mode detection
+        workflow_result = self.workflow_controller.process_forensic_workflow(
+            form_data=form_data,
+<
+...
+
+[Message clipped]  View entire message

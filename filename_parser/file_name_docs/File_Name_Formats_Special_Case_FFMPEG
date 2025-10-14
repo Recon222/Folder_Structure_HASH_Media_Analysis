@@ -1,0 +1,220 @@
+## Filename Pattern Types
+
+### Pattern: Channel + Date + Time
+- **Format:** `CH##_YYYYMMDD_HHMMSS.ext`
+- **Examples:** `CH01_20240101_120000.asf`, `CH01_20220114_110839.mp4`, `CH01_20230815120000.264`
+- **Manufacturers:** Various Chinese DVR, Dahua exports
+
+### Pattern: Camera Name + DateTime
+- **Format:** `[CameraName]_##_YYYYMMDDHHMMSS.ext`
+- **Examples:** `Driveway_01_20180510115044.mp4`, `Front Door Cam_00_20211001144606.mp4`
+- **Manufacturers:** Reolink
+
+### Pattern: Sequential Numbering (Pre-allocated Files)
+- **Format:** `prefix#####.ext`
+- **Examples:** `hiv00001.mp4`, `hiv00002.mp4`, `0010600.sec`, `12590100.sec`
+- **Manufacturers:** Hikvision internal storage, Samsung
+
+### Pattern: Channel + Quality + Date + Time Range
+- **Format:** `[System]_ch#_[quality]_YYYYMMDD[HHMMSS]_YYYYMMDD[HHMMSS].ext`
+- **Examples:** `NVR_ch1_main_20180416.dav`, `NPV-CH01-MAIN-20180416101530-20180416102530.DAV`
+- **Manufacturers:** Dahua, Amcrest, Lorex
+
+### Pattern: Date + Time (Simple)
+- **Format:** `YYYYMMDD_HHMMSS.ext`
+- **Examples:** `20150618_153045.264`
+- **Manufacturers:** Various IP cameras
+
+### Pattern: Simple Sequential
+- **Format:** `##.ext` or `prefix##.ext`
+- **Examples:** `00.h264`, `01.h264`
+- **Manufacturers:** Basic IP camera SD card storage
+
+---
+
+## Key Codec Information
+
+### Video Codecs
+- **H.264/AVC:** Most common, universal compatibility, profiles: Baseline, Main, High
+- **H.265/HEVC:** ~50% better compression than H.264, 4K/8K cameras, profiles: Main, Main 10
+- **MJPEG:** Each frame is complete JPEG, 5-20x larger files, no interframe compression
+- **MPEG-4 Part 2:** Legacy codec, older DVR systems
+- **Proprietary:** GEO-MPEG4 (Geovision), PLV1 (Pelco), MxPEG (Mobotix)
+
+### Audio Codecs
+- **AAC/AAC-LC:** Most compatible, 64-256 kbps, 8-96 kHz
+- **G.711 A-law/μ-law:** 64 kbps, 8 kHz, telephone quality
+- **G.726:** 16/24/32/40 kbps compressed
+- **PCM:** Uncompressed
+- **MP3:** Legacy systems
+- **WMA:** Windows Media Audio (legacy)
+- **Proprietary:** Samsung/Hanwha unlicensed codecs (often cannot be decoded)
+
+---
+
+## Container Format Extensions
+
+### Universal Standards
+- `.mp4` - MPEG-4 Part 14 (ISO/IEC 14496-14)
+- `.mkv` - Matroska multimedia container
+- `.avi` - Audio Video Interleave (RIFF container)
+- `.mov` - QuickTime File Format
+- `.ts` / `.m2t` / `.m2ts` - MPEG Transport Stream
+- `.flv` - Flash Video
+- `.wmv` / `.asf` - Windows Media Video / Advanced Systems Format
+
+### Proprietary Security Formats
+- `.dav` / `.dhav` - Dahua proprietary
+- `.sec` - Samsung/Hanwha proprietary
+- `.ubv` - Ubiquiti UniFi Protect
+- `.ave` / `.avk` - Avigilon
+- `.n3r` - Panasonic i-PRO
+- `.bvr` - Blue Iris
+- `.nov` - DW Spectrum / Hanwha WAVE
+- `.dvr` - Generic proprietary
+
+### Raw Elementary Streams
+- `.264` / `.h264` - Raw H.264 stream (no container)
+- `.265` / `.h265` / `.hevc` - Raw H.265 stream (no container)
+- `.mjpeg` / `.mjpg` - Motion JPEG stream
+
+---
+
+## FFmpeg Compatibility Legend
+
+- ✅ **Excellent:** Direct copy-stream support, no transcoding needed
+- ⚠️ **Partial:** May work with specific flags or requires transcoding
+- ❌ **Poor/None:** Requires proprietary software or forensic tools
+
+---
+
+## Special FFmpeg Commands for Partial Support Formats
+
+### .SEC (Samsung/Hanwha Security DVR)
+
+**Standard copy-stream with timing fixes:**
+```bash
+ffmpeg -i input.sec -vcodec copy -vsync drop -fflags genpts -f avi output.avi
+```
+
+**Force H.264 format (if auto-detection fails):**
+```bash
+ffmpeg -f h264 -i input.sec -vcodec copy -vsync drop -fflags genpts -f avi output.avi
+```
+
+**Speed correction (for Samsung SmartViewer timing issues):**
+```bash
+ffmpeg -i input.sec -filter:v "setpts=3.3*PTS" output.mp4
+```
+
+**Interlaced footage conversion:**
+```bash
+ffmpeg -r 12 -fflags genpts -i input.sec -vf scale=704:528 -sws_flags lanczos -q:v 2 output.wmv
+```
+
+**For malformed bitstreams (if needed):**
+```bash
+ffmpeg -i input.sec -bsf:v h264_mp4toannexb -c:v copy output.mp4
+```
+
+---
+
+### .DVR (Generic DVR Format)
+
+**Force H.264 format:**
+```bash
+ffmpeg -f h264 -i input.dvr output.mp4
+```
+
+---
+
+### .AVI (with ARAW audio)
+
+**Convert ARAW audio to AAC while copying video:**
+```bash
+ffmpeg -i input.avi -c:v copy -c:a aac output.mp4
+```
+
+---
+
+### .264 / .h264 (Raw H.264 Elementary Stream)
+
+**Basic copy to container:**
+```bash
+ffmpeg -f h264 -i input.h264 -c copy output.mp4
+```
+
+**With framerate specification:**
+```bash
+ffmpeg -framerate 30 -i input.h264 -c copy output.mp4
+```
+
+**Error-tolerant conversion (for corrupted frames):**
+```bash
+ffmpeg -err_detect ignore_err -i input.h264 -c copy output.mp4
+```
+
+**With error tolerance and re-encoding:**
+```bash
+ffmpeg -f h264 -err_detect ignore_err -framerate 25 -i input.264 -c:v libx264 -preset fast output.mp4
+```
+
+---
+
+### .265 / .h265 / .hevc (Raw H.265 Elementary Stream)
+
+**Basic copy to container:**
+```bash
+ffmpeg -f hevc -i input.h265 -c copy output.mp4
+```
+
+**With framerate specification:**
+```bash
+ffmpeg -framerate 25 -f hevc -i input.265 -c copy output.mp4
+```
+
+**iOS/Safari compatibility (Annex B format):**
+```bash
+ffmpeg -f hevc -i input.h265 -c copy -tag:v hvc1 output.mp4
+```
+
+**Hardware acceleration (recommended for H.265):**
+```bash
+ffmpeg -hwaccel vaapi -f hevc -i input.h265 -c copy output.mp4
+```
+
+---
+
+### .MP4 with H.265 (for "No start code" errors)
+
+**Fix bitstream issues:**
+```bash
+ffmpeg -i input.mp4 -bsf:v hevc_metadata=tick_rate=1 -c copy output.mkv
+```
+
+**Two-step workaround for severe errors:**
+```bash
+ffmpeg -i input.mp4 -bsf:v hevc_metadata=tick_rate=1 -f hevc - | ffmpeg -f hevc -i - -c copy output.mkv
+```
+
+---
+
+### .DAV / .DHAV (Variable Frame Rate Issues)
+
+**Fix playback speed for VFR files:**
+```bash
+ffmpeg -i input.dav -filter:v "setpts=1.666666666666*PTS" output.mp4
+```
+
+**H.265 iOS compatibility:**
+```bash
+ffmpeg -y -i hevc.dav -c:v copy -tag:v hvc1 hevc.mp4
+```
+
+**Prefer MKV over MP4 for copy-stream:**
+```bash
+ffmpeg -i input.dav -c:v copy -c:a copy output.mkv
+```
+
+---
+

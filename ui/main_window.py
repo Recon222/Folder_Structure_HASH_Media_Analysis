@@ -138,6 +138,15 @@ class MainWindow(QMainWindow):
         self.vehicle_tracking_tab.log_message.connect(self.log)
         self.tabs.addTab(self.vehicle_tracking_tab, "Vehicle Tracking")
 
+        # Filename Parser tab
+        try:
+            from filename_parser.ui import FilenameParserTab
+            self.filename_parser_tab = FilenameParserTab(self.form_data)
+            self.filename_parser_tab.log_message.connect(self.log)
+            self.tabs.addTab(self.filename_parser_tab, "Filename Parser")
+        except ImportError as e:
+            logger.debug(f"Filename Parser module not available: {e}")
+
         # Configure tab widget to prevent content-based expansion
         self.tabs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         
