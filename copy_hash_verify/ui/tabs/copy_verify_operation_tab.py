@@ -336,7 +336,7 @@ class CopyVerifyOperationTab(BaseOperationTab):
             self._update_ui_state()
 
     def _add_folder(self):
-        """Add folder to copy"""
+        """Add folder to copy - expands to individual files for accurate counting"""
         folder_path = QFileDialog.getExistingDirectory(
             self,
             "Select Folder to Copy",
@@ -344,12 +344,21 @@ class CopyVerifyOperationTab(BaseOperationTab):
         )
 
         if folder_path:
-            path = Path(folder_path)
-            if path not in self.source_paths:
-                self.source_paths.append(path)
+            folder = Path(folder_path)
+            # Recursively add all files from folder (not the folder itself)
+            added = 0
+            for file_path in folder.rglob('*'):
+                if file_path.is_file():
+                    if file_path not in self.source_paths:
+                        self.source_paths.append(file_path)
+                        added += 1
 
-            self._rebuild_file_tree()
-            self._update_ui_state()
+            if added > 0:
+                self.info(f"Added {added} files from: {folder.name}")
+                self._rebuild_file_tree()
+                self._update_ui_state()
+            else:
+                self.warning(f"No files found in: {folder.name}")
 
     def _clear_files(self):
         """Clear all files"""
@@ -376,17 +385,71 @@ class CopyVerifyOperationTab(BaseOperationTab):
             self.info(f"Destination set to: {folder}")
 
     def _rebuild_file_tree(self):
-        """Rebuild file tree"""
+        """Rebuild file tree with hierarchical folder structure"""
         self.file_tree.clear()
 
-        for path in sorted(self.source_paths):
-            item = QTreeWidgetItem()
-            if path.is_file():
-                item.setText(0, f"📄 {path.name}")
+        if not self.source_paths:
+            return
+
+        # Find common root path
+        if len(self.source_paths) == 1:
+            common_root = self.source_paths[0].parent
+        else:
+            # Get all parent paths for each file
+            all_parts = [list(f.parents)[::-1] for f in self.source_paths]
+            common_root = None
+            for parts in zip(*all_parts):
+                if len(set(parts)) == 1:
+                    common_root = parts[0]
+                else:
+                    break
+
+            # Fallback if no common root found
+            if common_root is None:
+                # Use the first path's root
+                common_root = self.source_paths[0].anchor or self.source_paths[0].parents[-1]
+
+        # Build folder hierarchy
+        folder_items = {}  # path -> QTreeWidgetItem
+
+        for file_path in sorted(self.source_paths):
+            try:
+                rel_path = file_path.relative_to(common_root)
+            except ValueError:
+                # File is not relative to common_root, use full path
+                rel_path = file_path
+
+            # Create folder items for parent directories
+            current_parent = None
+            for i, part in enumerate(rel_path.parts[:-1]):
+                try:
+                    partial_path = common_root / Path(*rel_path.parts[:i+1])
+                except (ValueError, TypeError):
+                    partial_path = Path(*rel_path.parts[:i+1])
+
+                if partial_path not in folder_items:
+                    folder_item = QTreeWidgetItem()
+                    folder_item.setText(0, f"📁 {part}")
+                    folder_item.setData(0, Qt.UserRole, str(partial_path))
+
+                    if current_parent is None:
+                        self.file_tree.addTopLevelItem(folder_item)
+                    else:
+                        current_parent.addChild(folder_item)
+
+                    folder_items[partial_path] = folder_item
+
+                current_parent = folder_items[partial_path]
+
+            # Add file item
+            file_item = QTreeWidgetItem()
+            file_item.setText(0, f"📄 {file_path.name}")
+            file_item.setData(0, Qt.UserRole, str(file_path))
+
+            if current_parent is None:
+                self.file_tree.addTopLevelItem(file_item)
             else:
-                item.setText(0, f"📁 {path.name}")
-            item.setData(0, Qt.UserRole, str(path))
-            self.file_tree.addTopLevelItem(item)
+                current_parent.addChild(file_item)
 
         self.file_tree.expandAll()
 
@@ -397,7 +460,9 @@ class CopyVerifyOperationTab(BaseOperationTab):
 
         # Update labels
         if has_files:
-            self.file_count_label.setText(f"{len(self.source_paths)} items selected")
+            file_count = len(self.source_paths)
+            file_word = "file" if file_count == 1 else "files"
+            self.file_count_label.setText(f"{file_count} {file_word} selected")
         else:
             self.file_count_label.setText("No files selected")
 

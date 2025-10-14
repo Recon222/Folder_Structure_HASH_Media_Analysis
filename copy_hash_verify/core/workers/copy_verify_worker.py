@@ -74,12 +74,45 @@ class CopyVerifyWorker(QThread):
             # Build list of (type, path, relative_path) tuples for structure preservation
             all_items = []
 
+            # Calculate common root path for structure preservation
+            # This handles the case where UI expands folders to individual files
+            common_root = None
+            if self.preserve_structure and self.source_paths:
+                # Find the immediate common parent of all files
+                if len(self.source_paths) == 1:
+                    immediate_parent = self.source_paths[0].parent
+                else:
+                    # Multiple items - find common ancestor
+                    all_parts = [list(f.parents)[::-1] for f in self.source_paths]
+                    immediate_parent = None
+                    for parts in zip(*all_parts):
+                        if len(set(parts)) == 1:
+                            immediate_parent = parts[0]
+                        else:
+                            break
+
+                    # Fallback if no common parent found
+                    if immediate_parent is None:
+                        immediate_parent = self.source_paths[0].parent
+
+                # Go up one more level to preserve the folder name
+                # This ensures "Photos" folder is preserved when copying from D:\Evidence\Photos\
+                common_root = immediate_parent.parent
+
+                logger.info(f"Common root for structure preservation: {common_root}")
+                logger.debug(f"Immediate parent: {immediate_parent}, Common root: {common_root}")
+
             for source_path in self.source_paths:
                 if source_path.is_file():
                     # Single file
-                    if self.preserve_structure:
-                        # Preserve the filename within its parent context
-                        relative_path = source_path.name
+                    if self.preserve_structure and common_root:
+                        # Preserve full relative path from common root
+                        try:
+                            relative_path = source_path.relative_to(common_root)
+                        except ValueError:
+                            # Fallback to just filename if relative_to fails
+                            logger.warning(f"Cannot calculate relative path for {source_path}, using filename only")
+                            relative_path = source_path.name
                     else:
                         # Flat copy - no relative path
                         relative_path = None
