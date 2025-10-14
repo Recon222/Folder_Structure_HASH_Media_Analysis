@@ -52,7 +52,6 @@ class CopyVerifyOperationTab(BaseOperationTab):
         self.current_worker = None
         self.last_results = None
         self.is_paused = False
-        self.file_ops = None
 
         # Controller and services (SOA/DI pattern)
         self.controller = CopyHashVerifyController()
@@ -552,28 +551,6 @@ class CopyVerifyOperationTab(BaseOperationTab):
         else:
             self.error(f"Copy operation failed: {result.error.user_message}")
 
-    def _on_copy_complete_simulation(self):
-        """Simulate copy completion (for demo)"""
-        self.set_operation_active(False)
-
-        # Update UI
-        self.copy_btn.setEnabled(True)
-        self.pause_btn.setEnabled(False)
-        self.cancel_btn.setEnabled(False)
-        self.add_files_btn.setEnabled(True)
-        self.add_folder_btn.setEnabled(True)
-        self.browse_dest_btn.setEnabled(True)
-
-        # Update stats
-        self.update_stats(
-            total=len(self.source_paths),
-            success=len(self.source_paths),
-            failed=0,
-            speed=125.5
-        )
-
-        self.success("Copy and verify operation complete!")
-
     def _pause_operation(self):
         """Pause or resume operation"""
         if not self.current_worker or not self.current_worker.isRunning():
@@ -591,99 +568,6 @@ class CopyVerifyOperationTab(BaseOperationTab):
             self.current_worker.pause()
             self.pause_btn.setText("▶️ Resume")
             self.info("Operation paused")
-
-    def _perform_copy_operation(self, algorithm: str):
-        """Perform the actual copy operation"""
-        import time
-        start_time = time.time()
-
-        copied_files = 0
-        failed_files = 0
-        total_size = 0
-        hash_results = {}
-
-        # Discover all files
-        all_files = []
-        for source_path in self.source_paths:
-            if source_path.is_file():
-                all_files.append(source_path)
-            else:
-                for item in source_path.rglob('*'):
-                    if item.is_file():
-                        all_files.append(item)
-
-        total_files = len(all_files)
-        self.info(f"Found {total_files} files to copy")
-
-        # Copy files
-        for idx, source_file in enumerate(all_files):
-            progress = int((idx / total_files) * 100) if total_files > 0 else 0
-            self.update_progress(progress, f"Copying {source_file.name} ({idx+1}/{total_files})")
-
-            # Determine destination
-            if self.preserve_structure_check.isChecked():
-                for source_path in self.source_paths:
-                    try:
-                        rel_path = source_file.relative_to(source_path.parent)
-                        dest_file = self.destination_path / rel_path
-                        break
-                    except ValueError:
-                        continue
-                else:
-                    dest_file = self.destination_path / source_file.name
-            else:
-                dest_file = self.destination_path / source_file.name
-
-            dest_file.parent.mkdir(parents=True, exist_ok=True)
-
-            # Copy with hash
-            result = self.file_ops.copy_file_with_hash(
-                source_file, dest_file,
-                calculate_hash=self.verify_hashes_check.isChecked(),
-                algorithm=algorithm
-            )
-
-            if result.success:
-                copied_files += 1
-                total_size += source_file.stat().st_size
-
-                # Extract hash if available
-                if self.verify_hashes_check.isChecked():
-                    hash_val = getattr(result.value, 'source_hash', None) if hasattr(result, 'value') else None
-                    if hash_val:
-                        hash_results[str(source_file)] = hash_val
-
-                self.info(f"✓ {source_file.name}")
-            else:
-                failed_files += 1
-                self.error(f"✗ {source_file.name}: {result.error.user_message}")
-
-        # Complete
-        elapsed = time.time() - start_time
-        self.set_operation_active(False)
-        self.copy_btn.setEnabled(True)
-        self.cancel_btn.setEnabled(False)
-        self.add_files_btn.setEnabled(True)
-        self.add_folder_btn.setEnabled(True)
-        self.browse_dest_btn.setEnabled(True)
-
-        # Stats
-        speed = (total_size / (1024 * 1024)) / elapsed if elapsed > 0 else 0
-        self.update_stats(total=total_files, success=copied_files, failed=failed_files, speed=speed)
-        self.success(f"Copied {copied_files}/{total_files} files ({failed_files} failed)")
-
-        # CSV if requested
-        if self.generate_csv_check.isChecked() and hash_results:
-            from datetime import datetime
-            filename = self.destination_path / f"hash_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-            try:
-                with open(filename, 'w') as f:
-                    f.write(f"File,{algorithm.upper()} Hash\n")
-                    for path, hash_val in hash_results.items():
-                        f.write(f"{path},{hash_val}\n")
-                self.info(f"Hash report: {filename.name}")
-            except Exception as e:
-                self.error(f"CSV failed: {e}")
 
     def _cancel_operation(self):
         """Cancel operation"""
