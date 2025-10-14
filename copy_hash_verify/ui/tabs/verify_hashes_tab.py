@@ -23,9 +23,8 @@ from PySide6.QtWidgets import (
 
 from ..components.base_operation_tab import BaseOperationTab
 from ..components.operation_log_console import OperationLogConsole
-from ...core.unified_hash_calculator import UnifiedHashCalculator
-from ...core.workers.verify_worker import VerifyWorker
-from ...core.storage_detector import StorageDetector
+from ...controllers.hash_verification_controller import HashVerificationController, HashVerificationSettings
+from ...services.success_message_builder import SuccessMessageBuilder
 from core.result_types import Result
 from core.logger import logger
 from core.hash_reports import HashReportGenerator
@@ -44,14 +43,15 @@ class VerifyHashesTab(BaseOperationTab):
         """
         super().__init__("Verify Hashes", shared_logger, parent)
 
+        # Controller and services (SOA/DI pattern)
+        self.controller = HashVerificationController()
+        self.success_builder = SuccessMessageBuilder()
+
         # State
         self.source_paths: List[Path] = []
         self.target_paths: List[Path] = []
         self.current_worker = None
         self.last_results = None
-        self.hash_calculator = None
-        self.storage_detector = StorageDetector()
-        self._storage_cache = {}  # Cache storage detection results by drive letter
 
         self._create_ui()
         self._connect_signals()
@@ -395,7 +395,7 @@ class VerifyHashesTab(BaseOperationTab):
             self._update_ui_state()
 
     def _add_folder(self, panel_type: str):
-        """Add folder to source or target"""
+        """Add folder to source or target - expands to individual files for accurate counting"""
         folder_path = QFileDialog.getExistingDirectory(
             self,
             f"Select {panel_type.title()} Folder",
@@ -403,13 +403,22 @@ class VerifyHashesTab(BaseOperationTab):
         )
 
         if folder_path:
-            path = Path(folder_path)
+            folder = Path(folder_path)
             target_list = self.source_paths if panel_type == 'source' else self.target_paths
-            if path not in target_list:
-                target_list.append(path)
+
+            # Recursively add all files from folder (not the folder itself)
+            added = 0
+            for file_path in folder.rglob('*'):
+                if file_path.is_file():
+                    if file_path not in target_list:
+                        target_list.append(file_path)
+                        added += 1
 
             self._rebuild_tree(panel_type)
             self._update_ui_state()
+
+            if added > 0:
+                self.info(f"Added {added} file(s) to {panel_type} from folder")
 
     def _clear_files(self, panel_type: str):
         """Clear files from source or target"""
@@ -423,21 +432,74 @@ class VerifyHashesTab(BaseOperationTab):
         self._update_ui_state()
 
     def _rebuild_tree(self, panel_type: str):
-        """Rebuild tree for source or target"""
+        """Rebuild tree with hierarchical folder structure for source or target"""
         tree = self.source_tree if panel_type == 'source' else self.target_tree
         paths = self.source_paths if panel_type == 'source' else self.target_paths
 
         tree.clear()
 
-        for path in sorted(paths):
-            item = QTreeWidgetItem()
-            if path.is_file():
-                item.setText(0, f"📄 {path.name}")
-            else:
-                item.setText(0, f"📁 {path.name}")
-            item.setData(0, Qt.UserRole, str(path))
-            tree.addTopLevelItem(item)
+        if not paths:
+            return
 
+        # Find common root path
+        if len(paths) == 1:
+            common_root = paths[0].parent
+        else:
+            # Find common ancestor
+            all_parts = [list(f.parents)[::-1] for f in paths]
+            common_root = None
+            for parts in zip(*all_parts):
+                if len(set(parts)) == 1:
+                    common_root = parts[0]
+                else:
+                    break
+
+        if common_root is None:
+            common_root = Path("/")
+
+        # Build folder hierarchy
+        folder_items = {}  # Path -> QTreeWidgetItem
+
+        for file_path in sorted(paths):
+            # Get relative path from common root
+            try:
+                rel_path = file_path.relative_to(common_root)
+            except ValueError:
+                # File not under common root, use full path
+                rel_path = file_path
+
+            # Create folder items for all parent directories
+            current_parent = None
+            for i, part in enumerate(rel_path.parts[:-1]):
+                # Build path up to this level
+                partial_path = common_root / Path(*rel_path.parts[:i+1])
+
+                if partial_path not in folder_items:
+                    # Create folder item
+                    folder_item = QTreeWidgetItem()
+                    folder_item.setText(0, f"📁 {part}")
+                    folder_item.setData(0, Qt.UserRole, str(partial_path))
+
+                    if current_parent is None:
+                        tree.addTopLevelItem(folder_item)
+                    else:
+                        current_parent.addChild(folder_item)
+
+                    folder_items[partial_path] = folder_item
+
+                current_parent = folder_items[partial_path]
+
+            # Add file item
+            file_item = QTreeWidgetItem()
+            file_item.setText(0, f"📄 {file_path.name}")
+            file_item.setData(0, Qt.UserRole, str(file_path))
+
+            if current_parent is None:
+                tree.addTopLevelItem(file_item)
+            else:
+                current_parent.addChild(file_item)
+
+        # Expand all folders by default
         tree.expandAll()
 
     def _update_ui_state(self):
@@ -467,32 +529,37 @@ class VerifyHashesTab(BaseOperationTab):
             self.target_storage_label.setText("Not detected")
 
     def _update_source_storage_detection(self):
-        """Update source storage detection display (with caching to prevent redundant detection)"""
-        try:
-            # Use first path for detection (representative sample)
-            if not self.source_paths:
-                return
+        """Update source storage detection display"""
+        if not self.source_paths:
+            self.source_storage_label.setText("Not detected")
+            return
 
-            first_path = self.source_paths[0]
+        # Use first path for detection
+        first_path = self.source_paths[0]
 
-            # Extract drive letter for caching
-            drive_letter = str(first_path.drive) if hasattr(first_path, 'drive') and first_path.drive else str(first_path.resolve().drive)
+        # Delegate to controller
+        result = self.controller.detect_storage(first_path)
 
-            # Check cache first - avoid redundant detection
-            if drive_letter in self._storage_cache:
-                storage_info = self._storage_cache[drive_letter]
-            else:
-                # Cache miss - perform detection
-                storage_info = self.storage_detector.analyze_path(first_path)
-                self._storage_cache[drive_letter] = storage_info
+        if result.success:
+            info = result.value
+
+            # Calculate optimal threads using ThreadCalculator
+            from ...utils.thread_calculator import ThreadCalculator
+            calculator = ThreadCalculator()
+            threads = calculator.calculate_optimal_threads(
+                source_info=info,
+                dest_info=None,
+                file_count=len(self.source_paths),
+                operation_type="hash"
+            )
 
             # Format display with color coding
-            display_text = f"{storage_info.drive_type.value} on {storage_info.drive_letter} | {storage_info.recommended_threads} threads"
+            display_text = f"{info.drive_type.value} on {info.drive_letter} | {threads} threads"
 
             # Color code by confidence
-            if storage_info.confidence > 0.8:
+            if info.confidence > 0.8:
                 color = "#28a745"  # Green
-            elif storage_info.confidence > 0.6:
+            elif info.confidence > 0.6:
                 color = "#ffc107"  # Yellow
             else:
                 color = "#6c757d"  # Gray
@@ -502,45 +569,52 @@ class VerifyHashesTab(BaseOperationTab):
 
             # Update tooltip with technical details
             tooltip = (
-                f"Drive Type: {storage_info.drive_type.value}\n"
-                f"Bus Type: {storage_info.bus_type.value}\n"
-                f"Recommended Threads: {storage_info.recommended_threads}\n"
-                f"Detection Method: {storage_info.detection_method}\n"
-                f"Confidence: {storage_info.confidence:.0%}"
+                f"Drive Type: {info.drive_type.value}\n"
+                f"Bus Type: {info.bus_type.name}\n"
+                f"Recommended Threads: {threads}\n"
+                f"File Count: {len(self.source_paths)}\n"
+                f"Detection Method: {info.detection_method}\n"
+                f"Confidence: {info.confidence:.0%}"
             )
             self.source_storage_label.setToolTip(tooltip)
 
-        except Exception as e:
-            self.source_storage_label.setText(f"Detection failed: {str(e)[:30]}")
+        else:
+            self.source_storage_label.setText(f"Detection failed")
             self.source_storage_label.setStyleSheet("color: #dc3545;")  # Red
+            logger.debug(f"Source storage detection failed: {result.error.user_message}")
 
     def _update_target_storage_detection(self):
-        """Update target storage detection display (with caching to prevent redundant detection)"""
-        try:
-            # Use first path for detection (representative sample)
-            if not self.target_paths:
-                return
+        """Update target storage detection display"""
+        if not self.target_paths:
+            self.target_storage_label.setText("Not detected")
+            return
 
-            first_path = self.target_paths[0]
+        # Use first path for detection
+        first_path = self.target_paths[0]
 
-            # Extract drive letter for caching
-            drive_letter = str(first_path.drive) if hasattr(first_path, 'drive') and first_path.drive else str(first_path.resolve().drive)
+        # Delegate to controller
+        result = self.controller.detect_storage(first_path)
 
-            # Check cache first - avoid redundant detection
-            if drive_letter in self._storage_cache:
-                storage_info = self._storage_cache[drive_letter]
-            else:
-                # Cache miss - perform detection
-                storage_info = self.storage_detector.analyze_path(first_path)
-                self._storage_cache[drive_letter] = storage_info
+        if result.success:
+            info = result.value
+
+            # Calculate optimal threads using ThreadCalculator
+            from ...utils.thread_calculator import ThreadCalculator
+            calculator = ThreadCalculator()
+            threads = calculator.calculate_optimal_threads(
+                source_info=info,
+                dest_info=None,
+                file_count=len(self.target_paths),
+                operation_type="hash"
+            )
 
             # Format display with color coding
-            display_text = f"{storage_info.drive_type.value} on {storage_info.drive_letter} | {storage_info.recommended_threads} threads"
+            display_text = f"{info.drive_type.value} on {info.drive_letter} | {threads} threads"
 
             # Color code by confidence
-            if storage_info.confidence > 0.8:
+            if info.confidence > 0.8:
                 color = "#28a745"  # Green
-            elif storage_info.confidence > 0.6:
+            elif info.confidence > 0.6:
                 color = "#ffc107"  # Yellow
             else:
                 color = "#6c757d"  # Gray
@@ -550,17 +624,19 @@ class VerifyHashesTab(BaseOperationTab):
 
             # Update tooltip with technical details
             tooltip = (
-                f"Drive Type: {storage_info.drive_type.value}\n"
-                f"Bus Type: {storage_info.bus_type.value}\n"
-                f"Recommended Threads: {storage_info.recommended_threads}\n"
-                f"Detection Method: {storage_info.detection_method}\n"
-                f"Confidence: {storage_info.confidence:.0%}"
+                f"Drive Type: {info.drive_type.value}\n"
+                f"Bus Type: {info.bus_type.name}\n"
+                f"Recommended Threads: {threads}\n"
+                f"File Count: {len(self.target_paths)}\n"
+                f"Detection Method: {info.detection_method}\n"
+                f"Confidence: {info.confidence:.0%}"
             )
             self.target_storage_label.setToolTip(tooltip)
 
-        except Exception as e:
-            self.target_storage_label.setText(f"Detection failed: {str(e)[:30]}")
+        else:
+            self.target_storage_label.setText(f"Detection failed")
             self.target_storage_label.setStyleSheet("color: #dc3545;")  # Red
+            logger.debug(f"Target storage detection failed: {result.error.user_message}")
 
     def _get_selected_algorithm(self) -> str:
         """Get selected algorithm"""
@@ -583,6 +659,15 @@ class VerifyHashesTab(BaseOperationTab):
         # Save settings
         self._save_settings()
 
+        # Create settings object
+        settings = HashVerificationSettings(
+            algorithm=algorithm,
+            enable_parallel=True,  # Always enabled
+            max_workers_override=None,  # Auto-detect
+            generate_csv=self.generate_csv_check.isChecked(),
+            include_metadata=True
+        )
+
         self.info(f"Starting hash verification with {algorithm.upper()}")
         self.set_operation_active(True)
 
@@ -590,15 +675,25 @@ class VerifyHashesTab(BaseOperationTab):
         self.verify_btn.setEnabled(False)
         self.cancel_btn.setEnabled(True)
 
-        # Create and start worker thread
-        self.current_worker = VerifyWorker(
+        # Delegate to controller
+        result = self.controller.start_verification_workflow(
             source_paths=self.source_paths,
             target_paths=self.target_paths,
-            algorithm=algorithm
+            settings=settings
         )
-        self.current_worker.progress_update.connect(self._on_progress)
-        self.current_worker.result_ready.connect(self._on_verification_complete)
-        self.current_worker.start()
+
+        if result.success:
+            # Controller returns worker
+            self.current_worker = result.value
+            self.current_worker.progress_update.connect(self._on_progress)
+            self.current_worker.result_ready.connect(self._on_verification_complete)
+            self.current_worker.start()
+        else:
+            # Workflow failed to start
+            self.set_operation_active(False)
+            self.error(f"Failed to start verification: {result.error.user_message}")
+            self.verify_btn.setEnabled(True)
+            self.cancel_btn.setEnabled(False)
 
     def _on_progress(self, percentage: int, message: str):
         """Handle progress update"""
@@ -752,8 +847,7 @@ class VerifyHashesTab(BaseOperationTab):
 
     def cleanup(self):
         """Clean up resources"""
-        if self.current_worker and self.current_worker.isRunning():
-            self.current_worker.cancel()
-            self.current_worker.wait(3000)
+        if self.controller:
+            self.controller.cleanup()
         self.current_worker = None
         self.last_results = None
