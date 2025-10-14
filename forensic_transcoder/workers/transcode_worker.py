@@ -7,7 +7,7 @@ with progress reporting via Qt signals.
 
 from pathlib import Path
 from typing import List, Optional
-from PyQt6.QtCore import QThread, pyqtSignal
+from PySide6.QtCore import QThread, Signal
 
 from ..models.transcode_settings import TranscodeSettings
 from ..models.processing_result import ProcessingResult, BatchProcessingStatistics
@@ -28,9 +28,9 @@ class TranscodeWorker(QThread):
     """
     
     # Signals
-    progress_update = pyqtSignal(float, str)  # percentage, message
-    result_ready = pyqtSignal(object)  # ProcessingResult or BatchProcessingStatistics
-    error = pyqtSignal(str)  # error message
+    progress_update = Signal(float, str)  # percentage, message
+    result_ready = Signal(object)  # ProcessingResult or BatchProcessingStatistics
+    error = Signal(str)  # error message
     
     def __init__(
         self,

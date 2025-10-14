@@ -17,7 +17,7 @@ from ..models.video_analysis import (
     SubtitleStreamInfo,
     FrameRateType,
 )
-from filename_parser.core.binary_manager import binary_manager
+from ..core.binary_manager import binary_manager
 
 
 class VideoAnalyzerService:

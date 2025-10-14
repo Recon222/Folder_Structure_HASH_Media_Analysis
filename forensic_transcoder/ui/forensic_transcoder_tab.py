@@ -7,12 +7,12 @@ Coordinates between UI panels, controllers, and user interactions.
 
 from pathlib import Path
 from typing import Optional, List
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTabWidget,
     QLabel, QProgressBar, QTextEdit, QSplitter, QFileDialog,
     QMessageBox
 )
-from PyQt6.QtCore import Qt, pyqtSignal
+from PySide6.QtCore import Qt, Signal
 
 from ..models.transcode_settings import TranscodeSettings, QualityPreset
 from ..models.concatenate_settings import ConcatenateSettings
@@ -38,7 +38,7 @@ class ForensicTranscoderTab(QWidget):
     """
     
     # Signals for main window integration
-    log_message = pyqtSignal(str)  # For error/info logging to main window
+    log_message = Signal(str)  # For error/info logging to main window
     
     def __init__(self, parent=None):
         """

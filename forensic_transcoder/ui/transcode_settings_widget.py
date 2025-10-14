@@ -5,12 +5,12 @@ Provides form UI for configuring all video transcoding parameters.
 """
 
 from pathlib import Path
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox,
     QComboBox, QSpinBox, QDoubleSpinBox, QLineEdit, QCheckBox,
     QPushButton, QLabel, QFileDialog
 )
-from PyQt6.QtCore import Qt
+from PySide6.QtCore import Qt
 
 from ..models.transcode_settings import (
     TranscodeSettings,

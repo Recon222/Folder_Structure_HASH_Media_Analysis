@@ -7,7 +7,7 @@ Manages worker lifecycle and provides a clean interface for the UI layer.
 
 from pathlib import Path
 from typing import List, Optional, Callable
-from PyQt6.QtCore import QObject, pyqtSignal
+from PySide6.QtCore import QObject, Signal
 
 from ..models.transcode_settings import TranscodeSettings
 from ..models.processing_result import ProcessingResult, BatchProcessingStatistics
@@ -28,9 +28,9 @@ class TranscoderController(QObject):
     """
     
     # Signals
-    progress_update = pyqtSignal(float, str)  # percentage, message
-    transcode_complete = pyqtSignal(object)  # ProcessingResult or BatchProcessingStatistics
-    transcode_error = pyqtSignal(str)  # error message
+    progress_update = Signal(float, str)  # percentage, message
+    transcode_complete = Signal(object)  # ProcessingResult or BatchProcessingStatistics
+    transcode_error = Signal(str)  # error message
     
     def __init__(self, parent=None):
         """

@@ -6,7 +6,7 @@ Manages worker lifecycle and provides a clean interface for the UI layer.
 """
 
 from typing import Optional
-from PyQt6.QtCore import QObject, pyqtSignal
+from PySide6.QtCore import QObject, Signal
 
 from ..models.concatenate_settings import ConcatenateSettings
 from ..models.processing_result import ProcessingResult
@@ -27,9 +27,9 @@ class ConcatenateController(QObject):
     """
     
     # Signals
-    progress_update = pyqtSignal(float, str)  # percentage, message
-    concatenate_complete = pyqtSignal(ProcessingResult)  # result
-    concatenate_error = pyqtSignal(str)  # error message
+    progress_update = Signal(float, str)  # percentage, message
+    concatenate_complete = Signal(ProcessingResult)  # result
+    concatenate_error = Signal(str)  # error message
     
     def __init__(self, parent=None):
         """

@@ -76,11 +76,13 @@ class VideoAnalysis:
     # === Frame Rate ===
     fps: float  # Frames per second
     fps_string: str  # Original FPS string (e.g., "30000/1001")
-    frame_rate_type: FrameRateType = FrameRateType.UNKNOWN
-    avg_frame_rate: Optional[float] = None  # Average FPS (for VFR)
-    
+
     # === Duration & Timing ===
     duration: float  # Total duration in seconds
+
+    # === Optional Frame Rate Properties ===
+    frame_rate_type: FrameRateType = FrameRateType.UNKNOWN
+    avg_frame_rate: Optional[float] = None  # Average FPS (for VFR)
     total_frames: Optional[int] = None
     start_time: Optional[float] = None  # Start time in seconds
     

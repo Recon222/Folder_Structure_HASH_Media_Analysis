@@ -5,7 +5,7 @@ Background thread worker for executing video concatenation operations
 with progress reporting via Qt signals.
 """
 
-from PyQt6.QtCore import QThread, pyqtSignal
+from PySide6.QtCore import QThread, Signal
 
 from ..models.concatenate_settings import ConcatenateSettings
 from ..models.processing_result import ProcessingResult
@@ -26,9 +26,9 @@ class ConcatenateWorker(QThread):
     """
     
     # Signals
-    progress_update = pyqtSignal(float, str)  # percentage, message
-    result_ready = pyqtSignal(ProcessingResult)  # result
-    error = pyqtSignal(str)  # error message
+    progress_update = Signal(float, str)  # percentage, message
+    result_ready = Signal(ProcessingResult)  # result
+    error = Signal(str)  # error message
     
     def __init__(
         self,
