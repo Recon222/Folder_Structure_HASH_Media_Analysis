@@ -28,6 +28,8 @@ from ...core.unified_hash_calculator import UnifiedHashCalculator
 from ...core.workers.copy_verify_worker import CopyVerifyWorker
 from core.result_types import Result
 from core.logger import logger
+from core.hash_operations import HashResult, VerificationResult
+from core.hash_reports import HashReportGenerator
 
 
 class CopyVerifyOperationTab(BaseOperationTab):
@@ -658,23 +660,83 @@ class CopyVerifyOperationTab(BaseOperationTab):
             self.current_worker.wait(3000)  # Wait up to 3 seconds for clean shutdown
 
     def _export_csv_results(self, hash_results: dict):
-        """Export hash results to CSV"""
+        """Export hash verification results to forensic-grade CSV using HashReportGenerator"""
         try:
             algorithm = self._get_selected_algorithm()
-            filename = self.destination_path / f"hash_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+            default_filename = f"copy_verification_report_{algorithm}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+            filename = self.destination_path / default_filename
 
-            with open(filename, 'w', encoding='utf-8') as f:
-                f.write(f"File,{algorithm.upper()} Hash\n")
-                for path, result_data in hash_results.items():
-                    if isinstance(result_data, dict):
-                        hash_val = result_data.get('hash', 'N/A')
-                    else:
-                        hash_val = str(result_data)
-                    f.write(f"{path},{hash_val}\n")
+            # Convert hash_results dict to VerificationResult objects
+            verification_results = []
 
-            self.success(f"Hash report saved: {filename.name}")
+            for path, result_data in hash_results.items():
+                # Skip _performance_stats metadata
+                if path == '_performance_stats':
+                    continue
+
+                if isinstance(result_data, dict) and result_data.get('source_hash'):
+                    source_path = Path(result_data.get('source_path', path))
+                    dest_path = Path(result_data.get('dest_path', path))
+                    source_hash = result_data.get('source_hash', '')
+                    dest_hash = result_data.get('dest_hash', '')
+                    verified = result_data.get('verified', False)
+                    file_size = result_data.get('size', 0)
+
+                    # Create HashResult for source
+                    source_result = HashResult(
+                        file_path=source_path,
+                        relative_path=Path(path),
+                        algorithm=algorithm,
+                        hash_value=source_hash,
+                        file_size=file_size,
+                        duration=0.0
+                    )
+
+                    # Create HashResult for destination
+                    dest_result = HashResult(
+                        file_path=dest_path,
+                        relative_path=Path(path),
+                        algorithm=algorithm,
+                        hash_value=dest_hash,
+                        file_size=file_size,
+                        duration=0.0
+                    )
+
+                    # Create VerificationResult
+                    comparison_type = 'hash_match' if verified else 'hash_mismatch'
+                    notes = f"Copied with {algorithm.upper()} verification"
+
+                    verification_result = VerificationResult(
+                        source_result=source_result,
+                        target_result=dest_result,
+                        match=verified,
+                        comparison_type=comparison_type,
+                        notes=notes
+                    )
+                    verification_results.append(verification_result)
+
+            if not verification_results:
+                self.warning("No hash verification results to export")
+                return
+
+            # Use professional report generator
+            report_gen = HashReportGenerator()
+            success = report_gen.generate_verification_csv(
+                verification_results=verification_results,
+                output_path=filename,
+                algorithm=algorithm,
+                include_metadata=True
+            )
+
+            if success:
+                self.success(f"Hash verification report saved: {filename.name}")
+                self.info(f"Report location: {filename}")
+            else:
+                self.error("Failed to generate hash verification report")
+
         except Exception as e:
             self.error(f"Failed to export CSV: {e}")
+            logger.error(f"CSV export error: {e}", exc_info=True)
 
     def cleanup(self):
         """Clean up resources"""

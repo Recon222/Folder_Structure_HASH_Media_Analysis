@@ -159,8 +159,8 @@ class CopyVerifyWorker(QThread):
 
             # Convert FileOperationResult to Result for unified interface
             if result.success:
-                # Success - emit with results dict
-                self.result_ready.emit(Result.success(result.results))
+                # Success - emit with results dict (stored in 'value' field)
+                self.result_ready.emit(Result.success(result.value))
                 logger.info(
                     f"CopyVerifyWorker completed: {result.files_processed} files, "
                     f"{result.bytes_processed / (1024*1024):.1f} MB"
@@ -312,31 +312,39 @@ class CopyVerifyWorker(QThread):
             f"{completed_bytes / (1024*1024):.1f} MB in {duration:.1f}s ({speed_mbps:.1f} MB/s)"
         )
 
-        # Create FileOperationResult
+        # Create FileOperationResult using factory method
         from core.exceptions import FileOperationError
 
         success = completed_files == total_files and not self._is_cancelled
 
-        if not success and self._is_cancelled:
-            error = FileOperationError(
-                "Copy operation cancelled by user",
-                user_message="Operation was cancelled."
-            )
-        elif not success:
-            error = FileOperationError(
-                f"Some files failed to copy: {completed_files}/{total_files} succeeded",
-                user_message=f"Only {completed_files} of {total_files} files were copied successfully."
+        if success:
+            # Add performance stats to results_dict (matches BufferedFileOperations pattern)
+            results_dict['_performance_stats'] = {
+                'total_time': duration,
+                'average_speed_mbps': speed_mbps,
+                'start_time': start_time,
+                'end_time': time.time()
+            }
+
+            # Success path - use factory method
+            return FileOperationResult.create(
+                results_dict,
+                files_processed=completed_files,
+                bytes_processed=completed_bytes
             )
         else:
-            error = None
-
-        return FileOperationResult(
-            success=success,
-            files_processed=completed_files,
-            bytes_processed=completed_bytes,
-            results=results_dict,
-            error=error
-        )
+            # Error path - create appropriate error
+            if self._is_cancelled:
+                error = FileOperationError(
+                    "Copy operation cancelled by user",
+                    user_message="Operation was cancelled."
+                )
+            else:
+                error = FileOperationError(
+                    f"Some files failed to copy: {completed_files}/{total_files} succeeded",
+                    user_message=f"Only {completed_files} of {total_files} files were copied successfully."
+                )
+            return FileOperationResult.error(error)
 
     def _copy_single_file(self, source_path: Path, relative_path, progress_callback) -> Dict:
         """
