@@ -119,12 +119,12 @@ class CopyHashVerifyController(BaseController):
             logger.info("Copy operation validation passed")
 
             # Step 2: Create worker
+            # Note: CopyVerifyWorker always calculates hashes (hardcoded in worker)
             worker = CopyVerifyWorker(
                 source_paths=source_paths,
                 destination=destination,
                 algorithm=settings.algorithm,
-                preserve_structure=settings.preserve_structure,
-                calculate_hashes=settings.calculate_hashes
+                preserve_structure=settings.preserve_structure
             )
 
             # Store reference
