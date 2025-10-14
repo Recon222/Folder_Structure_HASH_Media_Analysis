@@ -184,8 +184,8 @@ class FFmpegCommandBuilder:
         if not settings.preserve_metadata:
             cmd.append('-map_metadata')
             cmd.append('-1')  # Strip all metadata
-        
-        if settings.preserve_chapters and settings.copy_chapters:
+
+        if settings.copy_chapters:
             cmd.append('-map_chapters')
             cmd.append('0')
         
@@ -480,34 +480,63 @@ class FFmpegCommandBuilder:
     def validate_command(self, cmd: List[str]) -> Tuple[bool, Optional[str]]:
         """
         Validate FFmpeg command structure.
-        
+
         Args:
             cmd: Command array to validate
-        
+
         Returns:
             Tuple of (is_valid, error_message)
         """
         if not cmd:
             return False, "Empty command"
-        
-        if not cmd[0].endswith('ffmpeg') and not cmd[0].endswith('ffmpeg.exe'):
+
+        # Accept either ffmpeg or ffmpeg.exe
+        if not (cmd[0].endswith('ffmpeg') or cmd[0].endswith('ffmpeg.exe')):
             return False, "Command must start with ffmpeg"
-        
+
         # Check for at least one input
         if '-i' not in cmd:
             return False, "No input file specified (-i flag missing)"
-        
+
         # Check for output file (should be last argument)
         if len(cmd) < 3:
             return False, "No output file specified"
-        
+
+        # Flags that intentionally take NO value
+        NO_VALUE_FLAGS = {
+            '-y', '-n', '-sn', '-vn', '-an', '-dn',
+            '-shortest', '-re', '-nostdin', '-hide_banner',
+            '-copyts'
+        }
+
+        def _is_negative_number(s: str) -> bool:
+            """Check if string is a negative number (e.g., '-1', '-0', '-2')."""
+            return len(s) > 1 and s[0] == '-' and s[1:].isdigit()
+
         # Check for orphaned flags
         i = 1
         while i < len(cmd) - 1:  # Skip last item (output file)
-            if cmd[i].startswith('-') and not cmd[i] in ['-y', '-n']:
-                # Check if next item is also a flag (orphaned)
-                if i + 1 < len(cmd) and cmd[i + 1].startswith('-'):
-                    return False, f"Orphaned flag: {cmd[i]} has no value"
+            tok = cmd[i]
+
+            if tok.startswith('-'):
+                if tok in NO_VALUE_FLAGS:
+                    # This flag doesn't need a value
+                    i += 1
+                    continue
+
+                # Flag needs a value - ensure next token is a value
+                if i + 1 >= len(cmd):
+                    return False, f"Orphaned flag: {tok} has no value"
+
+                nxt = cmd[i + 1]
+                # If next token starts with '-' but is a negative number (e.g., -1), that's a VALUE
+                if nxt.startswith('-') and not _is_negative_number(nxt):
+                    return False, f"Orphaned flag: {tok} has no value"
+
+                # Skip both the flag and its value
+                i += 2
+                continue
+
             i += 1
-        
+
         return True, None
