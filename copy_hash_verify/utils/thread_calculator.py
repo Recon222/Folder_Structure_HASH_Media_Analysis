@@ -124,12 +124,13 @@ class ThreadCalculator:
             )
             return threads
 
-        # Rule: SSD source → High parallelism
+        # Rule: SSD source → High parallelism (2x CPU cores, no artificial cap)
         if source_info.drive_type in (DriveType.SSD, DriveType.EXTERNAL_SSD):
-            threads = min(32, self.cpu_threads * 2)
+            threads = min(self.cpu_threads * 2, 64)  # Match NVMe cap for consistency
             threads = max(threads, 2)  # Minimum 2 for parallel
             logger.debug(
-                f"SSD source - using {threads} threads for hash operations"
+                f"SSD source - using {threads} threads for hash operations "
+                f"({self.cpu_threads} CPU threads × 2, cap 64)"
             )
             return threads
 
