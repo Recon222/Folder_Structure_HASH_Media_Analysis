@@ -19,6 +19,10 @@ from ..models.concatenate_settings import ConcatenateSettings
 from ..models.processing_result import ProcessingResult, BatchProcessingStatistics
 from ..controllers.transcoder_controller import TranscoderController
 from ..controllers.concatenate_controller import ConcatenateController
+from .transcode_settings_widget import TranscodeSettingsWidget
+from .concatenate_settings_widget import ConcatenateSettingsWidget
+from ..services.ffmpeg_command_builder import FFmpegCommandBuilder
+from ..services.video_analyzer_service import VideoAnalyzerService
 
 
 class ForensicTranscoderTab(QWidget):
@@ -52,7 +56,11 @@ class ForensicTranscoderTab(QWidget):
         # Controllers (business logic layer)
         self.transcoder_controller = TranscoderController(self)
         self.concatenate_controller = ConcatenateController(self)
-        
+
+        # Services for command building
+        self.command_builder = FFmpegCommandBuilder()
+        self.analyzer = VideoAnalyzerService()
+
         # State
         self.selected_files: List[Path] = []
         self.current_command: Optional[str] = None
@@ -72,19 +80,15 @@ class ForensicTranscoderTab(QWidget):
         
         # === Middle Section: Tabbed Settings ===
         self.settings_tabs = QTabWidget()
-        
-        # Transcode settings tab (placeholder for now)
-        transcode_widget = QWidget()
-        transcode_layout = QVBoxLayout(transcode_widget)
-        transcode_layout.addWidget(QLabel("Transcode Settings (To be implemented)"))
-        self.settings_tabs.addTab(transcode_widget, "Transcode")
-        
-        # Concatenate settings tab (placeholder for now)
-        concat_widget = QWidget()
-        concat_layout = QVBoxLayout(concat_widget)
-        concat_layout.addWidget(QLabel("Concatenate Settings (To be implemented)"))
-        self.settings_tabs.addTab(concat_widget, "Concatenate")
-        
+
+        # Transcode settings tab
+        self.transcode_settings = TranscodeSettingsWidget()
+        self.settings_tabs.addTab(self.transcode_settings, "Transcode")
+
+        # Concatenate settings tab
+        self.concatenate_settings = ConcatenateSettingsWidget()
+        self.settings_tabs.addTab(self.concatenate_settings, "Concatenate")
+
         layout.addWidget(self.settings_tabs)
         
         # === Command Terminal Section ===
@@ -213,9 +217,22 @@ class ForensicTranscoderTab(QWidget):
     
     def _on_build_command(self):
         """Handle build command button click."""
-        # TODO: Build FFmpeg command from current settings
-        # This will be implemented when settings widgets are added
-        self.log_message.emit("Build command functionality to be implemented")
+        if not self.selected_files:
+            QMessageBox.warning(self, "No Files", "Please select files to process.")
+            return
+
+        try:
+            # Determine which tab is active
+            current_tab = self.settings_tabs.currentIndex()
+
+            if current_tab == 0:  # Transcode tab
+                self._build_transcode_command()
+            elif current_tab == 1:  # Concatenate tab
+                self._build_concatenate_command()
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to build command: {e}")
+            self.log_message.emit(f"Command build error: {e}")
     
     def _on_start_processing(self):
         """Handle start processing button click."""
@@ -239,30 +256,132 @@ class ForensicTranscoderTab(QWidget):
             self.concatenate_controller.cancel_concatenate()
         
         self.log_message.emit("Cancellation requested...")
-    
+
+    # === Command Building Methods ===
+
+    def _build_transcode_command(self):
+        """Build FFmpeg command for transcode operation."""
+        # Get settings from widget
+        settings = self.transcode_settings.get_settings()
+
+        # Use first file as example (for single file or batch)
+        input_file = self.selected_files[0]
+
+        # Generate output path
+        if settings.output_directory:
+            output_dir = settings.output_directory
+        else:
+            output_dir = input_file.parent
+
+        output_filename = settings.output_filename_pattern.format(
+            original_name=input_file.stem,
+            ext=settings.output_format
+        )
+        output_file = output_dir / output_filename
+
+        # Analyze input (optional but helpful)
+        try:
+            analysis = self.analyzer.analyze_video(input_file)
+        except Exception:
+            analysis = None
+
+        # Build command
+        cmd_array, cmd_string = self.command_builder.build_transcode_command(
+            input_file=input_file,
+            output_file=output_file,
+            settings=settings,
+            input_analysis=analysis
+        )
+
+        # Display command
+        self.command_display.setPlainText(cmd_string)
+        self.current_command = cmd_string
+        self.command_status_label.setText("✓ Command built successfully")
+        self.command_status_label.setStyleSheet("color: green;")
+
+        # Enable start button
+        if not self.is_processing:
+            self.start_btn.setEnabled(True)
+
+        self.log_message.emit("Transcode command built successfully")
+
+    def _build_concatenate_command(self):
+        """Build FFmpeg command for concatenate operation."""
+        if len(self.selected_files) < 2:
+            QMessageBox.warning(
+                self,
+                "Insufficient Files",
+                "At least 2 files are required for concatenation."
+            )
+            return
+
+        # Get output file from user
+        output_file, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Concatenated Video",
+            "",
+            "Video Files (*.mp4 *.mkv *.mov);;All Files (*.*)"
+        )
+
+        if not output_file:
+            return
+
+        # Get settings from widget
+        settings = self.concatenate_settings.get_settings(
+            input_files=self.selected_files,
+            output_file=Path(output_file)
+        )
+
+        # Analyze inputs
+        try:
+            analyses = self.analyzer.analyze_batch(self.selected_files)
+        except Exception:
+            analyses = []
+
+        if len(analyses) != len(self.selected_files):
+            QMessageBox.warning(
+                self,
+                "Analysis Failed",
+                "Failed to analyze one or more input files. Command may be incomplete."
+            )
+
+        # Build command
+        cmd_array, cmd_string = self.command_builder.build_concatenate_command(
+            settings=settings,
+            analyses=analyses
+        )
+
+        # Display command
+        self.command_display.setPlainText(cmd_string)
+        self.current_command = cmd_string
+        self.command_status_label.setText("✓ Command built successfully")
+        self.command_status_label.setStyleSheet("color: green;")
+
+        # Enable start button
+        if not self.is_processing:
+            self.start_btn.setEnabled(True)
+
+        self.log_message.emit("Concatenate command built successfully")
+
     # === Processing Methods (Delegate to controllers) ===
     
     def _start_transcode(self):
         """Start transcode operation via controller."""
         try:
-            # Create default settings (will be replaced with actual settings from UI)
-            settings = TranscodeSettings(
-                output_format='mp4',
-                video_codec='libx264',
-                quality_preset=QualityPreset.HIGH_FORENSIC
-            )
-            
+            # Get settings from widget
+            settings = self.transcode_settings.get_settings()
+
             # Update UI state
             self._set_processing_state(True)
-            
+
             # Start transcode via controller
             self.transcoder_controller.start_transcode(
                 input_files=self.selected_files,
                 settings=settings
             )
-            
+
             self.log_message.emit(f"Started transcoding {len(self.selected_files)} file(s)")
-        
+
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to start transcode: {e}")
             self._set_processing_state(False)
@@ -277,7 +396,7 @@ class ForensicTranscoderTab(QWidget):
                     "At least 2 files are required for concatenation."
                 )
                 return
-            
+
             # Get output file
             output_file, _ = QFileDialog.getSaveFileName(
                 self,
@@ -285,24 +404,24 @@ class ForensicTranscoderTab(QWidget):
                 "",
                 "Video Files (*.mp4 *.mkv *.mov);;All Files (*.*)"
             )
-            
+
             if not output_file:
                 return
-            
-            # Create default settings (will be replaced with actual settings from UI)
-            settings = ConcatenateSettings(
+
+            # Get settings from widget
+            settings = self.concatenate_settings.get_settings(
                 input_files=self.selected_files,
                 output_file=Path(output_file)
             )
-            
+
             # Update UI state
             self._set_processing_state(True)
-            
+
             # Start concatenate via controller
             self.concatenate_controller.start_concatenate(settings=settings)
-            
+
             self.log_message.emit(f"Started concatenating {len(self.selected_files)} file(s)")
-        
+
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to start concatenation: {e}")
             self._set_processing_state(False)
