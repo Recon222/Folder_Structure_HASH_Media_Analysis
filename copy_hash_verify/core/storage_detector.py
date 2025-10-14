@@ -209,8 +209,13 @@ class StorageDetector:
         seek_penalty_result = None
         if self.is_windows:
             seek_penalty_result = self._detect_via_seek_penalty(drive_letter)
-            # If Seek Penalty detected with high confidence, use it
-            if seek_penalty_result.confidence >= 0.8:
+            # Special case: If BusType=UNKNOWN, run performance test to identify true type
+            # Seek Penalty can detect SSD but cannot distinguish NVMe from SATA when bus type unknown
+            if seek_penalty_result.bus_type == BusType.UNKNOWN and seek_penalty_result.is_ssd:
+                logger.info(f"Seek Penalty detected SSD with unknown bus type: {seek_penalty_result}")
+                logger.info("BusType=UNKNOWN - running performance test to detect NVMe vs SATA...")
+                # Continue to performance heuristics to identify NVMe speeds
+            elif seek_penalty_result.confidence >= 0.8:
                 logger.info(f"Storage detected via Seek Penalty API (Tier 1): {seek_penalty_result}")
                 return seek_penalty_result
 
@@ -220,17 +225,25 @@ class StorageDetector:
             logger.info(f"Storage detected via performance heuristics (Tier 2): {perf_result}")
             return perf_result
 
-        # If performance test had some confidence, prefer it over WMI RAID (which may hide true type)
-        if perf_result.confidence >= 0.4 and wmi_result and wmi_result.bus_type == BusType.RAID:
-            logger.info(f"Using performance test over WMI RAID detection: {perf_result}")
-            return perf_result
+        # If performance test had some confidence, prefer it over API results with ambiguous bus types
+        if perf_result.confidence >= 0.4:
+            # Prefer performance test when WMI detected RAID or Seek Penalty detected UNKNOWN bus
+            if (wmi_result and wmi_result.bus_type == BusType.RAID) or \
+               (seek_penalty_result and seek_penalty_result.bus_type == BusType.UNKNOWN):
+                logger.info(f"Using performance test over ambiguous API detection: {perf_result}")
+                return perf_result
 
         # If WMI detected RAID but performance test failed, use WMI result
         if wmi_result and wmi_result.bus_type == BusType.RAID and wmi_result.confidence >= 0.6:
             logger.info(f"Performance test inconclusive, using WMI RAID result: {wmi_result}")
             return wmi_result
 
-        # If Seek Penalty had some confidence (0.6-0.79), use it as last resort before fallback
+        # If Seek Penalty detected UNKNOWN bus but performance test failed, use Seek Penalty result
+        if seek_penalty_result and seek_penalty_result.bus_type == BusType.UNKNOWN and seek_penalty_result.confidence >= 0.6:
+            logger.info(f"Performance test inconclusive, using Seek Penalty UNKNOWN bus result: {seek_penalty_result}")
+            return seek_penalty_result
+
+        # If Seek Penalty had some confidence (0.6-0.79) with known bus type, use it as last resort
         if seek_penalty_result and seek_penalty_result.confidence >= 0.6:
             logger.info(f"Storage detected via Seek Penalty API (low confidence): {seek_penalty_result}")
             return seek_penalty_result
