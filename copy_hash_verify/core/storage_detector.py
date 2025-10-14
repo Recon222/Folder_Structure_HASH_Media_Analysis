@@ -215,7 +215,8 @@ class StorageDetector:
                 logger.info(f"Seek Penalty detected SSD with unknown bus type: {seek_penalty_result}")
                 logger.info("BusType=UNKNOWN - running performance test to detect NVMe vs SATA...")
                 # Continue to performance heuristics to identify NVMe speeds
-            elif seek_penalty_result.confidence >= 0.8:
+            elif seek_penalty_result.confidence >= 0.8 and seek_penalty_result.bus_type != BusType.UNKNOWN:
+                # Only return early if bus type is known AND confidence is high
                 logger.info(f"Storage detected via Seek Penalty API (Tier 1): {seek_penalty_result}")
                 return seek_penalty_result
 
@@ -572,9 +573,9 @@ class StorageDetector:
                         drive_type = DriveType.SSD
                         bus_type = BusType.RAID
                     else:
-                        # Unknown bus type - default to SATA SSD
+                        # Unknown bus type - keep UNKNOWN so performance test can run
                         drive_type = DriveType.SSD
-                        bus_type = BusType.SATA if api_bus_type == BusType.UNKNOWN else api_bus_type
+                        bus_type = api_bus_type  # Keep UNKNOWN to trigger performance heuristics
                 else:
                     # HDD
                     drive_type = DriveType.EXTERNAL_HDD if is_removable else DriveType.HDD
