@@ -132,6 +132,15 @@ class MainWindow(QMainWindow):
         except ImportError as e:
             logger.debug(f"Filename Parser module not available: {e}")
 
+        # Forensic Transcoder tab (independent plugin)
+        try:
+            from forensic_transcoder import ForensicTranscoderTab
+            self.transcoder_tab = ForensicTranscoderTab()
+            self.transcoder_tab.log_message.connect(self.log)
+            self.tabs.addTab(self.transcoder_tab, "Video Transcoder")
+        except ImportError as e:
+            logger.debug(f"Forensic Transcoder module not available: {e}")
+
         # Configure tab widget to prevent content-based expansion
         self.tabs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         
