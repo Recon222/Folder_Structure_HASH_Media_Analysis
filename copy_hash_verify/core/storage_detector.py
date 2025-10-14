@@ -192,9 +192,16 @@ class StorageDetector:
                 return network_result
 
         # Method 1: WMI (Tier 0 - Primary detection for all drives)
+        wmi_result = None
         if self.is_windows and self.wmi_available:
             wmi_result = self._detect_via_wmi(drive_letter)
-            if wmi_result.confidence >= 0.6:
+            # Special case: If RAID detected, use performance heuristics to detect true NVMe speeds
+            # RAID controllers can hide NVMe drives behind virtual disks
+            if wmi_result.bus_type == BusType.RAID and wmi_result.is_ssd:
+                logger.info(f"WMI detected RAID SSD: {wmi_result}")
+                logger.info("RAID controller may hide NVMe - running performance test...")
+                # Continue to performance heuristics to detect actual NVMe speeds
+            elif wmi_result.confidence >= 0.6:
                 logger.info(f"Storage detected via WMI (Tier 0): {wmi_result}")
                 return wmi_result
 
@@ -207,11 +214,21 @@ class StorageDetector:
                 logger.info(f"Storage detected via Seek Penalty API (Tier 1): {seek_penalty_result}")
                 return seek_penalty_result
 
-        # Method 3: Performance Heuristics (Tier 2 - Fallback for API failures)
+        # Method 3: Performance Heuristics (Tier 2 - Fallback for API failures OR RAID detection)
         perf_result = self._detect_via_performance_test(path, drive_letter)
         if perf_result.confidence >= 0.7:
             logger.info(f"Storage detected via performance heuristics (Tier 2): {perf_result}")
             return perf_result
+
+        # If performance test had some confidence, prefer it over WMI RAID (which may hide true type)
+        if perf_result.confidence >= 0.4 and wmi_result and wmi_result.bus_type == BusType.RAID:
+            logger.info(f"Using performance test over WMI RAID detection: {perf_result}")
+            return perf_result
+
+        # If WMI detected RAID but performance test failed, use WMI result
+        if wmi_result and wmi_result.bus_type == BusType.RAID and wmi_result.confidence >= 0.6:
+            logger.info(f"Performance test inconclusive, using WMI RAID result: {wmi_result}")
+            return wmi_result
 
         # If Seek Penalty had some confidence (0.6-0.79), use it as last resort before fallback
         if seek_penalty_result and seek_penalty_result.confidence >= 0.6:
