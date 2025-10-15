@@ -44,6 +44,8 @@ class ProcessingResult:
 
     # Metadata (basic)
     frame_rate: Optional[float] = None
+    fps_detection_method: Optional[str] = None  # "metadata", "pts_timing", or "override"
+    fps_fallback_occurred: bool = False  # True if PTS detection failed and fell back to metadata
     pattern_used: Optional[str] = None
     parsed_time: Optional[str] = None
 
@@ -102,6 +104,8 @@ class ProcessingResult:
             "output_file": self.output_file,
             "smpte_timecode": self.smpte_timecode,
             "frame_rate": self.frame_rate,
+            "fps_detection_method": self.fps_detection_method,
+            "fps_fallback_occurred": self.fps_fallback_occurred,
             "pattern_used": self.pattern_used,
             "parsed_time": self.parsed_time,
             # Date components

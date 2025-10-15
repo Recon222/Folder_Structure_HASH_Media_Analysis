@@ -69,6 +69,8 @@ class CSVExportService:
                         "end_time_iso",
                         "duration_seconds",
                         "frame_rate",
+                        "fps_detection_method",
+                        "fps_fallback_occurred",
                         # Frame-accurate timing fields (NEW)
                         "first_frame_pts",
                         "start_frame_number",
@@ -118,6 +120,8 @@ class CSVExportService:
                                 "end_time_iso": result.get("end_time_iso", "N/A"),
                                 "duration_seconds": f"{result.get('duration_seconds', 0):.2f}",
                                 "frame_rate": f"{frame_rate:.2f}",
+                                "fps_detection_method": result.get("fps_detection_method", "metadata"),
+                                "fps_fallback_occurred": result.get("fps_fallback_occurred", False),
                                 # Frame-accurate timing fields
                                 "first_frame_pts": f"{first_frame_pts:.6f}",
                                 "start_frame_number": start_frame_number,

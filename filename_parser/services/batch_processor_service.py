@@ -29,7 +29,10 @@ from filename_parser.models.processing_result import (
     ProcessingStatus,
 )
 from filename_parser.services.csv_export_service import CSVExportService
-from filename_parser.services.video_metadata_extractor import VideoMetadataExtractor
+from filename_parser.services.video_metadata_extractor import (
+    VideoMetadataExtractor,
+    FPSDetectionMethod
+)
 
 
 class BatchProcessorService(BaseService, IBatchProcessorService):
@@ -135,7 +138,7 @@ class BatchProcessorService(BaseService, IBatchProcessorService):
             # Step 1: Detect frame rates if needed
             fps_map = {}
             if settings.detect_fps and not settings.fps_override:
-                self.logger.info("Detecting frame rates...")
+                self.logger.info(f"Detecting frame rates using method: {settings.fps_detection_method}")
                 if progress_callback:
                     progress_callback(5, "Detecting frame rates...")
 
@@ -145,6 +148,8 @@ class BatchProcessorService(BaseService, IBatchProcessorService):
                     progress_callback=lambda curr, total: self._emit_progress(
                         curr, total, len(files), 5, 20, progress_callback, "Detecting frame rates"
                     ),
+                    fps_method=settings.fps_detection_method,
+                    fps_override=settings.fps_override
                 )
                 self.logger.info(f"Frame rate detection complete: {len(fps_map)} files")
 
@@ -264,7 +269,24 @@ class BatchProcessorService(BaseService, IBatchProcessorService):
             parsed = parse_result.value
 
             # Step 2: Extract full video metadata using VideoMetadataExtractor
-            video_probe_data = self._metadata_extractor.extract_metadata(file_path)
+            # Convert string method to enum for extractor
+            try:
+                method_enum = FPSDetectionMethod(settings.fps_detection_method)
+            except ValueError:
+                method_enum = FPSDetectionMethod.METADATA
+
+            video_probe_data = self._metadata_extractor.extract_metadata(
+                file_path,
+                fps_method=method_enum,
+                fps_override=settings.fps_override
+            )
+
+            # Log FPS detection method and fallback status
+            fallback_note = " (FALLBACK: PTS failed)" if video_probe_data.fps_fallback_occurred else ""
+            self.logger.info(
+                f"Processing {file_path.name} with fps={fps:.3f} "
+                f"(method: {video_probe_data.fps_detection_method}){fallback_note}"
+            )
 
             # Step 3: Extract date components from parsed filename
             date_tuple = None
@@ -344,6 +366,11 @@ class BatchProcessorService(BaseService, IBatchProcessorService):
                 success=True,
                 output_file=str(output_path),
                 frame_rate=fps,
+                fps_detection_method=video_probe_data.fps_detection_method,
+                fps_fallback_occurred=(
+                    settings.fps_detection_method == "pts_timing" and
+                    video_probe_data.fps_detection_method == "metadata"
+                ),
                 parsed_time=parsed.time_data.time_string,
                 smpte_timecode=frame_accurate_smpte,
                 pattern_used=parsed.pattern.name,

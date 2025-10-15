@@ -355,6 +355,37 @@ class FilenameParserTab(QWidget):
         self.auto_detect_fps.toggled.connect(self._toggle_fps_settings)
         layout.addWidget(self.auto_detect_fps)
 
+        # Detection method dropdown (NEW)
+        method_layout = QHBoxLayout()
+        method_layout.addWidget(QLabel("Detection Method:"))
+
+        self.fps_method_combo = QComboBox()
+        self.fps_method_combo.setObjectName("fpsMethodCombo")
+        self.fps_method_combo.addItem("📊 Container Metadata (Fast)", "metadata")
+        self.fps_method_combo.addItem("⏱️ PTS Timing (Accurate)", "pts_timing")
+        self.fps_method_combo.setCurrentIndex(0)  # Default to metadata
+        self.fps_method_combo.setEnabled(True)  # Always enabled when detect_fps is checked
+
+        # Tooltip explaining the difference
+        self.fps_method_combo.setToolTip(
+            "<b>Frame Rate Detection Method:</b><br><br>"
+            "<b>Container Metadata (Fast):</b><br>"
+            "• Reads r_frame_rate/avg_frame_rate from file<br>"
+            "• Instant detection, no processing<br>"
+            "• May be INCORRECT for CCTV/DVR files<br>"
+            "• DVRs often stamp wrong FPS (e.g., 25fps when actual is 12.5fps)<br><br>"
+            "<b>PTS Timing (Accurate):</b><br>"
+            "• Calculates FPS from frame timestamps (PTS deltas)<br>"
+            "• Measures ACTUAL playback rate<br>"
+            "• Slower (~1-2s per file)<br>"
+            "• Recommended for forensic/CCTV workflows<br>"
+            "• Matches VLC/MPV playback behavior"
+        )
+
+        method_layout.addWidget(self.fps_method_combo)
+        method_layout.addStretch()
+        layout.addLayout(method_layout)
+
         # Manual FPS selection
         manual_layout = QHBoxLayout()
         manual_layout.addWidget(QLabel("Manual FPS:"))
@@ -372,6 +403,10 @@ class FilenameParserTab(QWidget):
         ])
         self.manual_fps_combo.setCurrentIndex(3)  # Default 29.97
         self.manual_fps_combo.setEnabled(False)
+        self.manual_fps_combo.setToolTip(
+            "Manually specify frame rate (disables auto-detection).<br>"
+            "Use this when both metadata and PTS detection fail."
+        )
         manual_layout.addWidget(self.manual_fps_combo)
         layout.addLayout(manual_layout)
 
@@ -992,6 +1027,12 @@ class FilenameParserTab(QWidget):
     def _toggle_fps_settings(self, checked):
         """Toggle manual FPS controls"""
         self.manual_fps_combo.setEnabled(not checked)
+        self.fps_method_combo.setEnabled(checked)  # Enable method selection when detecting
+
+        # If unchecked, we're using override - change combo to "override" mode
+        if not checked:
+            # Visually indicate override mode (optional - just for UX)
+            self.fps_method_combo.setToolTip("Using manual FPS override")
 
     def _toggle_offset_settings(self, checked):
         """Toggle time offset controls"""
@@ -1097,7 +1138,14 @@ class FilenameParserTab(QWidget):
 
         # FPS
         self.settings.detect_fps = self.auto_detect_fps.isChecked()
-        if not self.settings.detect_fps:
+
+        if self.settings.detect_fps:
+            # Auto-detection enabled - use selected method
+            self.settings.fps_detection_method = self.fps_method_combo.currentData()
+            self.settings.fps_override = None
+        else:
+            # Manual override
+            self.settings.fps_detection_method = "override"
             fps_text = self.manual_fps_combo.currentText()
             self.settings.fps_override = float(fps_text.split()[0])
 

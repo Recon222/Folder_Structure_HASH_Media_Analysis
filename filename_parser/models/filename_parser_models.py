@@ -19,6 +19,7 @@ class FilenameParserSettings:
 
     # Frame rate
     detect_fps: bool = True
+    fps_detection_method: str = "metadata"  # "metadata", "pts_timing", or "override"
     fps_override: Optional[float] = None  # Manual FPS if not detecting
 
     # Time offset
@@ -64,6 +65,7 @@ class FilenameParserSettings:
             "pattern_id": self.pattern_id,
             "custom_pattern": self.custom_pattern,
             "detect_fps": self.detect_fps,
+            "fps_detection_method": self.fps_detection_method,
             "fps_override": self.fps_override,
             "enable_time_offset": self.enable_time_offset,
             "time_offset_direction": self.time_offset_direction,
@@ -89,6 +91,7 @@ class FilenameParserSettings:
             pattern_id=data.get("pattern_id"),
             custom_pattern=data.get("custom_pattern"),
             detect_fps=data.get("detect_fps", True),
+            fps_detection_method=data.get("fps_detection_method", "metadata"),
             fps_override=data.get("fps_override"),
             enable_time_offset=data.get("enable_time_offset", False),
             time_offset_direction=data.get("time_offset_direction", "behind"),

@@ -19,7 +19,10 @@ from core.exceptions import FileOperationError
 
 from filename_parser.filename_parser_interfaces import IFrameRateService
 from filename_parser.core.binary_manager import binary_manager
-from filename_parser.services.video_metadata_extractor import VideoMetadataExtractor
+from filename_parser.services.video_metadata_extractor import (
+    VideoMetadataExtractor,
+    FPSDetectionMethod
+)
 from filename_parser.models.timeline_models import VideoMetadata
 
 
@@ -75,7 +78,9 @@ class FrameRateService(BaseService, IFrameRateService):
     def detect_frame_rate(
         self,
         file_path: Path,
-        progress_callback: Optional[Callable] = None
+        progress_callback: Optional[Callable] = None,
+        fps_method: str = "metadata",
+        fps_override: Optional[float] = None
     ) -> Result[float]:
         """
         Detect frame rate from video file.
@@ -83,6 +88,8 @@ class FrameRateService(BaseService, IFrameRateService):
         Args:
             file_path: Path to video file
             progress_callback: Optional progress callback
+            fps_method: Detection method ("metadata", "pts_timing", or "override")
+            fps_override: Manual FPS override (used if fps_method="override")
 
         Returns:
             Result containing frame rate or error
@@ -107,7 +114,7 @@ class FrameRateService(BaseService, IFrameRateService):
                 )
             )
 
-        result = self._detect_single(str(file_path))
+        result = self._detect_single(str(file_path), fps_method, fps_override)
 
         if result.success and result.frame_rate:
             return Result.success(result.frame_rate)
@@ -121,6 +128,8 @@ class FrameRateService(BaseService, IFrameRateService):
         file_paths: List[Path],
         use_default_on_failure: bool = True,
         progress_callback: Optional[Callable] = None,
+        fps_method: str = "metadata",
+        fps_override: Optional[float] = None
     ) -> Dict[str, float]:
         """
         Detect frame rates for multiple files in parallel.
@@ -129,6 +138,8 @@ class FrameRateService(BaseService, IFrameRateService):
             file_paths: List of video file paths
             use_default_on_failure: Use default FPS for failed detections
             progress_callback: Optional callback(completed, total)
+            fps_method: Detection method ("metadata", "pts_timing", or "override")
+            fps_override: Manual FPS override (used if fps_method="override")
 
         Returns:
             Dictionary mapping file paths to frame rates
@@ -142,8 +153,11 @@ class FrameRateService(BaseService, IFrameRateService):
         str_paths = [str(fp) for fp in file_paths]
 
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            # Submit all tasks
-            future_to_file = {executor.submit(self._detect_single, fp): fp for fp in str_paths}
+            # Submit all tasks with fps_method and fps_override parameters
+            future_to_file = {
+                executor.submit(self._detect_single, fp, fps_method, fps_override): fp
+                for fp in str_paths
+            }
 
             # Collect results as they complete
             for future in as_completed(future_to_file):
@@ -172,12 +186,22 @@ class FrameRateService(BaseService, IFrameRateService):
         self.logger.info(f"Frame rate detection complete: {len(results)}/{len(file_paths)} successful")
         return results
 
-    def _detect_single(self, file_path: str) -> FrameRateResult:
+    def _detect_single(
+        self,
+        file_path: str,
+        fps_method: str = "metadata",
+        fps_override: Optional[float] = None
+    ) -> FrameRateResult:
         """
-        Detect frame rate for a single file using best available method.
+        Detect frame rate for a single file using VideoMetadataExtractor.
+
+        This now delegates to VideoMetadataExtractor which handles both
+        metadata-based and PTS-based detection.
 
         Args:
             file_path: Path to video file
+            fps_method: Detection method string
+            fps_override: Manual FPS override
 
         Returns:
             FrameRateResult with detection outcome
@@ -185,25 +209,41 @@ class FrameRateService(BaseService, IFrameRateService):
         # Validate file exists
         if not os.path.exists(file_path):
             return FrameRateResult(
-                file_path=file_path, success=False, error_message="File not found"
+                file_path=file_path,
+                success=False,
+                error_message="File not found"
             )
 
-        # Try FFprobe (most accurate)
-        if binary_manager.is_ffprobe_available():
-            result = self._detect_with_ffprobe(file_path)
-            if result.success:
-                return result
+        # Convert string method to enum
+        try:
+            method_enum = FPSDetectionMethod(fps_method)
+        except ValueError:
+            self.logger.warning(f"Invalid FPS method '{fps_method}', using metadata")
+            method_enum = FPSDetectionMethod.METADATA
 
-        # Try filename extraction as fallback
-        fps = self._extract_from_filename(file_path)
-        if fps:
+        # Use VideoMetadataExtractor for detection
+        extractor = VideoMetadataExtractor()
+        probe_data = extractor.extract_metadata(
+            Path(file_path),
+            fps_method=method_enum,
+            fps_override=fps_override
+        )
+
+        if not probe_data.success:
             return FrameRateResult(
-                file_path=file_path, success=True, frame_rate=fps, method="filename"
+                file_path=file_path,
+                success=False,
+                error_message=probe_data.error_message
             )
 
-        # Failed all methods
+        # Normalize FPS to standard values
+        normalized_fps = self.normalize_frame_rate(probe_data.frame_rate)
+
         return FrameRateResult(
-            file_path=file_path, success=False, error_message="All detection methods failed"
+            file_path=file_path,
+            success=True,
+            frame_rate=normalized_fps,
+            method=probe_data.fps_detection_method
         )
 
     def _detect_with_ffprobe(self, file_path: str) -> FrameRateResult:

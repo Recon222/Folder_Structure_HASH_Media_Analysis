@@ -9,13 +9,22 @@ Following GPT-5's best practices for robust duration calculation.
 
 import json
 import subprocess
+import time
 from pathlib import Path
 from typing import Optional, Dict, Any
 from fractions import Fraction
 from dataclasses import dataclass
+from enum import Enum
 
 from filename_parser.core.binary_manager import binary_manager
 from core.logger import logger
+
+
+class FPSDetectionMethod(str, Enum):
+    """Frame rate detection method selection."""
+    METADATA = "metadata"  # Use container r_frame_rate/avg_frame_rate (fast, may be wrong)
+    PTS_TIMING = "pts_timing"  # Calculate from PTS deltas (accurate, slower)
+    OVERRIDE = "override"  # Use user-specified FPS
 
 
 @dataclass
@@ -57,6 +66,10 @@ class VideoProbeData:
     format_long_name: str = ""
     bit_rate: Optional[int] = None
 
+    # FPS detection metadata (NEW for PTS-based detection)
+    fps_detection_method: str = "metadata"  # "metadata", "pts_timing", or "override"
+    fps_fallback_occurred: bool = False  # True if PTS detection failed and fell back to metadata
+
     # Success flag
     success: bool = True
     error_message: str = ""
@@ -76,12 +89,19 @@ class VideoMetadataExtractor:
     def __init__(self):
         self.logger = logger
 
-    def extract_metadata(self, file_path: Path) -> VideoProbeData:
+    def extract_metadata(
+        self,
+        file_path: Path,
+        fps_method: FPSDetectionMethod = FPSDetectionMethod.METADATA,
+        fps_override: Optional[float] = None
+    ) -> VideoProbeData:
         """
         Extract all video metadata in one ffprobe call.
 
         Args:
             file_path: Path to video file
+            fps_method: Method for frame rate detection
+            fps_override: Manual FPS override (used if fps_method=OVERRIDE)
 
         Returns:
             VideoProbeData with all extracted fields
@@ -136,8 +156,13 @@ class VideoMetadataExtractor:
             # Parse JSON
             data = json.loads(result.stdout)
 
-            # Extract data
-            return self._parse_probe_data(file_path, data)
+            # Extract data - pass parameters for FPS detection
+            return self._parse_probe_data(
+                file_path,
+                data,
+                fps_method,
+                fps_override
+            )
 
         except subprocess.TimeoutExpired:
             return self._error_result(file_path, "FFprobe timeout (>10s)")
@@ -146,8 +171,25 @@ class VideoMetadataExtractor:
         except Exception as e:
             return self._error_result(file_path, f"Unexpected error: {e}")
 
-    def _parse_probe_data(self, file_path: Path, data: Dict[str, Any]) -> VideoProbeData:
-        """Parse ffprobe JSON output."""
+    def _parse_probe_data(
+        self,
+        file_path: Path,
+        data: Dict[str, Any],
+        fps_method: FPSDetectionMethod = FPSDetectionMethod.METADATA,
+        fps_override: Optional[float] = None
+    ) -> VideoProbeData:
+        """
+        Parse ffprobe JSON output.
+
+        Args:
+            file_path: Path to video file
+            data: Raw ffprobe JSON data
+            fps_method: Frame rate detection method
+            fps_override: Manual FPS override value
+
+        Returns:
+            VideoProbeData with all extracted fields
+        """
 
         # Get format (container) data
         fmt = data.get("format", {})
@@ -162,8 +204,37 @@ class VideoMetadataExtractor:
         # Extract duration using GPT-5's fallback logic
         duration_seconds = self._extract_duration(fmt, video_stream)
 
-        # Extract frame rate
-        frame_rate = self._extract_frame_rate(video_stream)
+        # Extract frame rate using selected method
+        # Track which method we actually used (for fallback detection)
+        fps_detection_method_used = fps_method.value
+
+        if fps_method == FPSDetectionMethod.OVERRIDE and fps_override:
+            # User-specified override
+            frame_rate = fps_override
+            fps_detection_method_used = "override"
+            self.logger.info(f"Using override FPS: {frame_rate}")
+
+        elif fps_method == FPSDetectionMethod.PTS_TIMING:
+            # Calculate from PTS deltas
+            pts_fps = self._calculate_pts_based_fps(file_path)
+
+            if pts_fps:
+                frame_rate = pts_fps
+                fps_detection_method_used = "pts_timing"
+                self.logger.info(f"Using PTS-calculated FPS: {frame_rate:.3f}")
+            else:
+                # Fallback to metadata if PTS calculation fails
+                frame_rate = self._extract_frame_rate(video_stream)
+                fps_detection_method_used = "metadata"  # Fell back!
+                self.logger.warning(
+                    f"PTS calculation failed, falling back to metadata FPS: {frame_rate}"
+                )
+
+        else:  # FPSDetectionMethod.METADATA (default)
+            # Use container metadata (r_frame_rate/avg_frame_rate)
+            frame_rate = self._extract_frame_rate(video_stream)
+            fps_detection_method_used = "metadata"
+            self.logger.debug(f"Using metadata FPS: {frame_rate}")
 
         # Extract resolution
         width = video_stream.get("width", 0)
@@ -203,6 +274,10 @@ class VideoMetadataExtractor:
         # Get file size
         file_size = file_path.stat().st_size if file_path.exists() else 0
 
+        # Determine if fallback occurred (user requested PTS but got metadata)
+        fps_fallback = (fps_method == FPSDetectionMethod.PTS_TIMING and
+                        fps_detection_method_used == "metadata")
+
         return VideoProbeData(
             file_path=file_path,
             file_size_bytes=file_size,
@@ -223,6 +298,8 @@ class VideoMetadataExtractor:
             format_name=format_name,
             format_long_name=format_long_name,
             bit_rate=bit_rate,
+            fps_detection_method=fps_detection_method_used,
+            fps_fallback_occurred=fps_fallback,
             success=True
         )
 
@@ -371,6 +448,150 @@ class VideoMetadataExtractor:
         is_keyframe = (first_frame.get("key_frame") == 1)
 
         return first_frame_pts, frame_type, is_keyframe
+
+    def _calculate_pts_based_fps(
+        self,
+        file_path: Path,
+        sample_count: int = 30
+    ) -> Optional[float]:
+        """
+        Calculate TRUE frame rate by measuring PTS deltas between frames.
+
+        This method samples multiple frames and calculates the average inter-frame
+        interval from PTS timing, which is more accurate than container metadata
+        for CCTV/DVR files where declared FPS is often wrong.
+
+        Args:
+            file_path: Path to video file
+            sample_count: Number of frames to sample (default: 30)
+                         More samples = more accurate, but slower
+
+        Returns:
+            Calculated FPS from PTS timing, or None if calculation failed
+
+        Algorithm:
+            1. Use FFprobe to extract PTS for first N frames
+            2. Calculate inter-frame intervals (PTS deltas)
+            3. Average the intervals to get mean frame time
+            4. FPS = 1 / mean_frame_time
+
+        Example:
+            Frame 0: pts_time=0.000000
+            Frame 1: pts_time=0.033367 (29.97fps → ~0.033s interval)
+            Frame 2: pts_time=0.066733
+            ...
+            Average interval: 0.033367s → FPS = 29.97
+        """
+        ffprobe_path = binary_manager.get_ffprobe_path()
+
+        if not ffprobe_path:
+            self.logger.warning("FFprobe not available for PTS-based FPS detection")
+            return None
+
+        try:
+            start_time = time.time()
+
+            # FFprobe command to extract PTS for first N frames
+            # read_intervals="%+#N" reads first N frames
+            cmd = [
+                ffprobe_path,
+                "-v", "error",
+                "-select_streams", "v:0",  # First video stream
+                "-read_intervals", f"%+#{sample_count}",  # Read first N frames
+                "-show_entries", "frame=pts_time",  # Only PTS time field
+                "-of", "json",
+                str(file_path)
+            ]
+
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=10  # 10 second timeout for frame sampling
+            )
+
+            if result.returncode != 0:
+                self.logger.warning(f"FFprobe frame sampling failed: {result.stderr[:200]}")
+                return None
+
+            # Parse JSON
+            data = json.loads(result.stdout)
+            frames = data.get("frames", [])
+
+            if len(frames) < 2:
+                self.logger.warning(
+                    f"{file_path.name}: Insufficient frames for PTS calculation (got {len(frames)}, need >= 2). "
+                    f"File may be too short, corrupted, or using codec without PTS support. "
+                    f"Falling back to container metadata."
+                )
+                return None
+
+            # Extract PTS times
+            pts_times = []
+            for frame in frames:
+                pts_time = frame.get("pts_time")
+                if pts_time is not None:
+                    try:
+                        pts_times.append(float(pts_time))
+                    except (ValueError, TypeError):
+                        continue
+
+            if len(pts_times) < 2:
+                self.logger.warning(
+                    f"{file_path.name}: Could not parse PTS times from frames. "
+                    f"Video may use old codec without PTS data or file is damaged. "
+                    f"Falling back to container metadata."
+                )
+                return None
+
+            # Calculate inter-frame intervals (PTS deltas)
+            intervals = []
+            for i in range(len(pts_times) - 1):
+                interval = pts_times[i + 1] - pts_times[i]
+                if interval > 0:  # Sanity check (ignore zero/negative intervals)
+                    intervals.append(interval)
+
+            if not intervals:
+                self.logger.warning(
+                    f"{file_path.name}: No valid PTS intervals found (all intervals were zero or negative). "
+                    f"Video stream may be damaged or use non-standard timing. "
+                    f"Falling back to container metadata."
+                )
+                return None
+
+            # Calculate average interval
+            avg_interval = sum(intervals) / len(intervals)
+
+            # Calculate FPS
+            calculated_fps = 1.0 / avg_interval
+
+            # Sanity check (reasonable FPS range)
+            if calculated_fps < 1.0 or calculated_fps > 240.0:
+                self.logger.warning(
+                    f"Calculated FPS {calculated_fps:.2f} outside valid range [1-240], "
+                    f"rejecting PTS-based detection"
+                )
+                return None
+
+            elapsed = time.time() - start_time
+            self.logger.info(
+                f"PTS-based FPS: {calculated_fps:.3f} fps "
+                f"(sampled {len(intervals)} intervals, avg={avg_interval:.6f}s, "
+                f"detection time: {elapsed:.2f}s)"
+            )
+
+            return calculated_fps
+
+        except subprocess.TimeoutExpired:
+            self.logger.warning("PTS sampling timeout (>10s)")
+            return None
+        except json.JSONDecodeError as e:
+            self.logger.warning(f"JSON parse error in PTS sampling: {e}")
+            return None
+        except Exception as e:
+            self.logger.warning(f"Unexpected error in PTS sampling: {e}")
+            return None
 
     def _error_result(self, file_path: Path, error_message: str) -> VideoProbeData:
         """Create error result."""
