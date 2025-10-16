@@ -19,7 +19,6 @@ from PySide6.QtWidgets import (
     QSizePolicy
 )
 
-from controllers import HashController
 from controllers.zip_controller import ZipController
 from core.models import FormData
 from core.settings_manager import settings
@@ -30,7 +29,7 @@ from core.exceptions import UIError, ErrorSeverity
 from core.error_handler import handle_error
 from ui.styles.adobe_theme import AdobeTheme
 from ui.dialogs import ZipSettingsDialog, AboutDialog, UserSettingsDialog
-from ui.tabs import ForensicTab, HashingTab
+from ui.tabs import ForensicTab
 from ui.tabs.batch_tab import BatchTab
 from media_analysis import MediaAnalysisTab  # Modularized media analysis
 from core.error_handler import get_error_handler
@@ -55,10 +54,7 @@ class MainWindow(QMainWindow):
         
         # Configure services with dependencies
         configure_services(self.zip_controller)
-        
-        # Initialize hash controller
-        self.hash_controller = HashController()
-        
+
         # Initialize error notification system
         self.error_notification_manager = None  # Will be created after UI setup
         self.error_handler = get_error_handler()
@@ -107,18 +103,7 @@ class MainWindow(QMainWindow):
         self.batch_tab = BatchTab(self.form_data, self)
         self.batch_tab.log_message.connect(self.log)
         self.tabs.addTab(self.batch_tab, "Batch Processing")
-        
-        # Hashing tab with enhanced controller
-        self.hashing_tab = HashingTab(self.hash_controller)
-        self.hashing_tab.log_message.connect(self.log)
-        self.tabs.addTab(self.hashing_tab, "Hashing")
-        
-        # Copy & Verify tab for direct copying
-        from ui.tabs.copy_verify_tab import CopyVerifyTab
-        self.copy_verify_tab = CopyVerifyTab()
-        self.copy_verify_tab.log_message.connect(self.log)
-        self.tabs.addTab(self.copy_verify_tab, "Copy & Verify")
-        
+
         # Media Analysis tab for metadata extraction
         self.media_analysis_tab = MediaAnalysisTab(self.form_data)
         self.media_analysis_tab.log_message.connect(self.log)
@@ -167,9 +152,6 @@ class MainWindow(QMainWindow):
 
         # Connect copy/hash/verify tab status messages
         self.copy_hash_verify_master_tab.status_message.connect(self.status_bar.showMessage)
-
-        # Connect hashing tab status messages
-        self.hashing_tab.status_message.connect(self.status_bar.showMessage)
         
     def _create_forensic_tab(self):
         """Create the forensic mode tab with controller"""
@@ -526,7 +508,6 @@ class MainWindow(QMainWindow):
         app_components = {
             'main_window': self,
             'batch_tab': getattr(self, 'batch_tab', None),
-            'hashing_tab': getattr(self, 'hashing_tab', None),
             'copy_hash_verify_master_tab': getattr(self, 'copy_hash_verify_master_tab', None)
         }
         
